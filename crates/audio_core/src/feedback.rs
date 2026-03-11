@@ -8,11 +8,11 @@ use std::sync::Arc;
 use shared_types::SAMPLE_RATE;
 
 /// Duration of the feedback beep in milliseconds.
-const TONE_MS: u32 = 50;
+const TONE_MS: u32 = 80;
 /// Volume of the feedback beep (0.0–1.0).
-const TONE_VOLUME: f32 = 0.12;
-/// Fade envelope length in samples (~1ms)
-const FADE_SAMPLES: usize = 48;
+const TONE_VOLUME: f32 = 0.25;
+/// Fade envelope length in samples (~2ms)
+const FADE_SAMPLES: usize = 96;
 
 const TONE_SAMPLES: usize = (SAMPLE_RATE * TONE_MS / 1000) as usize;
 

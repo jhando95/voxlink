@@ -38,8 +38,14 @@ pub fn setup_toggle_mute(
 
         let audio = audio.clone();
         let network = network.clone();
+        let feedback = w.get_feedback_sound();
         rt_handle.spawn(async move {
-            audio.lock().await.set_muted(muted);
+            let aud = audio.lock().await;
+            aud.set_muted(muted);
+            if feedback {
+                aud.play_feedback_mute(muted);
+            }
+            drop(aud);
             let net = network.lock().await;
             let _ = net
                 .send_signal(&SignalMessage::MuteChanged { is_muted: muted })
@@ -83,10 +89,15 @@ pub fn setup_toggle_deafen(
         let deafened = v.is_deafened;
         let audio = audio.clone();
         let network = network.clone();
+        let feedback = w.get_feedback_sound();
         rt_handle.spawn(async move {
             let aud = audio.lock().await;
             aud.set_muted(muted);
             aud.set_deafened(deafened);
+            if feedback {
+                aud.play_feedback_deafen(deafened);
+            }
+            drop(aud);
             let net = network.lock().await;
             let _ = net
                 .send_signal(&SignalMessage::MuteChanged { is_muted: muted })

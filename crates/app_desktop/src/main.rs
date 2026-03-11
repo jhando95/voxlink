@@ -54,8 +54,9 @@ fn main() {
     }));
 
     // #6: Wire noise gate sensitivity from config
+    // noise_suppression: 0=off, 1=max; sensitivity: inverted (1-suppression)
     rt.block_on(async {
-        audio.lock().await.set_sensitivity(config.open_mic_sensitivity);
+        audio.lock().await.set_sensitivity(1.0 - config.noise_suppression);
     });
 
     let media = Arc::new(TokioMutex::new(media_transport::MediaSession::new(

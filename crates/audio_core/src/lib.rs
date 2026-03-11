@@ -105,8 +105,9 @@ impl AudioEngine {
             .host
             .default_input_device()
             .and_then(|d| d.name().ok());
+        log::info!("Default input device: {:?}", default_name);
 
-        self.host
+        let devices: Vec<AudioDevice> = self.host
             .input_devices()
             .map(|devices| {
                 devices
@@ -117,7 +118,10 @@ impl AudioEngine {
                     })
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        log::info!("Found {} input devices: {:?}", devices.len(),
+            devices.iter().map(|d| &d.name).collect::<Vec<_>>());
+        devices
     }
 
     pub fn list_output_devices(&self) -> Vec<AudioDevice> {
@@ -125,8 +129,9 @@ impl AudioEngine {
             .host
             .default_output_device()
             .and_then(|d| d.name().ok());
+        log::info!("Default output device: {:?}", default_name);
 
-        self.host
+        let devices: Vec<AudioDevice> = self.host
             .output_devices()
             .map(|devices| {
                 devices
@@ -137,15 +142,30 @@ impl AudioEngine {
                     })
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        log::info!("Found {} output devices: {:?}", devices.len(),
+            devices.iter().map(|d| &d.name).collect::<Vec<_>>());
+        devices
     }
 
     fn find_input_device(&self, name: Option<&str>) -> Option<Device> {
         if let Some(name) = name {
-            self.host
-                .input_devices()
-                .ok()?
-                .find(|d| d.name().ok().as_deref() == Some(name))
+            let devices = self.host.input_devices().ok()?;
+            let all: Vec<Device> = devices.collect();
+            // Exact match first
+            if let Some(d) = all.iter().find(|d| d.name().ok().as_deref() == Some(name)) {
+                return Some(d.clone());
+            }
+            // Partial match fallback (Windows headsets may change suffixes)
+            if let Some(d) = all.iter().find(|d| {
+                d.name().ok().map(|n| n.contains(name) || name.contains(&n)).unwrap_or(false)
+            }) {
+                log::info!("Input device '{}' not found exactly, using partial match '{}'",
+                    name, d.name().unwrap_or_default());
+                return Some(d.clone());
+            }
+            log::warn!("Input device '{}' not found, falling back to default", name);
+            self.host.default_input_device()
         } else {
             self.host.default_input_device()
         }
@@ -153,10 +173,20 @@ impl AudioEngine {
 
     fn find_output_device(&self, name: Option<&str>) -> Option<Device> {
         if let Some(name) = name {
-            self.host
-                .output_devices()
-                .ok()?
-                .find(|d| d.name().ok().as_deref() == Some(name))
+            let devices = self.host.output_devices().ok()?;
+            let all: Vec<Device> = devices.collect();
+            if let Some(d) = all.iter().find(|d| d.name().ok().as_deref() == Some(name)) {
+                return Some(d.clone());
+            }
+            if let Some(d) = all.iter().find(|d| {
+                d.name().ok().map(|n| n.contains(name) || name.contains(&n)).unwrap_or(false)
+            }) {
+                log::info!("Output device '{}' not found exactly, using partial match '{}'",
+                    name, d.name().unwrap_or_default());
+                return Some(d.clone());
+            }
+            log::warn!("Output device '{}' not found, falling back to default", name);
+            self.host.default_output_device()
         } else {
             self.host.default_output_device()
         }

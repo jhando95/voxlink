@@ -168,7 +168,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: "VX";
                             color: #f0f0f8;
-                            font-size: 8.5px; font-weight: 800; letter-spacing: 0.3px;
+                            font-size: 9px; font-weight: 800; letter-spacing: 0.3px;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                     }
@@ -195,7 +195,7 @@ export component MainWindow inherits Window {
                         width: 18px; height: 18px; border-radius: 9px;
                         background: VxTheme.mute-badge-bg;
                         border-color: VxTheme.danger;
-                        border-width: 0.5px;
+                        border-width: 1px;
                         Text { text: "\u{1F507}"; font-size: 9px;
                                horizontal-alignment: center; vertical-alignment: center; }
                     }
@@ -203,7 +203,7 @@ export component MainWindow inherits Window {
                         width: 18px; height: 18px; border-radius: 9px;
                         background: VxTheme.deafen-badge-bg;
                         border-color: VxTheme.warning;
-                        border-width: 0.5px;
+                        border-width: 1px;
                         Text { text: "\u{1F515}"; font-size: 9px;
                                horizontal-alignment: center; vertical-alignment: center; }
                     }
@@ -1129,7 +1129,7 @@ export component MainWindow inherits Window {
                                             width: 38px; height: 18px; border-radius: 9px;
                                             background: VxTheme.deafen-badge-bg;
                                             border-color: VxTheme.warning;
-                                            border-width: 0.5px;
+                                            border-width: 1px;
                                             HorizontalLayout {
                                                 alignment: center; spacing: 3px;
                                                 Text { text: "\u{1F515}"; font-size: 8px; vertical-alignment: center; }
@@ -1141,7 +1141,7 @@ export component MainWindow inherits Window {
                                             width: 38px; height: 18px; border-radius: 9px;
                                             background: VxTheme.mute-badge-bg;
                                             border-color: VxTheme.danger;
-                                            border-width: 0.5px;
+                                            border-width: 1px;
                                             HorizontalLayout {
                                                 alignment: center; spacing: 3px;
                                                 Text { text: "\u{1F507}"; font-size: 8px; vertical-alignment: center; }
@@ -1576,7 +1576,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Text {
-                                        text: "Plays a short beep when you toggle mute or deafen via hotkey";
+                                        text: "Plays a distinct tone when you mute, unmute, deafen, or undeafen";
                                         color: VxTheme.text-muted; font-size: 9px;
                                     }
                                 }

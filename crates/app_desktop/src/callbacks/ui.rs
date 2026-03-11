@@ -168,16 +168,19 @@ pub fn setup_noise_suppression(
     let audio = audio.clone();
     let rt_handle = rt_handle.clone();
     window.on_noise_suppression_changed(move |val| {
+        // Slider: 0=off (no suppression), 1=max (aggressive suppression)
+        // Noise gate sensitivity: 0=least sensitive (high threshold), 1=most sensitive (low threshold)
+        // Invert: high suppression slider = low sensitivity = stricter gate
+        let sensitivity = 1.0 - val;
         let audio = audio.clone();
         rt_handle.spawn(async move {
-            audio.lock().await.set_sensitivity(val);
+            audio.lock().await.set_sensitivity(sensitivity);
         });
 
-        let val = val;
         std::thread::spawn(move || {
             let mut cfg = config_store::load_config();
             cfg.noise_suppression = val;
-            cfg.open_mic_sensitivity = val;
+            cfg.open_mic_sensitivity = sensitivity;
             let _ = config_store::save_config(&cfg);
         });
     });
