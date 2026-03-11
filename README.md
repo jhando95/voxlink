@@ -1,33 +1,72 @@
 # Voxlink
 
-Voice without limits. A private desktop voice application built with Rust and Slint.
+**Voice without limits.** A fast, private desktop voice chat built from scratch in Rust.
 
-## Quick Start
+## Download
+
+### [⬇️ Download Voxlink for Windows](https://github.com/jhando95/voxlink/releases/latest)
+
+Double-click the installer, done. No accounts, no sign-ups, no bloat.
+
+---
+
+## What is Voxlink?
+
+Voxlink is a lightweight voice chat app for groups. Think Discord voice channels, but:
+- **Instant startup** — no loading screens
+- **Tiny footprint** — minimal CPU and RAM usage
+- **No Electron** — native Rust, not a wrapped web browser
+- **Privacy-first** — no telemetry, no tracking, self-hostable server
+
+## Features
+
+- Crystal-clear voice (Opus 64kbps, fullband audio)
+- Automatic gain control — everyone sounds the same volume
+- Noise suppression with adjustable sensitivity
+- Mute / Deafen with distinct audio feedback tones
+- Push-to-talk or open mic modes
+- Spaces & Channels (like Discord servers)
+- Text chat within channels
+- Per-user volume control
+- Global hotkey support (mute/deafen/PTT)
+- Dark mode
+- Performance panel (CPU, memory, latency)
+
+## Getting Started
+
+1. **Download and install** from the [Releases page](https://github.com/jhando95/voxlink/releases/latest)
+2. **Open Voxlink** and pick a username
+3. **Create or join a Space** — share the invite code with friends
+4. **Talk**
+
+The public server is already running — no setup needed.
+
+## Self-Hosting
+
+Want to run your own server? The installer includes `Voxlink-Server.exe`:
 
 ```sh
-# Terminal 1: Start the signaling server
-cargo run --release --bin signaling_server
-
-# Terminal 2: Start the desktop app
-cargo run --release --bin app_desktop
+Voxlink-Server.exe
 ```
 
-Then in the app:
-1. Enter your name
-2. Click "Connect" (default: ws://127.0.0.1:9090)
-3. Click "Create Room" or enter a room code and "Join"
-4. Talk! Use Mute/Deafen/PTT controls as needed
+Runs on port 9090. Tell your friends to connect to `ws://YOUR_IP:9090`.
 
-To test with multiple users, run `app_desktop` in separate terminals.
+## Building from Source
 
-## Workspace Structure
+```sh
+cargo build --release
+```
+
+Requires: Rust, CMake, C++ build tools (for libopus).
+
+## Architecture
 
 ```
 crates/
 ├── app_desktop/        Main binary — startup, wiring, lifecycle
 ├── signaling_server/   WebSocket server — room management, audio relay
 ├── ui_shell/           Slint UI — views, components, user interaction
-├── audio_core/         cpal-based capture/playback, encode/decode
+├── audio_core/         Audio capture/playback, Opus encode/decode, DSP
 ├── voice_engine/       Mute/deafen/PTT logic, voice session state
 ├── net_control/        WebSocket client for signaling + audio transport
 ├── media_transport/    Wires audio engine to network client
@@ -36,31 +75,8 @@ crates/
 └── shared_types/       Shared enums, DTOs, protocol messages
 ```
 
-## Features
+Audio pipeline: cpal capture → high-pass filter → noise gate → AGC → de-esser → Opus encode → WebSocket → Opus decode (with PLC) → jitter buffer → soft clip → cpal playback
 
-- **Create/join rooms** by 6-digit code
-- **Real-time voice** via cpal audio capture/playback
-- **Open mic** and **push-to-talk** modes
-- **Mute/deafen** controls
-- **Participant list** with mute indicators
-- **Input/output device selection** from real system devices
-- **Performance panel** showing real CPU, memory, uptime
-- **Settings persistence** to JSON config file
-- **Dark theme** native Slint UI
-- **WebSocket signaling** + audio relay server
+## License
 
-## Architecture
-
-- Audio captured at 48kHz mono, encoded to i16 for wire, decoded to f32 for playback
-- Server relays audio as binary WebSocket frames
-- Signaling uses JSON messages over the same WebSocket connection
-- UI polls for network events at 60fps via Slint timer
-- Tokio runtime handles async networking on 2 worker threads
-- Audio callbacks run on dedicated OS threads (never blocked by UI/network)
-
-## Building
-
-```sh
-cargo build              # debug
-cargo build --release    # optimized
-```
+Private. All rights reserved.
