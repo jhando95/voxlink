@@ -1,0 +1,15 @@
+[package]
+name = "signaling_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared_types = { path = "../shared_types" }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

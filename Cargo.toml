@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/app_desktop",
+    "crates/ui_shell",
+    "crates/audio_core",
+    "crates/voice_engine",
+    "crates/net_control",
+    "crates/media_transport",
+    "crates/perf_metrics",
+    "crates/config_store",
+    "crates/shared_types",
+    "crates/signaling_server",
+    "crates/integration_tests",
+]
+
+[workspace.dependencies]
+slint = "1.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+directories = "6"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "time", "io-util"] }
+tokio-tungstenite = "0.26"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+futures-util = "0.3"
+cpal = "0.15"
+sysinfo = "0.35"
+anyhow = "1"
+audiopus = "0.3.0-rc.0"
+device_query = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1

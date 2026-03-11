@@ -1,0 +1,263 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use shared_types::{AppView, SignalMessage};
+use slint::ComponentHandle;
+use tokio::sync::Mutex as TokioMutex;
+use ui_shell::MainWindow;
+
+use crate::helpers;
+
+pub fn setup_create_space(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_create_space(move || {
+        let Some(w) = window_weak.upgrade() else { return; };
+        let name = w.get_space_name().to_string().trim().to_string();
+        let user_name = w.get_user_name().to_string().trim().to_string();
+        if name.is_empty() {
+            w.set_status_text("Enter a space name".into());
+            return;
+        }
+        if user_name.is_empty() {
+            w.set_status_text("Enter your name first".into());
+            return;
+        }
+        let network = network.clone();
+        w.set_status_text("Creating space...".into());
+        let window_weak = window_weak.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            if let Err(e) = net
+                .send_signal(&SignalMessage::CreateSpace { name, user_name })
+                .await
+            {
+                log::error!("Failed to create space: {e}");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_status_text("Failed: Not connected".into());
+                }
+            }
+        });
+    });
+}
+
+pub fn setup_join_space(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_join_space(move || {
+        let Some(w) = window_weak.upgrade() else { return; };
+        let invite_code = w.get_space_invite_code().to_string().trim().to_string();
+        let user_name = w.get_user_name().to_string().trim().to_string();
+        if invite_code.is_empty() {
+            w.set_status_text("Enter an invite code".into());
+            return;
+        }
+        if user_name.is_empty() {
+            w.set_status_text("Enter your name first".into());
+            return;
+        }
+        let network = network.clone();
+        w.set_status_text("Joining space...".into());
+        let window_weak = window_weak.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            if let Err(e) = net
+                .send_signal(&SignalMessage::JoinSpace { invite_code, user_name })
+                .await
+            {
+                log::error!("Failed to join space: {e}");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_status_text("Failed: Not connected".into());
+                }
+            }
+        });
+    });
+}
+
+pub fn setup_select_space(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_select_space(move |space_id| {
+        let Some(w) = window_weak.upgrade() else { return; };
+        let space_id_str = space_id.to_string();
+        w.set_current_space_id(space_id.clone());
+
+        // Show cached space data immediately for responsiveness
+        let invite_code = {
+            let s = state.borrow();
+            let mut invite = None;
+            if let Some(ref space) = s.space {
+                if space.id == space_id_str {
+                    w.set_current_space_name(space.name.clone().into());
+                    w.set_current_space_invite(space.invite_code.clone().into());
+                    ui_shell::set_channels(&w, &space.channels);
+                    ui_shell::set_members(&w, &space.members);
+                    invite = Some(space.invite_code.clone());
+                }
+            }
+            invite
+        };
+
+        w.set_current_view(ui_shell::view_to_index(AppView::Space));
+        state.borrow_mut().current_view = AppView::Space;
+
+        // Re-join the space on the server so the peer is registered
+        let invite_code = invite_code.or_else(|| {
+            let cfg = config_store::load_config();
+            cfg.saved_spaces.iter()
+                .find(|s| s.id == space_id_str)
+                .map(|s| s.invite_code.clone())
+        });
+        if let Some(code) = invite_code {
+            let user_name = w.get_user_name().to_string();
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net.send_signal(&SignalMessage::JoinSpace {
+                    invite_code: code,
+                    user_name,
+                }).await;
+            });
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn setup_leave_space(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    voice: &Rc<RefCell<voice_engine::VoiceSession>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    audio_started: &Rc<RefCell<bool>>,
+    audio_active_flag: &Arc<AtomicBool>,
+    speaking_ticks: &Rc<RefCell<std::collections::HashMap<String, u64>>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    let network = network.clone();
+    let audio = audio.clone();
+    let rt_handle = rt_handle.clone();
+    let audio_active_flag = audio_active_flag.clone();
+    let audio_started = audio_started.clone();
+    let voice = voice.clone();
+    let speaking_ticks = speaking_ticks.clone();
+    window.on_leave_space(move || {
+        log::info!("Leaving space");
+
+        // If in a channel, clean up audio
+        if *audio_started.borrow() {
+            voice.borrow_mut().reset();
+            *audio_started.borrow_mut() = false;
+            speaking_ticks.borrow_mut().clear();
+        }
+
+        {
+            let mut s = state.borrow_mut();
+            s.room = Default::default();
+            s.space = None;
+            s.current_view = AppView::Home;
+        }
+
+        let Some(w) = window_weak.upgrade() else { return; };
+        w.set_current_view(ui_shell::view_to_index(AppView::Home));
+        w.set_current_space_id(slint::SharedString::default());
+        w.set_current_space_name(slint::SharedString::default());
+        w.set_current_space_invite(slint::SharedString::default());
+        w.set_in_space_channel(false);
+        w.set_room_code(slint::SharedString::default());
+        w.set_is_muted(false);
+        w.set_is_deafened(false);
+        w.set_status_text("Connected".into());
+        w.set_window_title("Voxlink".into());
+
+        // Repopulate saved spaces list so the space still shows on Home view
+        let cfg = config_store::load_config();
+        if !cfg.saved_spaces.is_empty() {
+            let space_infos: Vec<shared_types::SpaceInfo> = cfg.saved_spaces.iter()
+                .map(|s| shared_types::SpaceInfo {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    invite_code: s.invite_code.clone(),
+                    member_count: 0,
+                    channel_count: 0,
+                })
+                .collect();
+            ui_shell::set_spaces(&w, &space_infos);
+        }
+
+        let network = network.clone();
+        let audio = audio.clone();
+        let flag = audio_active_flag.clone();
+        rt_handle.spawn(async move {
+            {
+                let net = network.lock().await;
+                let _ = net.send_signal(&SignalMessage::LeaveSpace).await;
+            }
+            let mut aud = audio.lock().await;
+            aud.stop_capture();
+            aud.stop_playback();
+            flag.store(false, Ordering::Relaxed);
+        });
+    });
+}
+
+pub fn setup_copy_invite_code(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_copy_invite_code(move || {
+        let Some(w) = window_weak.upgrade() else { return; };
+        let code = w.get_current_space_invite().to_string();
+        if !code.is_empty() {
+            if helpers::copy_to_clipboard(&code) {
+                w.set_status_text("Invite code copied".into());
+            } else {
+                w.set_status_text("Failed to copy to clipboard".into());
+            }
+        }
+    });
+}
+
+pub fn setup_delete_space(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_delete_space(move || {
+        let Some(w) = window_weak.upgrade() else { return; };
+        w.set_status_text("Deleting space...".into());
+        let network = network.clone();
+        let window_weak = window_weak.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            if let Err(e) = net.send_signal(&SignalMessage::DeleteSpace).await {
+                log::error!("Failed to delete space: {e}");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_status_text("Failed to delete space".into());
+                }
+            }
+        });
+    });
+}

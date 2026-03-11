@@ -1,0 +1,13 @@
+[package]
+name = "ui_shell"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+slint = { workspace = true }
+shared_types = { path = "../shared_types" }
+log = { workspace = true }
+
+[build-dependencies]
+slint-build = "1.9"

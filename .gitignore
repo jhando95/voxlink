@@ -1,0 +1,8 @@
+/target
+certs/
+*.pem
+*.key
+*.crt
+.env
+installer/redist/
+.DS_Store

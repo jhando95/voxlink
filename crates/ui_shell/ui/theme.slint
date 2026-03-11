@@ -1,0 +1,147 @@
+// ─── Data Structures ───
+
+export struct ParticipantData {
+    id: string,
+    name: string,
+    initial: string,
+    is-muted: bool,
+    is-deafened: bool,
+    is-speaking: bool,
+    volume: float,
+    color-index: int,
+}
+
+export struct PerfData {
+    cpu-percent: float,
+    memory-mb: float,
+    uptime-secs: int,
+    audio-active: bool,
+    network-connected: bool,
+    dropped-frames: int,
+}
+
+export struct SpaceData {
+    id: string,
+    name: string,
+    initial: string,
+    member-count: int,
+    channel-count: int,
+    color-index: int,
+}
+
+export struct ChatMessage {
+    sender-name: string,
+    content: string,
+    timestamp: string,
+    is-self: bool,
+    color-index: int,
+}
+
+export struct ChannelData {
+    id: string,
+    name: string,
+    peer-count: int,
+    is-voice: bool,
+}
+
+export struct MemberData {
+    id: string,
+    name: string,
+    initial: string,
+    channel-name: string,
+    is-in-voice: bool,
+    color-index: int,
+}
+
+// ─── Design Tokens — Voxlink ───
+
+export global VxTheme {
+    in-out property <bool> dark-mode: true;
+
+    // Backgrounds — deep charcoal with subtle violet warmth
+    out property <color> bg-deep: dark-mode ? #0a0a10 : #f0f1f5;
+    out property <color> bg-surface: dark-mode ? #111118 : #f7f8fa;
+    out property <color> bg-card: dark-mode ? #18181f : #ffffff;
+    out property <color> bg-elevated: dark-mode ? #202028 : #e8e9ee;
+    out property <color> bg-input: dark-mode ? #0e0e14 : #f2f3f7;
+
+    // Sidebar
+    out property <color> sidebar-bg: dark-mode ? #0c0c12 : #eef0f4;
+    out property <color> sidebar-item-hover: dark-mode ? #1a1a24 : #e2e4ec;
+    out property <color> sidebar-item-active: dark-mode ? #222230 : #d8dce8;
+    out property <color> sidebar-divider: dark-mode ? #1a1a22 : #d4d6de;
+    out property <color> sidebar-user-bg: dark-mode ? #0e0e16 : #e8eaf0;
+
+    // Borders — subtle warm gray in dark, neutral in light
+    out property <color> border-subtle: dark-mode ? #262630 : #d8dae2;
+    out property <color> border-focus: #7c5bf5;
+
+    // Text — high contrast, warm tones
+    out property <color> text-primary: dark-mode ? #ededf0 : #111118;
+    out property <color> text-secondary: dark-mode ? #8e8ea0 : #50505e;
+    out property <color> text-muted: dark-mode ? #505060 : #9898a8;
+
+    // Accent — violet-indigo, distinctive and modern
+    out property <color> accent: dark-mode ? #7c5bf5 : #6841ea;
+    out property <color> accent-hover: dark-mode ? #9478ff : #7c5bf5;
+    out property <color> accent-pressed: dark-mode ? #6841ea : #5430d0;
+    out property <color> accent-glow: dark-mode ? #7c5bf540 : #6841ea20;
+    out property <color> accent-subtle: dark-mode ? #7c5bf518 : #6841ea10;
+
+    // States
+    out property <color> success: #34d399;
+    out property <color> success-dim: #34d39928;
+    out property <color> danger: #f06060;
+    out property <color> danger-hover: #f88080;
+    out property <color> danger-pressed: #c03030;
+    out property <color> warning: #f0b040;
+
+    // Shadows / Depth
+    out property <color> card-shadow: dark-mode ? #00000060 : #0000000c;
+    out property <color> elevation-shadow: dark-mode ? #00000080 : #00000014;
+
+    // Interactive states
+    out property <color> card-hover-bg: dark-mode ? #1e1e28 : #f4f5f8;
+    out property <color> card-hover-border: dark-mode ? #303040 : #c8cad4;
+    out property <color> btn-hover-bg: dark-mode ? #282832 : #dfe1e8;
+    out property <color> row-hover-bg: dark-mode ? #141420 : #f0f1f5;
+    out property <color> speaking-row-bg: dark-mode ? #181828 : #ece8ff;
+
+    // Status badge backgrounds
+    out property <color> mute-badge-bg: dark-mode ? #301818 : #fde8e8;
+    out property <color> deafen-badge-bg: dark-mode ? #181830 : #e8e8fd;
+    out property <color> connection-lost-bg: dark-mode ? #301818 : #fde8e8;
+
+    // Header accent — violet to blue gradient
+    out property <color> header-accent-left: dark-mode ? #7c5bf5 : #6841ea;
+    out property <color> header-accent-mid: dark-mode ? #a855f7 : #9333ea;
+    out property <color> header-accent-right: dark-mode ? #38bdf8 : #0ea5e9;
+
+    // Speaking glow
+    out property <color> speaking-glow: dark-mode ? #7c5bf530 : #6841ea20;
+    out property <color> speaking-border: dark-mode ? #7c5bf580 : #6841ea60;
+
+    // Mic level glow
+    out property <color> mic-glow-green: dark-mode ? #34d39940 : #34d39930;
+    out property <color> mic-glow-yellow: dark-mode ? #f0b04040 : #f0b04030;
+    out property <color> mic-glow-red: dark-mode ? #f0606040 : #f0606030;
+
+    // Message bubbles
+    out property <color> msg-self-bg: dark-mode ? #1c1830 : #ece8ff;
+    out property <color> msg-other-bg: dark-mode ? #141420 : #f2f3f7;
+
+    // Tab bar
+    out property <color> tab-active-bg: dark-mode ? #222230 : #e0e4f0;
+
+    // Avatar color palette — vibrant and modern
+    public pure function avatar-color(idx: int) -> color {
+        if idx == 0 { return #7c5bf5; }       // violet (brand)
+        if idx == 1 { return #f06292; }       // rose
+        if idx == 2 { return #34d399; }       // emerald
+        if idx == 3 { return #fb923c; }       // amber
+        if idx == 4 { return #a855f7; }       // purple
+        if idx == 5 { return #38bdf8; }       // sky
+        if idx == 6 { return #facc15; }       // gold
+        return #f06060;                        // coral
+    }
+}

@@ -1,0 +1,269 @@
+use crate::{send_error, send_to, validate_name};
+use crate::{ChannelMeta, Peer, Room, State};
+use shared_types::{ChannelInfo, ChannelType, ParticipantInfo, SignalMessage};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Instant;
+
+use super::room::collect_room_others;
+use super::space::broadcast_to_space;
+
+pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: String, channel_type: ChannelType) {
+    if let Err(e) = validate_name(&channel_name) {
+        send_error(state, peer_id, &e).await;
+        return;
+    }
+
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+
+    let Some(space_id) = space_id else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+
+    let channel_info = {
+        let mut s = state.write().await;
+        let channel_id = s.alloc_channel_id();
+        let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
+
+        // Create room for the channel
+        s.rooms.insert(
+            room_key.clone(),
+            Room {
+                peer_ids: Vec::new(),
+                password: None,
+                created_at: Instant::now(),
+            },
+        );
+
+        let meta = ChannelMeta {
+            id: channel_id.clone(),
+            name: channel_name.clone(),
+            room_key,
+            channel_type,
+        };
+
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            space.channels.push(meta);
+        }
+
+        ChannelInfo {
+            id: channel_id,
+            name: channel_name,
+            peer_count: 0,
+            channel_type,
+        }
+    };
+
+    log::info!("Channel {} created in space {space_id} by {peer_id}", channel_info.id);
+
+    let notify = SignalMessage::ChannelCreated { channel: channel_info };
+    // Broadcast to all space members including the creator
+    let s = state.read().await;
+    if let Some(space) = s.spaces.get(&space_id) {
+        let members: Vec<Arc<Peer>> = space.member_ids.iter()
+            .filter_map(|id| s.peers.get(id).cloned())
+            .collect();
+        drop(s);
+        for peer in members {
+            send_to(&peer, &notify).await;
+        }
+    }
+}
+
+pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: String) {
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+
+    let Some(space_id) = space_id else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+
+    // Leave current channel first (if any)
+    handle_leave_channel(state, peer_id).await;
+
+    let mut s = state.write().await;
+
+    // Find channel in space
+    let channel_data = s.spaces.get(&space_id).and_then(|space| {
+        space.channels.iter()
+            .find(|ch| ch.id == channel_id)
+            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type))
+    });
+
+    let Some((room_key, channel_name, ch_type)) = channel_data else {
+        if let Some(peer) = s.peers.get(peer_id).cloned() {
+            drop(s);
+            send_to(&peer, &SignalMessage::Error { message: "Channel not found".into() }).await;
+        }
+        return;
+    };
+
+    // Text channels cannot be joined for voice
+    if ch_type == ChannelType::Text {
+        if let Some(peer) = s.peers.get(peer_id).cloned() {
+            drop(s);
+            send_to(&peer, &SignalMessage::Error { message: "Cannot join a text channel for voice".into() }).await;
+        }
+        return;
+    }
+
+    // Set peer's room_code to the channel's room_key (integrates with audio relay)
+    if let Some(peer) = s.peers.get(peer_id) {
+        peer.set_room_code(Some(room_key.clone())).await;
+    }
+
+    // Build participant list of existing peers in channel
+    let mut participants = Vec::new();
+    if let Some(room) = s.rooms.get(&room_key) {
+        for pid in &room.peer_ids {
+            if let Some(p) = s.peers.get(pid) {
+                participants.push(ParticipantInfo {
+                    id: p.id.clone(),
+                    name: p.name.lock().await.clone(),
+                    is_muted: p.is_muted.load(Ordering::Relaxed),
+                    is_deafened: p.is_deafened.load(Ordering::Relaxed),
+                });
+            }
+        }
+    }
+
+    // Add peer to room
+    if let Some(room) = s.rooms.get_mut(&room_key) {
+        room.peer_ids.push(peer_id.to_string());
+    }
+
+    // Send ChannelJoined to the joiner
+    if let Some(peer) = s.peers.get(peer_id).cloned() {
+        send_to(&peer, &SignalMessage::ChannelJoined {
+            channel_id: channel_id.clone(),
+            channel_name: channel_name.clone(),
+            participants,
+        }).await;
+    }
+
+    // Send PeerJoined to others in the channel
+    let joiner_info = if let Some(p) = s.peers.get(peer_id) {
+        Some(ParticipantInfo {
+            id: p.id.clone(),
+            name: p.name.lock().await.clone(),
+            is_muted: p.is_muted.load(Ordering::Relaxed),
+            is_deafened: p.is_deafened.load(Ordering::Relaxed),
+        })
+    } else {
+        None
+    };
+
+    if let Some(info) = joiner_info {
+        let others: Vec<Arc<Peer>> = s.rooms.get(&room_key)
+            .map(|r| {
+                r.peer_ids.iter()
+                    .filter(|pid| pid.as_str() != peer_id)
+                    .filter_map(|pid| s.peers.get(pid).cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let notify = SignalMessage::PeerJoined { peer: info };
+        for peer in &others {
+            send_to(peer, &notify).await;
+        }
+    }
+
+    drop(s);
+
+    // Broadcast MemberChannelChanged to all space members
+    let notify = SignalMessage::MemberChannelChanged {
+        member_id: peer_id.to_string(),
+        channel_id: Some(channel_id.clone()),
+        channel_name: Some(channel_name),
+    };
+    broadcast_to_space(state, &space_id, peer_id, &notify).await;
+    // Also send to self so they see their own state update
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id).cloned() {
+            drop(s);
+            send_to(&peer, &notify).await;
+        }
+    }
+
+    log::info!("Peer {peer_id} joined channel {channel_id} in space {space_id}");
+}
+
+pub async fn handle_leave_channel(state: &State, peer_id: &str) {
+    let (room_code, space_id) = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => {
+                let rc = peer.cached_room_code();
+                let sid = peer.space_id.lock().await.clone();
+                (rc, sid)
+            }
+            None => (None, None),
+        }
+    };
+
+    let Some(ref code) = room_code else { return };
+    // Only handle space channel rooms (prefixed with "sp:")
+    if !code.starts_with("sp:") { return; }
+
+    let remaining = collect_room_others(state, code, peer_id).await;
+
+    {
+        let mut s = state.write().await;
+        if let Some(room) = s.rooms.get_mut(code) {
+            room.peer_ids.retain(|pid| pid != peer_id);
+            // Don't remove space channel rooms when empty (they're persistent)
+        }
+    }
+
+    // Notify remaining channel peers
+    let notify = SignalMessage::PeerLeft { peer_id: peer_id.to_string() };
+    for peer in remaining {
+        send_to(&peer, &notify).await;
+    }
+
+    // Clear peer's room code and send ChannelLeft (single lock acquisition)
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            peer.set_room_code(None).await;
+            let peer = peer.clone();
+            drop(s);
+            send_to(&peer, &SignalMessage::ChannelLeft).await;
+        }
+    }
+
+    // Broadcast MemberChannelChanged to space members (including self for peer count update)
+    if let Some(ref sid) = space_id {
+        let notify = SignalMessage::MemberChannelChanged {
+            member_id: peer_id.to_string(),
+            channel_id: None,
+            channel_name: None,
+        };
+        broadcast_to_space(state, sid, peer_id, &notify).await;
+        // Also send to self so their channel list updates peer counts
+        {
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                send_to(&peer, &notify).await;
+            }
+        }
+    }
+
+    log::info!("Peer {peer_id} left channel");
+}

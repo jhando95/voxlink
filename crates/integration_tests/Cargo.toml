@@ -1,0 +1,11 @@
+[package]
+name = "integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+shared_types = { path = "../shared_types" }
+tokio = { workspace = true, features = ["process"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
