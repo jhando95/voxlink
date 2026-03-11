@@ -69,7 +69,7 @@ jobs:
           The server also works on the same PC as the app.
           For local testing, use: ws://127.0.0.1:9090
           "@ | Out-File -Encoding UTF8 "$outDir\README.txt"
-          Compress-Archive -Path $outDir -DestinationPath "target\Voxlink-$version-portable.zip"
+          Compress-Archive -Path $outDir -DestinationPath "target\Voxlink-$version-portable.zip" -Force
         shell: pwsh
 
       - name: Upload artifacts
