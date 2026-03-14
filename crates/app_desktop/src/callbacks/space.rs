@@ -201,6 +201,7 @@ pub fn setup_leave_space(
                     invite_code: s.invite_code.clone(),
                     member_count: 0,
                     channel_count: 0,
+                    is_owner: false,
                 })
                 .collect();
             ui_shell::set_spaces(&w, &space_infos);
@@ -258,6 +259,62 @@ pub fn setup_delete_space(
                     w.set_status_text("Failed to delete space".into());
                 }
             }
+        });
+    });
+}
+
+pub fn setup_kick_member(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_kick_member(move |member_id| {
+        let member_id = member_id.to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net.send_signal(&SignalMessage::KickMember { member_id }).await;
+        });
+    });
+}
+
+pub fn setup_ban_member(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_ban_member(move |member_id| {
+        let member_id = member_id.to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net.send_signal(&SignalMessage::BanMember { member_id }).await;
+        });
+    });
+}
+
+pub fn setup_server_mute_member(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_server_mute_member(move |member_id, muted| {
+        let member_id = member_id.to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::MuteMember {
+                    member_id,
+                    muted,
+                })
+                .await;
         });
     });
 }

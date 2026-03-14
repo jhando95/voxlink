@@ -53,6 +53,8 @@ pub struct SpaceInfo {
     pub invite_code: String,
     pub member_count: u32,
     pub channel_count: u32,
+    #[serde(default)]
+    pub is_owner: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,6 +458,7 @@ mod tests {
                 invite_code: "XyZ12345".into(),
                 member_count: 1,
                 channel_count: 1,
+                is_owner: true,
             },
             channels: vec![ChannelInfo { id: "c1".into(), name: "General".into(), peer_count: 0, channel_type: ChannelType::Voice }],
         };
@@ -482,6 +485,7 @@ mod tests {
                 invite_code: "Abc12345".into(),
                 member_count: 2,
                 channel_count: 1,
+                is_owner: false,
             },
             channels: vec![ChannelInfo { id: "c1".into(), name: "General".into(), peer_count: 1, channel_type: ChannelType::Voice }],
             members: vec![MemberInfo {

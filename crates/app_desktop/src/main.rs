@@ -221,6 +221,7 @@ fn apply_config(
                 invite_code: s.invite_code.clone(),
                 member_count: 0,
                 channel_count: 0,
+                is_owner: false,
             })
             .collect();
         ui_shell::set_spaces(window, &space_infos);

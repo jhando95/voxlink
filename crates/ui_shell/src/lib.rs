@@ -150,6 +150,7 @@ pub fn set_members(window: &MainWindow, members: &[shared_types::MemberInfo]) {
                 channel_name: m.channel_name.clone().unwrap_or_default().into(),
                 is_in_voice: m.channel_id.is_some(),
                 color_index: color_index as i32,
+                is_server_muted: false,
             }
         })
         .collect();

@@ -58,6 +58,7 @@ export component MainWindow inherits Window {
     in-out property <string> current-space-id: "";
     in-out property <string> current-space-name: "";
     in-out property <string> current-space-invite: "";
+    in-out property <bool> is-space-owner: false;
     in-out property <[ChannelData]> channels: [];
     in-out property <[MemberData]> members: [];
     in-out property <string> new-channel-name: "";
@@ -122,6 +123,9 @@ export component MainWindow inherits Window {
     callback edit-text-message(/* message-id */ string, /* new-content */ string);
     callback delete-text-message(/* message-id */ string);
     callback react-to-message(/* message-id */ string, /* emoji */ string);
+    callback kick-member(/* member-id */ string);
+    callback ban-member(/* member-id */ string);
+    callback server-mute-member(/* member-id */ string, /* muted */ bool);
 
     VerticalLayout {
         spacing: 0px;
@@ -444,42 +448,100 @@ export component MainWindow inherits Window {
                                 for member in root.members : Rectangle {
                                     height: 30px;
                                     border-radius: 5px;
+                                    background: member-hover.has-hover ? VxTheme.sidebar-item-hover : transparent;
 
-                                    HorizontalLayout {
-                                        padding-left: 8px;
-                                        padding-right: 8px;
-                                        spacing: 7px;
+                                    member-hover := TouchArea {
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            spacing: 7px;
 
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                width: 20px; height: 20px; border-radius: 5px;
-                                                background: VxTheme.avatar-color(member.color-index);
-                                                Text {
-                                                    text: member.initial;
-                                                    color: #f0f0f8;
-                                                    font-size: 8px; font-weight: 700;
-                                                    horizontal-alignment: center; vertical-alignment: center;
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    width: 20px; height: 20px; border-radius: 5px;
+                                                    background: VxTheme.avatar-color(member.color-index);
+                                                    Text {
+                                                        text: member.initial;
+                                                        color: #f0f0f8;
+                                                        font-size: 8px; font-weight: 700;
+                                                        horizontal-alignment: center; vertical-alignment: center;
+                                                    }
                                                 }
                                             }
-                                        }
 
-                                        VerticalLayout {
-                                            alignment: center;
-                                            horizontal-stretch: 1;
-                                            Text {
-                                                text: member.name;
-                                                color: VxTheme.text-primary;
-                                                font-size: 10px; font-weight: 500;
-                                                overflow: elide;
+                                            VerticalLayout {
+                                                alignment: center;
+                                                horizontal-stretch: 1;
+                                                Text {
+                                                    text: member.name;
+                                                    color: member.is-server-muted ? VxTheme.text-muted : VxTheme.text-primary;
+                                                    font-size: 10px; font-weight: 500;
+                                                    overflow: elide;
+                                                }
                                             }
-                                        }
 
-                                        if member.is-in-voice : VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                width: 6px; height: 6px; border-radius: 3px;
-                                                background: VxTheme.success;
+                                            if member.is-server-muted : VerticalLayout {
+                                                alignment: center;
+                                                Text {
+                                                    text: "\u{1F507}";
+                                                    font-size: 9px;
+                                                }
+                                            }
+
+                                            if member.is-in-voice : VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    width: 6px; height: 6px; border-radius: 3px;
+                                                    background: VxTheme.success;
+                                                }
+                                            }
+
+                                            // Moderation buttons (owner only, on hover)
+                                            if root.is-space-owner && member-hover.has-hover : HorizontalLayout {
+                                                spacing: 2px;
+                                                // Server mute toggle
+                                                Rectangle {
+                                                    width: 20px; height: 20px; border-radius: 4px;
+                                                    background: mute-btn.has-hover ? VxTheme.bg-elevated : transparent;
+                                                    mute-btn := TouchArea {
+                                                        clicked => { root.server-mute-member(member.id, !member.is-server-muted); }
+                                                        Text {
+                                                            text: member.is-server-muted ? "\u{1F50A}" : "\u{1F507}";
+                                                            font-size: 10px;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // Kick
+                                                Rectangle {
+                                                    width: 20px; height: 20px; border-radius: 4px;
+                                                    background: kick-btn.has-hover ? VxTheme.warning.transparentize(0.7) : transparent;
+                                                    kick-btn := TouchArea {
+                                                        clicked => { root.kick-member(member.id); }
+                                                        Text {
+                                                            text: "\u{1F462}";
+                                                            font-size: 10px;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // Ban
+                                                Rectangle {
+                                                    width: 20px; height: 20px; border-radius: 4px;
+                                                    background: ban-btn.has-hover ? VxTheme.danger.transparentize(0.7) : transparent;
+                                                    ban-btn := TouchArea {
+                                                        clicked => { root.ban-member(member.id); }
+                                                        Text {
+                                                            text: "\u{26D4}";
+                                                            font-size: 10px;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }

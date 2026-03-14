@@ -55,6 +55,9 @@ pub fn setup(
     space::setup_leave_space(window, state, voice, network, audio, audio_started, audio_active_flag, speaking_ticks, rt_handle);
     space::setup_copy_invite_code(window);
     space::setup_delete_space(window, network, rt_handle);
+    space::setup_kick_member(window, network, rt_handle);
+    space::setup_ban_member(window, network, rt_handle);
+    space::setup_server_mute_member(window, network, rt_handle);
 
     // Channel
     channel::setup_create_channel(window, network, rt_handle);

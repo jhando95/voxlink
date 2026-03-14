@@ -80,6 +80,7 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
         invite_code: invite_code.clone(),
         member_count: 1,
         channel_count: 1,
+        is_owner: true,
     };
 
     let channels = vec![ChannelInfo {
@@ -198,6 +199,7 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
             invite_code: space.invite_code.clone(),
             member_count: space.member_ids.len() as u32,
             channel_count: space.channels.len() as u32,
+            is_owner: space.owner_id == peer_id,
         };
 
         let channels: Vec<ChannelInfo> = space.channels.iter().map(|ch| {

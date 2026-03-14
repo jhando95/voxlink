@@ -32,6 +32,7 @@ pub fn handle_space_created(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_is_space_owner(space.is_owner);
     ui_shell::set_channels(w, channels);
     ui_shell::set_members(w, &[]);
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
@@ -68,6 +69,7 @@ pub fn handle_space_joined(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_is_space_owner(space.is_owner);
     ui_shell::set_channels(w, channels);
     ui_shell::set_members(w, members);
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
