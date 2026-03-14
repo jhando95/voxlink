@@ -892,6 +892,7 @@ async fn test_create_space() {
     assert_eq!(space.invite_code.len(), 8);
     assert_eq!(space.member_count, 1);
     assert_eq!(space.channel_count, 1);
+    assert!(space.is_owner, "Creator should be owner");
     assert_eq!(channels.len(), 1);
     assert_eq!(channels[0].name, "General");
     assert_eq!(channels[0].channel_type, shared_types::ChannelType::Voice);
@@ -911,6 +912,7 @@ async fn test_join_space_by_invite_code() {
     assert_eq!(joined_space.id, space.id);
     assert_eq!(joined_space.name, "Test Space");
     assert_eq!(joined_space.member_count, 2);
+    assert!(!joined_space.is_owner, "Joiner should not be owner");
     assert_eq!(channels.len(), 1);
     assert_eq!(channels[0].name, "General");
     // Members should include Alice
