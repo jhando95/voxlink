@@ -1357,3 +1357,397 @@ async fn test_join_space_shows_channels_with_type() {
     let gaming = channels.iter().find(|c| c.name == "gaming").unwrap();
     assert_eq!(gaming.channel_type, shared_types::ChannelType::Voice);
 }
+
+// ─── Authentication Tests ───
+
+#[tokio::test]
+async fn test_authenticate_new_user() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    alice
+        .send_signal(&SignalMessage::Authenticate {
+            token: None,
+            user_name: "Alice".into(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::Authenticated { token: _, user_id } => {
+            // token may be empty when no DB is configured (test servers have no DB)
+            assert!(!user_id.is_empty(), "Should receive a user_id");
+        }
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_authenticate_restore_identity() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    // First auth — get a token
+    alice
+        .send_signal(&SignalMessage::Authenticate {
+            token: None,
+            user_name: "Alice".into(),
+        })
+        .await;
+    let (token, user_id) = match alice.recv_signal().await {
+        SignalMessage::Authenticated { token, user_id } => (token, user_id),
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    };
+
+    // Reconnect with the same token
+    let mut alice2 = server.connect().await;
+    alice2
+        .send_signal(&SignalMessage::Authenticate {
+            token: Some(token.clone()),
+            user_name: "Alice Renamed".into(),
+        })
+        .await;
+    match alice2.recv_signal().await {
+        SignalMessage::Authenticated {
+            token: t2,
+            user_id: uid2,
+        } => {
+            assert_eq!(t2, token, "Should get the same token back");
+            assert_eq!(uid2, user_id, "Should restore the same user_id");
+        }
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    }
+}
+
+// ─── Chat Edit/Delete/React Tests ───
+
+#[tokio::test]
+async fn test_chat_edit_message() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Chat Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    // Drain MemberOnline from Alice
+    let _ = alice.recv_signal().await;
+
+    // Alice creates a text channel
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".into(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let channel_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel, .. } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+    // Bob gets ChannelCreated broadcast
+    let _ = bob.recv_signal().await;
+
+    // Both select the text channel
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = alice.recv_signal().await; // TextChannelHistory
+
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = bob.recv_signal().await; // TextChannelHistory
+
+    // Alice sends a message
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: channel_id.clone(),
+            content: "Hello world".into(),
+        })
+        .await;
+
+    // Both receive the message
+    let msg_id = match alice.recv_signal().await {
+        SignalMessage::TextMessage { message, .. } => {
+            assert_eq!(message.content, "Hello world");
+            assert!(!message.message_id.is_empty());
+            message.message_id
+        }
+        other => panic!("Expected TextMessage, got: {:?}", other),
+    };
+    let _ = bob.recv_signal().await; // TextMessage
+
+    // Alice edits the message
+    alice
+        .send_signal(&SignalMessage::EditTextMessage {
+            channel_id: channel_id.clone(),
+            message_id: msg_id.clone(),
+            new_content: "Hello world (edited)".into(),
+        })
+        .await;
+
+    // Both should receive TextMessageEdited
+    match alice.recv_signal().await {
+        SignalMessage::TextMessageEdited {
+            message_id,
+            new_content,
+            ..
+        } => {
+            assert_eq!(message_id, msg_id);
+            assert_eq!(new_content, "Hello world (edited)");
+        }
+        other => panic!("Expected TextMessageEdited, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::TextMessageEdited { message_id, .. } => {
+            assert_eq!(message_id, msg_id);
+        }
+        other => panic!("Expected TextMessageEdited, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_chat_delete_message() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Delete Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    let _ = alice.recv_signal().await; // MemberOnline
+
+    // Create text channel
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".into(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let channel_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel, .. } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+    let _ = bob.recv_signal().await;
+
+    // Select channel
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = alice.recv_signal().await;
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = bob.recv_signal().await;
+
+    // Alice sends a message
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: channel_id.clone(),
+            content: "Delete me".into(),
+        })
+        .await;
+    let msg_id = match alice.recv_signal().await {
+        SignalMessage::TextMessage { message, .. } => message.message_id,
+        other => panic!("Expected TextMessage, got: {:?}", other),
+    };
+    let _ = bob.recv_signal().await;
+
+    // Alice deletes the message
+    alice
+        .send_signal(&SignalMessage::DeleteTextMessage {
+            channel_id: channel_id.clone(),
+            message_id: msg_id.clone(),
+        })
+        .await;
+
+    // Both should receive TextMessageDeleted
+    match alice.recv_signal().await {
+        SignalMessage::TextMessageDeleted { message_id, .. } => {
+            assert_eq!(message_id, msg_id);
+        }
+        other => panic!("Expected TextMessageDeleted, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::TextMessageDeleted { message_id, .. } => {
+            assert_eq!(message_id, msg_id);
+        }
+        other => panic!("Expected TextMessageDeleted, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_chat_react_to_message() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "React Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    let _ = alice.recv_signal().await; // MemberOnline
+
+    // Create text channel + select
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".into(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let channel_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel, .. } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+    let _ = bob.recv_signal().await;
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = alice.recv_signal().await;
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    let _ = bob.recv_signal().await;
+
+    // Alice sends a message
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: channel_id.clone(),
+            content: "React to me".into(),
+        })
+        .await;
+    let msg_id = match alice.recv_signal().await {
+        SignalMessage::TextMessage { message, .. } => message.message_id,
+        other => panic!("Expected TextMessage, got: {:?}", other),
+    };
+    let _ = bob.recv_signal().await;
+
+    // Bob reacts with thumbs up
+    bob.send_signal(&SignalMessage::ReactToMessage {
+            channel_id: channel_id.clone(),
+            message_id: msg_id.clone(),
+            emoji: "👍".into(),
+        })
+        .await;
+
+    // Both should receive MessageReaction
+    let check_reaction = |msg: SignalMessage| match msg {
+        SignalMessage::MessageReaction {
+            message_id, emoji, ..
+        } => {
+            assert_eq!(message_id, msg_id);
+            assert_eq!(emoji, "👍");
+        }
+        other => panic!("Expected MessageReaction, got: {:?}", other),
+    };
+    check_reaction(alice.recv_signal().await);
+    check_reaction(bob.recv_signal().await);
+}
+
+// ─── Moderation Tests ───
+
+#[tokio::test]
+async fn test_kick_member() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await; // owner
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Kick Space", "Alice").await;
+    let (_joined, _, _members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    // Alice receives MemberOnline for Bob
+    let bob_id = match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => {
+            assert_eq!(member.name, "Bob");
+            member.id
+        }
+        other => panic!("Expected MemberOnline, got: {:?}", other),
+    };
+
+    // Alice kicks Bob
+    alice
+        .send_signal(&SignalMessage::KickMember {
+            member_id: bob_id.clone(),
+        })
+        .await;
+
+    // Bob should receive Kicked
+    match bob.recv_signal().await {
+        SignalMessage::Kicked { reason } => {
+            assert!(reason.contains("kicked"), "Reason: {reason}");
+        }
+        other => panic!("Expected Kicked, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_non_owner_cannot_kick() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Auth Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    // Drain MemberOnline from alice
+    let _ = alice.recv_signal().await;
+
+    // Bob tries to kick Alice (should fail — Bob is not the owner)
+    bob.send_signal(&SignalMessage::KickMember {
+            member_id: "p1".into(), // Alice's likely ID
+        })
+        .await;
+
+    match bob.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("owner"),
+                "Error should mention ownership: {message}"
+            );
+        }
+        other => panic!("Expected Error, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_mute_member() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Mute Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    let bob_id = match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => member.id,
+        other => panic!("Expected MemberOnline, got: {:?}", other),
+    };
+
+    // Alice server-mutes Bob
+    alice
+        .send_signal(&SignalMessage::MuteMember {
+            member_id: bob_id.clone(),
+            muted: true,
+        })
+        .await;
+
+    // Both should receive MemberMuted
+    match alice.recv_signal().await {
+        SignalMessage::MemberMuted { member_id, muted } => {
+            assert_eq!(member_id, bob_id);
+            assert!(muted);
+        }
+        other => panic!("Expected MemberMuted, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::MemberMuted { member_id, muted } => {
+            assert_eq!(member_id, bob_id);
+            assert!(muted);
+        }
+        other => panic!("Expected MemberMuted, got: {:?}", other),
+    }
+}

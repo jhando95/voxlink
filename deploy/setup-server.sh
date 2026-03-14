@@ -84,6 +84,10 @@ sudo mkdir -p /opt/voxlink
 sudo cp "$BINARY" /opt/voxlink/signaling_server
 sudo chmod +x /opt/voxlink/signaling_server
 
+# Create writable data directory for SQLite persistence
+sudo mkdir -p /var/lib/voxlink
+sudo chown nobody:nogroup /var/lib/voxlink
+
 # Create systemd service
 sudo tee /etc/systemd/system/voxlink.service > /dev/null << 'UNIT'
 [Unit]
@@ -95,6 +99,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=/opt/voxlink/signaling_server
 Environment=PV_ADDR=0.0.0.0:9090
+Environment=PV_DB_PATH=/var/lib/voxlink/voxlink.db
 Environment=RUST_LOG=info
 Restart=always
 RestartSec=3
@@ -105,6 +110,7 @@ Group=nogroup
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/var/lib/voxlink
 
 [Install]
 WantedBy=multi-user.target
