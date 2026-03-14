@@ -29,12 +29,19 @@ REMOTE_DIR="~/voxlink"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Use oracle SSH key if available
+SSH_KEY=""
+if [ -f "$HOME/.ssh/oracle_key" ]; then
+    SSH_KEY="-i $HOME/.ssh/oracle_key"
+fi
+export RSYNC_RSH="ssh $SSH_KEY"
+
 echo ""
 echo "Deploying Voxlink server to $SERVER..."
 echo ""
 
 # Create remote directory structure
-ssh "$SERVER" "mkdir -p ${REMOTE_DIR}/crates/shared_types ${REMOTE_DIR}/crates/signaling_server"
+ssh $SSH_KEY "$SERVER" "mkdir -p ${REMOTE_DIR}/crates/shared_types ${REMOTE_DIR}/crates/signaling_server"
 
 # Upload only what's needed for the server build
 echo "[1/3] Uploading source code..."
@@ -63,7 +70,7 @@ rsync -avz --progress \
 
 echo ""
 echo "[2/3] Building and installing on server..."
-ssh "$SERVER" "cd ${REMOTE_DIR} && chmod +x setup-server.sh && ./setup-server.sh"
+ssh $SSH_KEY "$SERVER" "cd ${REMOTE_DIR} && chmod +x setup-server.sh && ./setup-server.sh"
 
 echo ""
 echo "[3/3] Done!"
