@@ -75,4 +75,7 @@ pub fn setup(
     // Chat
     chat::setup_select_text_channel(window, network, rt_handle);
     chat::setup_send_text_message(window, network, rt_handle);
+    chat::setup_edit_text_message(window, network, rt_handle);
+    chat::setup_delete_text_message(window, network, rt_handle);
+    chat::setup_react_to_message(window, network, rt_handle);
 }

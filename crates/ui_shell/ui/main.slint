@@ -69,6 +69,8 @@ export component MainWindow inherits Window {
     in-out property <string> chat-channel-id: "";
     in-out property <string> chat-channel-name: "";
     in-out property <string> chat-input: "";
+    in-out property <string> editing-message-id: "";
+    in-out property <string> editing-original-content: "";
 
     // Notifications
     in-out property <bool> notifications-enabled: true;
@@ -117,6 +119,9 @@ export component MainWindow inherits Window {
     callback output-volume-changed(float);
     callback select-text-channel(string);
     callback send-text-message();
+    callback edit-text-message(/* message-id */ string, /* new-content */ string);
+    callback delete-text-message(/* message-id */ string);
+    callback react-to-message(/* message-id */ string, /* emoji */ string);
 
     VerticalLayout {
         spacing: 0px;
@@ -1977,55 +1982,118 @@ export component MainWindow inherits Window {
 
                             for msg in root.chat-messages : Rectangle {
                                 border-radius: 8px;
-                                background: msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
+                                background: msg-hover.has-hover
+                                    ? (msg.is-self ? VxTheme.msg-self-bg.darker(0.05) : VxTheme.msg-other-bg.darker(0.05))
+                                    : (msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg);
+                                border-color: root.editing-message-id == msg.message-id ? VxTheme.accent : transparent;
+                                border-width: root.editing-message-id == msg.message-id ? 1px : 0px;
 
-                                VerticalLayout {
-                                    padding: 10px;
-                                    padding-top: 7px;
-                                    padding-bottom: 7px;
-                                    spacing: 2px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        Text {
-                                            text: msg.sender-name;
-                                            color: msg.is-self ? VxTheme.accent : VxTheme.avatar-color(msg.color-index);
-                                            font-size: 10px; font-weight: 600;
+                                msg-hover := TouchArea {
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        padding-top: 7px;
+                                        padding-bottom: 7px;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            Text {
+                                                text: msg.sender-name;
+                                                color: msg.is-self ? VxTheme.accent : VxTheme.avatar-color(msg.color-index);
+                                                font-size: 10px; font-weight: 600;
+                                            }
+                                            Text {
+                                                text: msg.timestamp;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                vertical-alignment: center;
+                                            }
+                                            if msg.edited : Text {
+                                                text: "(edited)";
+                                                color: VxTheme.text-muted;
+                                                font-size: 8px;
+                                                vertical-alignment: center;
+                                            }
+                                            // Spacer
+                                            Rectangle { horizontal-stretch: 1; }
+                                            // Action buttons (visible on hover)
+                                            if msg-hover.has-hover : HorizontalLayout {
+                                                spacing: 2px;
+                                                // Quick reactions
+                                                for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F602}", "\u{1F389}"] : Rectangle {
+                                                    width: 22px; height: 20px;
+                                                    border-radius: 4px;
+                                                    background: react-ta.has-hover ? VxTheme.bg-elevated : transparent;
+                                                    react-ta := TouchArea {
+                                                        clicked => { root.react-to-message(msg.message-id, emoji); }
+                                                        Text {
+                                                            text: emoji;
+                                                            font-size: 11px;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // Edit button (own messages only)
+                                                if msg.is-self : Rectangle {
+                                                    width: 22px; height: 20px;
+                                                    border-radius: 4px;
+                                                    background: edit-ta.has-hover ? VxTheme.bg-elevated : transparent;
+                                                    edit-ta := TouchArea {
+                                                        clicked => {
+                                                            root.editing-message-id = msg.message-id;
+                                                            root.editing-original-content = msg.content;
+                                                            root.chat-input = msg.content;
+                                                        }
+                                                        Text {
+                                                            text: "\u{270F}";
+                                                            font-size: 11px;
+                                                            color: VxTheme.text-secondary;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // Delete button (own messages only)
+                                                if msg.is-self : Rectangle {
+                                                    width: 22px; height: 20px;
+                                                    border-radius: 4px;
+                                                    background: del-ta.has-hover ? VxTheme.danger : transparent;
+                                                    del-ta := TouchArea {
+                                                        clicked => { root.delete-text-message(msg.message-id); }
+                                                        Text {
+                                                            text: "\u{2715}";
+                                                            font-size: 11px;
+                                                            color: del-ta.has-hover ? VxTheme.text-primary : VxTheme.text-secondary;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         Text {
-                                            text: msg.timestamp;
-                                            color: VxTheme.text-muted;
-                                            font-size: 9px;
-                                            vertical-alignment: center;
+                                            text: msg.content;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
                                         }
-                                        if msg.edited : Text {
-                                            text: "(edited)";
-                                            color: VxTheme.text-muted;
-                                            font-size: 8px;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                    Text {
-                                        text: msg.content;
-                                        color: VxTheme.text-primary;
-                                        font-size: 12px;
-                                        wrap: word-wrap;
-                                    }
-                                    if msg.reactions != "" : HorizontalLayout {
-                                        spacing: 4px;
-                                        Rectangle {
-                                            height: 20px;
-                                            border-radius: 10px;
-                                            background: VxTheme.bg-elevated;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            HorizontalLayout {
-                                                padding-left: 6px;
-                                                padding-right: 6px;
-                                                Text {
-                                                    text: msg.reactions;
-                                                    color: VxTheme.text-secondary;
-                                                    font-size: 10px;
-                                                    vertical-alignment: center;
+                                        if msg.reactions != "" : HorizontalLayout {
+                                            spacing: 4px;
+                                            Rectangle {
+                                                height: 20px;
+                                                border-radius: 10px;
+                                                background: VxTheme.bg-elevated;
+                                                border-color: VxTheme.border-subtle;
+                                                border-width: 1px;
+                                                HorizontalLayout {
+                                                    padding-left: 6px;
+                                                    padding-right: 6px;
+                                                    Text {
+                                                        text: msg.reactions;
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        vertical-alignment: center;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2036,29 +2104,84 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 50px;
                         background: VxTheme.bg-surface;
-                        Divider { y: 0px; }
-                        HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            spacing: 8px;
-                            alignment: center;
-                            VxInput {
-                                text <=> root.chat-input;
-                                placeholder: "Message #" + root.chat-channel-name;
-                                horizontal-stretch: 1;
-                                accepted => {
-                                    if root.chat-input != "" {
-                                        root.send-text-message();
+                        VerticalLayout {
+                            // Edit mode banner
+                            if root.editing-message-id != "" : Rectangle {
+                                height: 28px;
+                                background: VxTheme.accent.transparentize(0.85);
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 8px;
+                                    alignment: center;
+                                    Text {
+                                        text: "Editing message";
+                                        color: VxTheme.accent;
+                                        font-size: 10px; font-weight: 500;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                    }
+                                    TouchArea {
+                                        width: 50px;
+                                        clicked => {
+                                            root.editing-message-id = "";
+                                            root.editing-original-content = "";
+                                            root.chat-input = "";
+                                        }
+                                        Text {
+                                            text: "Cancel";
+                                            color: VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                 }
                             }
-                            VxButton {
-                                label: "Send";
-                                accent: true;
-                                enabled: root.chat-input != "";
-                                clicked => { root.send-text-message(); }
+                            Divider { }
+                            Rectangle {
+                                height: 50px;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 8px;
+                                    alignment: center;
+                                    VxInput {
+                                        text <=> root.chat-input;
+                                        placeholder: root.editing-message-id != ""
+                                            ? "Edit message..."
+                                            : "Message #" + root.chat-channel-name;
+                                        horizontal-stretch: 1;
+                                        accepted => {
+                                            if root.chat-input != "" {
+                                                if root.editing-message-id != "" {
+                                                    root.edit-text-message(root.editing-message-id, root.chat-input);
+                                                    root.editing-message-id = "";
+                                                    root.editing-original-content = "";
+                                                    root.chat-input = "";
+                                                } else {
+                                                    root.send-text-message();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    VxButton {
+                                        label: root.editing-message-id != "" ? "Save" : "Send";
+                                        accent: true;
+                                        enabled: root.chat-input != "";
+                                        clicked => {
+                                            if root.editing-message-id != "" {
+                                                root.edit-text-message(root.editing-message-id, root.chat-input);
+                                                root.editing-message-id = "";
+                                                root.editing-original-content = "";
+                                                root.chat-input = "";
+                                            } else {
+                                                root.send-text-message();
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
