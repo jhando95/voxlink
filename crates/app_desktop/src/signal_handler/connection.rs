@@ -101,7 +101,9 @@ pub fn check_connection(
         w.set_room_status(slint::SharedString::default());
         let room_code = w.get_room_code().to_string();
         let user_name = w.get_user_name().to_string();
+        let space_invite = w.get_current_space_invite().to_string();
         let is_in_room = w.get_current_view() == 1 && !room_code.is_empty();
+        let is_in_space = !space_invite.is_empty();
         let is_muted = w.get_is_muted();
         let is_deafened = w.get_is_deafened();
         let network = network.clone();
@@ -116,6 +118,17 @@ pub fn check_connection(
                     user_name: user_name.clone(),
                 })
                 .await;
+
+            // Rejoin space if we were in one
+            if is_in_space {
+                log::info!("Auto-rejoining space");
+                let _ = net
+                    .send_signal(&SignalMessage::JoinSpace {
+                        invite_code: space_invite,
+                        user_name: user_name.clone(),
+                    })
+                    .await;
+            }
 
             if is_in_room {
                 log::info!("Auto-rejoining room {room_code}");
