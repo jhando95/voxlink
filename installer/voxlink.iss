@@ -3,7 +3,7 @@
 ; Bundles VC++ Runtime so end users need ZERO prerequisites
 
 #define MyAppName "Voxlink"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Voxlink"
 #define MyAppURL "https://github.com/voxlink"
 #define MyAppExeName "Voxlink.exe"
@@ -24,8 +24,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
-; Uncomment the next line when you have an icon file:
-; SetupIconFile=..\assets\voxlink.ico
+SetupIconFile=..\assets\icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
