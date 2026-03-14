@@ -113,8 +113,23 @@ pub fn process_signals(
             // Moderation (Milestone 6)
             SignalMessage::Kicked { reason } => {
                 log::warn!("Kicked: {reason}");
+                // Clean up space/room state
+                {
+                    let mut s = state.borrow_mut();
+                    s.room = Default::default();
+                    s.space = None;
+                    s.current_view = shared_types::AppView::Home;
+                }
+                w.set_current_view(0);
+                w.set_current_space_id(slint::SharedString::default());
+                w.set_current_space_name(slint::SharedString::default());
+                w.set_current_space_invite(slint::SharedString::default());
+                w.set_is_space_owner(false);
+                w.set_in_space_channel(false);
+                w.set_room_code(slint::SharedString::default());
+                w.set_is_muted(false);
+                w.set_is_deafened(false);
                 w.set_status_text(reason.clone().into());
-                w.set_current_view(0); // Go to home
                 if w.get_notifications_enabled() {
                     crate::helpers::send_notification("Voxlink", reason);
                 }

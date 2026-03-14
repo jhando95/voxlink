@@ -98,6 +98,7 @@ pub fn handle_space_deleted(
     w.set_is_muted(false);
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
+    w.set_is_space_owner(false);
     w.set_mic_level(0.0);
     w.set_window_title("Voxlink".into());
     w.set_status_text("Space was deleted".into());

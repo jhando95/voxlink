@@ -184,6 +184,7 @@ pub fn setup_leave_space(
         w.set_current_space_id(slint::SharedString::default());
         w.set_current_space_name(slint::SharedString::default());
         w.set_current_space_invite(slint::SharedString::default());
+        w.set_is_space_owner(false);
         w.set_in_space_channel(false);
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
