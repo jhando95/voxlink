@@ -37,6 +37,9 @@ jobs:
       - name: Check
         run: cargo check --workspace
 
+      - name: Build server (needed by integration tests)
+        run: cargo build -p signaling_server
+
       - name: Test
         run: cargo test --workspace
 
