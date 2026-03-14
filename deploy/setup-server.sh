@@ -79,6 +79,15 @@ echo ""
 # --- Install binary and systemd service ---
 echo "[4/4] Installing server..."
 
+# Remove old partyvoice service if it exists (renamed to voxlink)
+if systemctl list-units --all | grep -q partyvoice; then
+    echo "  Removing old partyvoice service..."
+    sudo systemctl stop partyvoice 2>/dev/null || true
+    sudo systemctl disable partyvoice 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/partyvoice.service
+    sudo systemctl daemon-reload
+fi
+
 # Copy binary to /opt
 sudo mkdir -p /opt/voxlink
 sudo cp "$BINARY" /opt/voxlink/signaling_server
@@ -102,7 +111,7 @@ Environment=PV_ADDR=0.0.0.0:9090
 Environment=PV_DB_PATH=/var/lib/voxlink/voxlink.db
 Environment=RUST_LOG=info
 Restart=always
-RestartSec=3
+RestartSec=5
 # Run as non-root for security
 User=nobody
 Group=nogroup
