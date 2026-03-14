@@ -52,6 +52,10 @@ pub fn handle_text_message(
 
     let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
     if let Some(model) = messages.as_any().downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>() {
+        // Cap at 500 messages to bound memory usage
+        while model.row_count() >= 500 {
+            model.remove(0);
+        }
         model.push(chat_msg);
     }
 }

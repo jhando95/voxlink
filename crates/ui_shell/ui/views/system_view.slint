@@ -1,0 +1,201 @@
+import { ScrollView } from "std-widgets.slint";
+import { ParticipantData, PerfData, VxTheme } from "../theme.slint";
+import { MetricRow, SectionLabel, VxCard, VxLogo, VxStatusPill } from "../components.slint";
+
+export component SystemView inherits Rectangle {
+    in property <bool> wide: false;
+    in property <PerfData> perf;
+    in property <string> uptime-text: "";
+    in property <string> version-text: "";
+    in property <string> room-code: "";
+    in property <[ParticipantData]> participants: [];
+    in property <bool> is-open-mic: true;
+    in property <int> ping-ms: -1;
+
+    background: transparent;
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+
+            VxCard {
+                HorizontalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+
+                    VxLogo { logo-size: 54px; }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: "System overview";
+                            color: VxTheme.text-primary;
+                            font-size: 22px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Keep the UI light, the audio fast, and the network honest.";
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.perf.network-connected ? "Network online" : "Network offline";
+                                tone: root.perf.network-connected ? VxTheme.success : VxTheme.danger;
+                                fill: root.perf.network-connected ? VxTheme.success-dim : VxTheme.mute-badge-bg;
+                            }
+                            if root.ping-ms >= 0 : VxStatusPill {
+                                label: root.ping-ms + " ms";
+                                tone: root.ping-ms < 60 ? VxTheme.success :
+                                      root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                                fill: VxTheme.bg-soft;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.wide : HorizontalLayout {
+                spacing: 18px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 8px;
+                            SectionLabel { text: "RESOURCES"; }
+                            MetricRow {
+                                metric-label: "CPU";
+                                metric-value: round(root.perf.cpu-percent) + "%";
+                                indicator-color: root.perf.cpu-percent < 50 ? VxTheme.success :
+                                                 root.perf.cpu-percent < 80 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Memory";
+                                metric-value: round(root.perf.memory-mb * 10) / 10 + " MB";
+                                indicator-color: root.perf.memory-mb < 100 ? VxTheme.success :
+                                                 root.perf.memory-mb < 250 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Uptime";
+                                metric-value: root.uptime-text;
+                                indicator-color: VxTheme.accent;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 8px;
+                            SectionLabel { text: "SESSION"; }
+                            MetricRow {
+                                metric-label: "Audio";
+                                metric-value: root.perf.audio-active ? "Active" : "Idle";
+                                indicator-color: root.perf.audio-active ? VxTheme.success : VxTheme.text-muted;
+                            }
+                            MetricRow {
+                                metric-label: "Dropped frames";
+                                metric-value: root.perf.dropped-frames + "";
+                                indicator-color: root.perf.dropped-frames == 0 ? VxTheme.success :
+                                                 root.perf.dropped-frames < 10 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Voice mode";
+                                metric-value: root.is-open-mic ? "Open mic" : "Push to talk";
+                                indicator-color: VxTheme.accent;
+                            }
+                            MetricRow {
+                                metric-label: "Room";
+                                metric-value: root.room-code != "" ? root.room-code + "  ·  " + root.participants.length + " people" : "No active room";
+                                indicator-color: root.room-code != "" ? VxTheme.accent : VxTheme.text-muted;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    width: 340px;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "BUILD"; }
+                            Text {
+                                text: "Voxlink " + root.version-text;
+                                color: VxTheme.text-primary;
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "Rust core, Slint shell, no embedded browser runtime.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            VxStatusPill {
+                                label: "Voice-first native stack";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "TARGETS"; }
+                            Text {
+                                text: "Low idle usage, clean redraw behavior, and stable audio throughput stay ahead of decorative effects.";
+                                color: VxTheme.text-secondary;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            VxStatusPill {
+                                label: "UI redraws only when state changes";
+                                tone: VxTheme.success;
+                                fill: VxTheme.success-dim;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.wide : VerticalLayout {
+                spacing: 18px;
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 8px;
+                        SectionLabel { text: "RESOURCES"; }
+                        MetricRow {
+                            metric-label: "CPU";
+                            metric-value: round(root.perf.cpu-percent) + "%";
+                            indicator-color: root.perf.cpu-percent < 50 ? VxTheme.success :
+                                             root.perf.cpu-percent < 80 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Memory";
+                            metric-value: round(root.perf.memory-mb * 10) / 10 + " MB";
+                            indicator-color: root.perf.memory-mb < 100 ? VxTheme.success :
+                                             root.perf.memory-mb < 250 ? VxTheme.warning : VxTheme.danger;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

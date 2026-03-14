@@ -1,0 +1,481 @@
+import { ScrollView } from "std-widgets.slint";
+import { ChannelData, MemberData, VxTheme } from "../theme.slint";
+import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
+
+export component SpaceView inherits Rectangle {
+    in property <bool> wide: false;
+    in property <string> current-space-name: "";
+    in property <string> current-space-invite: "";
+    in property <bool> is-space-owner: false;
+    in property <[ChannelData]> channels: [];
+    in property <[MemberData]> members: [];
+    in-out property <string> new-channel-name: "";
+    in-out property <bool> new-channel-is-voice: true;
+    in-out property <bool> confirm-delete-visible: false;
+    callback navigate(int);
+    callback copy-invite-code();
+    callback select-text-channel(string);
+    callback join-channel(string);
+    callback create-channel();
+    callback leave-space();
+    callback delete-space();
+    callback kick-member(string);
+    callback ban-member(string);
+    callback server-mute-member(string, bool);
+
+    background: transparent;
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+
+            HorizontalLayout {
+                alignment: space-between;
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    Text {
+                        text: root.current-space-name;
+                        color: VxTheme.text-primary;
+                        font-size: 24px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: "Channels, members, and chat in one focused workspace.";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    VxButton {
+                        label: "Back";
+                        soft: true;
+                        clicked => { root.navigate(0); }
+                    }
+                    VxButton {
+                        label: "Copy invite";
+                        accent: true;
+                        clicked => { root.copy-invite-code(); }
+                    }
+                }
+            }
+
+            if root.wide : HorizontalLayout {
+                spacing: 18px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "TEXT CHANNELS"; }
+
+                            if root.channels.length == 0 : Text {
+                                text: "Create the first channel to shape the space.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+
+                            for channel in root.channels : Rectangle {
+                                height: channel.is-voice ? 0px : 58px;
+                                visible: !channel.is-voice;
+                                border-radius: VxTheme.radius-card;
+                                background: text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                text-channel-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.select-text-channel(channel.id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    alignment: center;
+
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 10px;
+                                        background: VxTheme.bg-panel;
+                                        border-color: VxTheme.border-subtle;
+                                        border-width: 1px;
+                                        Text {
+                                            text: "TXT";
+                                            color: VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            font-weight: 800;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: channel.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                        }
+                                        Text {
+                                            text: "Persistent text channel";
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                        }
+                                    }
+
+                                    VxStatusPill {
+                                        label: "Open";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "VOICE CHANNELS"; }
+
+                            for channel in root.channels : Rectangle {
+                                height: channel.is-voice ? 62px : 0px;
+                                visible: channel.is-voice;
+                                border-radius: VxTheme.radius-card;
+                                background: channel.peer-count > 0 ? VxTheme.speaking-row-bg :
+                                            voice-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: channel.peer-count > 0 ? VxTheme.speaking-border : VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                voice-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.join-channel(channel.id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    alignment: center;
+
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 10px;
+                                        background: channel.peer-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-panel;
+                                        border-color: channel.peer-count > 0 ? VxTheme.accent-border : VxTheme.border-subtle;
+                                        border-width: 1px;
+                                        Text {
+                                            text: "VC";
+                                            color: channel.peer-count > 0 ? VxTheme.accent : VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            font-weight: 800;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: channel.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                        }
+                                        Text {
+                                            text: channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                        }
+                                    }
+
+                                    if channel.peer-count > 0 : VxStatusPill {
+                                        label: channel.peer-count + " live";
+                                        tone: VxTheme.success;
+                                        fill: VxTheme.success-dim;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "NEW CHANNEL"; }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                FieldLabel {
+                                    text: root.new-channel-is-voice ? "Voice channel" : "Text channel";
+                                    horizontal-stretch: 1;
+                                }
+                                VxButton {
+                                    label: root.new-channel-is-voice ? "Switch to text" : "Switch to voice";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.new-channel-is-voice = !root.new-channel-is-voice; }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VxInput {
+                                    text <=> root.new-channel-name;
+                                    placeholder: "channel-name";
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if root.new-channel-name != "" {
+                                            root.create-channel();
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Create";
+                                    accent: true;
+                                    enabled: root.new-channel-name != "";
+                                    clicked => { root.create-channel(); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    width: 340px;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "SPACE DETAILS"; }
+                            Text {
+                                text: root.current-space-invite;
+                                color: VxTheme.text-primary;
+                                font-size: 18px;
+                                font-weight: 700;
+                                letter-spacing: 1.5px;
+                            }
+                            Text {
+                                text: "Share this invite to grow the room without making anyone create an account.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            VxButton {
+                                label: "Copy invite";
+                                accent: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.copy-invite-code(); }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "MEMBERS"; }
+                                Text {
+                                    text: root.members.length + " online";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+
+                            for member in root.members : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: member-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                member-touch := TouchArea { }
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: center;
+
+                                        VxAvatar {
+                                            avatar-size: 30px;
+                                            initial: member.initial;
+                                            color-index: member.color-index;
+                                            show-status: true;
+                                            is-online: member.is-in-voice;
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: member.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                            }
+                                            Text {
+                                                text: member.is-in-voice ? member.channel-name : "Not in voice";
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                overflow: elide;
+                                            }
+                                        }
+
+                                        if member.is-server-muted : VxStatusPill {
+                                            label: "Muted";
+                                            tone: VxTheme.danger;
+                                            fill: VxTheme.mute-badge-bg;
+                                        }
+                                    }
+
+                                    if root.is-space-owner : HorizontalLayout {
+                                        spacing: 8px;
+                                        VxButton {
+                                            label: member.is-server-muted ? "Unmute" : "Server mute";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.server-mute-member(member.id, !member.is-server-muted); }
+                                        }
+                                        VxButton {
+                                            label: "Kick";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.kick-member(member.id); }
+                                        }
+                                        VxButton {
+                                            label: "Ban";
+                                            small: true;
+                                            danger: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.ban-member(member.id); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "SPACE ACTIONS"; }
+                            VxButton {
+                                label: "Leave space";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.leave-space(); }
+                            }
+                            VxButton {
+                                label: root.confirm-delete-visible ? "Confirm delete" : "Delete space";
+                                danger: true;
+                                horizontal-stretch: 1;
+                                clicked => {
+                                    if root.confirm-delete-visible {
+                                        root.confirm-delete-visible = false;
+                                        root.delete-space();
+                                    } else {
+                                        root.confirm-delete-visible = true;
+                                    }
+                                }
+                            }
+                            if root.confirm-delete-visible : Text {
+                                text: "Delete removes the space for everyone.";
+                                color: VxTheme.danger;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.wide : VerticalLayout {
+                spacing: 18px;
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "CHANNELS"; }
+                        for channel in root.channels : Rectangle {
+                            height: 56px;
+                            border-radius: VxTheme.radius-card;
+                            background: compact-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            compact-channel-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if channel.is-voice {
+                                        root.join-channel(channel.id);
+                                    } else {
+                                        root.select-text-channel(channel.id);
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                alignment: center;
+                                Text {
+                                    text: channel.is-voice ? "VC" : "TXT";
+                                    color: channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    font-weight: 800;
+                                }
+                                Text {
+                                    text: channel.name;
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-stretch: 1;
+                                }
+                                if channel.peer-count > 0 : Text {
+                                    text: channel.peer-count + "";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

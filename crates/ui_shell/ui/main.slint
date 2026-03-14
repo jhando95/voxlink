@@ -1,18 +1,27 @@
-import { ListView, ComboBox, ScrollView } from "std-widgets.slint";
-import { ParticipantData, PerfData, SpaceData, ChannelData, MemberData, ChatMessage, VxTheme } from "theme.slint";
-import { VxButton, VxCard, VxInput, SectionLabel, FieldLabel, KeyPill, StatusDot, MetricRow, VxSlider, Divider, AccentBar, VxToggle } from "components.slint";
+import { ChatMessage, ChannelData, MemberData, ParticipantData, PerfData, SpaceData, VxTheme } from "theme.slint";
+import { BottomNav, TopBar, WorkspaceRail } from "shell.slint";
+import { ChatView } from "views/chat_view.slint";
+import { HomeView } from "views/home_view.slint";
+import { RoomView } from "views/room_view.slint";
+import { SettingsView } from "views/settings_view.slint";
+import { SpaceView } from "views/space_view.slint";
+import { SystemView } from "views/system_view.slint";
 
-// ─── Main Window ───
+import "../../../assets/fonts/Inter-Regular.ttf";
+import "../../../assets/fonts/Inter-SemiBold.ttf";
+import "../../../assets/fonts/Inter-Bold.ttf";
 
 export component MainWindow inherits Window {
     in-out property <string> window-title: "Voxlink";
     title: root.window-title;
     icon: @image-url("../../../assets/icon.png");
-    min-width: 400px;
-    min-height: 480px;
-    preferred-width: 680px;
-    preferred-height: 620px;
-    background: VxTheme.bg-deep;
+    default-font-family: "Inter";
+    default-font-size: 13px;
+    min-width: 440px;
+    min-height: 560px;
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    background: VxTheme.bg-canvas;
 
     // State
     in-out property <int> current-view: 0;
@@ -65,6 +74,7 @@ export component MainWindow inherits Window {
     in-out property <bool> in-space-channel: false;
     in-out property <bool> show-quick-call: false;
     in-out property <bool> new-channel-is-voice: true;
+
     // Text chat
     in-out property <[ChatMessage]> chat-messages: [];
     in-out property <string> chat-channel-id: "";
@@ -84,9 +94,32 @@ export component MainWindow inherits Window {
     // Delete confirmation
     in-out property <bool> confirm-delete-visible: false;
 
-    // Sidebar
+    // Navigation drawer
     in-out property <bool> sidebar-expanded: false;
-    property <length> sidebar-w: sidebar-expanded ? 180px : 0px;
+
+    // Layout state
+    property <bool> desktop-layout: true;
+    property <bool> rail-open: desktop-layout || sidebar-expanded;
+    changed width => {
+        root.desktop-layout = self.width >= 1040px;
+        if root.desktop-layout {
+            root.sidebar-expanded = false;
+        }
+    }
+    property <string> context-title:
+        current-view == 0 ? "Home base" :
+        current-view == 1 ? (in-space-channel && current-space-name != "" ? current-space-name : "Live call") :
+        current-view == 2 ? "Settings" :
+        current-view == 3 ? "System" :
+        current-view == 4 ? current-space-name :
+        chat-channel-name != "" ? "# " + chat-channel-name : "Text chat";
+    property <string> context-subtitle:
+        current-view == 0 ? "Connect fast, build spaces, or jump into a room." :
+        current-view == 1 ? (room-code != "" ? "Room " + room-code : status-text) :
+        current-view == 2 ? "Devices, keybinds, sound, and capture mode." :
+        current-view == 3 ? "Performance, session health, and runtime posture." :
+        current-view == 4 ? "Channels and members in one workspace." :
+        current-space-name != "" ? current-space-name : "Persistent channel chat.";
 
     // Callbacks
     callback create-room();
@@ -120,2373 +153,202 @@ export component MainWindow inherits Window {
     callback output-volume-changed(float);
     callback select-text-channel(string);
     callback send-text-message();
-    callback edit-text-message(/* message-id */ string, /* new-content */ string);
-    callback delete-text-message(/* message-id */ string);
-    callback react-to-message(/* message-id */ string, /* emoji */ string);
-    callback kick-member(/* member-id */ string);
-    callback ban-member(/* member-id */ string);
-    callback server-mute-member(/* member-id */ string, /* muted */ bool);
+    callback edit-text-message(string, string);
+    callback delete-text-message(string);
+    callback react-to-message(string, string);
+    callback kick-member(string);
+    callback ban-member(string);
+    callback server-mute-member(string, bool);
 
-    VerticalLayout {
-        spacing: 0px;
+    Rectangle {
+        background: VxTheme.bg-canvas;
 
-        // ─── Header Bar ───
         Rectangle {
-            height: 40px;
-            background: VxTheme.bg-surface;
-            AccentBar { y: parent.height - 2px; }
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                alignment: space-between;
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    // Sidebar toggle
-                    if root.spaces.length > 0 : Rectangle {
-                        height: 28px;
-                        border-radius: 6px;
-                        background: root.sidebar-expanded ? VxTheme.accent-glow :
-                                    sb-toggle.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                        border-color: root.sidebar-expanded ? VxTheme.accent : VxTheme.border-subtle;
-                        border-width: 1px;
-                        animate background { duration: 100ms; }
-
-                        sb-toggle := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.sidebar-expanded = !root.sidebar-expanded; }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 10px;
-                            spacing: 5px;
-                            alignment: center;
-
-                            Text {
-                                text: root.sidebar-expanded ? "\u{2715}" : "\u{2630}";
-                                color: root.sidebar-expanded ? VxTheme.accent : VxTheme.text-secondary;
-                                font-size: root.sidebar-expanded ? 10px : 12px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                text: root.sidebar-expanded ? "Close" : "Spaces";
-                                color: root.sidebar-expanded ? VxTheme.accent : VxTheme.text-secondary;
-                                font-size: 9px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-
-                    // Brand mark
-                    Rectangle {
-                        width: 22px; height: 22px; border-radius: 5px;
-                        background: VxTheme.accent;
-                        Text {
-                            text: "V";
-                            color: #f0f0f8;
-                            font-size: 11px; font-weight: 800;
-                            horizontal-alignment: center; vertical-alignment: center;
-                        }
-                    }
-
-                    Text {
-                        text: "VOXLINK";
-                        color: VxTheme.text-primary;
-                        font-size: 11px; font-weight: 700; letter-spacing: 2px;
-                        vertical-alignment: center;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: center;
-
-                    // Mute/deafen indicators in header
-                    if current-view == 1 && root.is-muted : Rectangle {
-                        width: 46px; height: 20px; border-radius: 4px;
-                        background: VxTheme.mute-badge-bg;
-                        border-color: VxTheme.danger;
-                        border-width: 1px;
-                        HorizontalLayout {
-                            alignment: center; spacing: 3px;
-                            Rectangle { width: 5px; height: 5px; border-radius: 2.5px; background: VxTheme.danger; }
-                            Text { text: "MUTE"; color: VxTheme.danger; font-size: 8px; font-weight: 700;
-                                   letter-spacing: 0.5px; vertical-alignment: center; }
-                        }
-                    }
-                    if current-view == 1 && root.is-deafened : Rectangle {
-                        width: 46px; height: 20px; border-radius: 4px;
-                        background: VxTheme.deafen-badge-bg;
-                        border-color: VxTheme.warning;
-                        border-width: 1px;
-                        HorizontalLayout {
-                            alignment: center; spacing: 3px;
-                            Rectangle { width: 5px; height: 5px; border-radius: 2.5px; background: VxTheme.warning; }
-                            Text { text: "DEAF"; color: VxTheme.warning; font-size: 8px; font-weight: 700;
-                                   letter-spacing: 0.5px; vertical-alignment: center; }
-                        }
-                    }
-
-                    StatusDot { active: root.is-connected; }
-
-                    Text {
-                        text: current-view == 1 && root.room-code != "" ? root.room-code :
-                              root.is-connected ? "ONLINE" : "OFFLINE";
-                        color: root.is-connected ? VxTheme.text-secondary : VxTheme.text-muted;
-                        font-size: 9px; font-weight: 600; letter-spacing: 0.8px;
-                        vertical-alignment: center;
-                    }
-                    if root.is-connected && root.ping-ms >= 0 : Rectangle {
-                        height: 18px; border-radius: 4px;
-                        background: VxTheme.bg-elevated;
-                        border-color: VxTheme.border-subtle;
-                        border-width: 1px;
-                        HorizontalLayout {
-                            padding-left: 5px; padding-right: 6px;
-                            spacing: 4px;
-                            alignment: center;
-                            Rectangle {
-                                width: 6px; height: 6px; border-radius: 3px;
-                                background: root.ping-ms < 60 ? VxTheme.success :
-                                           root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
-                            }
-                            Text {
-                                text: root.ping-ms + "ms";
-                                color: root.ping-ms < 60 ? VxTheme.success :
-                                       root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
-                                font-size: 9px; font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
-            }
+            width: parent.width;
+            height: parent.height;
+            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 14%);
         }
 
-        // ─── Update banner ───
-        if root.update-available : Rectangle {
-            height: 28px;
-            background: VxTheme.accent-glow;
-            border-color: VxTheme.accent;
-            border-width: 0px;
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                alignment: center;
-                spacing: 6px;
-
-                Text {
-                    text: "\u{2191}";
-                    color: VxTheme.accent;
-                    font-size: 12px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Voxlink v" + root.update-version + " is available";
-                    color: VxTheme.text-primary;
-                    font-size: 11px;
-                    font-weight: 500;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        // ─── Main body: sidebar + content ───
         HorizontalLayout {
             spacing: 0px;
-            vertical-stretch: 1;
 
-            // ═══════════════════════════════
-            //  LEFT SIDEBAR
-            // ═══════════════════════════════
-            if root.sidebar-expanded : Rectangle {
-                width: root.sidebar-w;
-                background: VxTheme.sidebar-bg;
-                animate width { duration: 120ms; easing: ease-out; }
-
-                Rectangle {
-                    x: parent.width - 1px;
-                    width: 1px;
-                    height: parent.height;
-                    background: VxTheme.sidebar-divider;
+            if root.rail-open : WorkspaceRail {
+                width: root.desktop-layout ? 272px : 264px;
+                current-view: root.current-view;
+                spaces: root.spaces;
+                current-space-id: root.current-space-id;
+                members: root.members;
+                show-members: root.current-view == 4 || root.current-view == 5;
+                navigate(view-index) => {
+                    root.navigate(view-index);
+                    if !root.desktop-layout {
+                        root.sidebar-expanded = false;
+                    }
                 }
+                select-space(space-id) => {
+                    root.select-space(space-id);
+                    if !root.desktop-layout {
+                        root.sidebar-expanded = false;
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                background: VxTheme.bg-app;
 
                 VerticalLayout {
                     spacing: 0px;
 
-                    Rectangle {
-                        height: 28px;
-                        HorizontalLayout {
-                            padding-left: 12px;
-                            padding-right: 12px;
-                            alignment: space-between;
-                            SectionLabel {
-                                text: "SPACES";
-                                vertical-alignment: center;
-                            }
-                            Rectangle {
-                                width: 18px; height: 18px; border-radius: 4px;
-                                background: close-sb.has-hover ? VxTheme.sidebar-item-hover : transparent;
-                                close-sb := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.sidebar-expanded = false; }
-                                }
-                                Text {
-                                    text: "\u{00D7}";
-                                    color: VxTheme.text-muted;
-                                    font-size: 13px;
-                                    horizontal-alignment: center; vertical-alignment: center;
-                                }
-                            }
-                        }
+                    TopBar {
+                        title: root.context-title;
+                        subtitle: root.context-subtitle;
+                        is-connected: root.is-connected;
+                        ping-ms: root.ping-ms;
+                        show-nav-button: !root.desktop-layout;
+                        in-call: root.current-view == 1;
+                        is-muted: root.is-muted;
+                        is-deafened: root.is-deafened;
+                        update-available: root.update-available;
+                        update-version: root.update-version;
+                        nav-toggle => { root.sidebar-expanded = !root.sidebar-expanded; }
                     }
 
-                    ScrollView {
+                    Rectangle {
+                        horizontal-stretch: 1;
                         vertical-stretch: 1;
+                        background: transparent;
 
-                        VerticalLayout {
-                            spacing: 2px;
-                            padding: 6px;
-                            alignment: start;
-
-                            for space in root.spaces : Rectangle {
-                                height: 42px;
-                                border-radius: 6px;
-                                background: (current-view == 4 || current-view == 5 || (current-view == 1 && root.in-space-channel))
-                                            && root.current-space-id == space.id ? VxTheme.sidebar-item-active :
-                                            sp-sb.has-hover ? VxTheme.sidebar-item-hover : transparent;
-                                animate background { duration: 80ms; }
-
-                                sp-sb := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.select-space(space.id); }
-                                }
-
-                                HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 8px;
-                                    spacing: 10px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 28px; height: 28px; border-radius: 6px;
-                                            background: VxTheme.avatar-color(space.color-index);
-                                            Text {
-                                                text: space.initial;
-                                                color: #f0f0f8;
-                                                font-size: 11px; font-weight: 700;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        horizontal-stretch: 1;
-                                        spacing: 1px;
-                                        Text {
-                                            text: space.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 11px; font-weight: 600;
-                                            overflow: elide;
-                                        }
-                                        Text {
-                                            text: space.member-count + " members";
-                                            color: VxTheme.text-muted;
-                                            font-size: 9px;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if root.spaces.length == 0 : VerticalLayout {
-                                padding: 12px;
-                                spacing: 4px;
-                                Text {
-                                    text: "No spaces yet";
-                                    color: VxTheme.text-muted;
-                                    font-size: 11px;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: "Create or join from Home";
-                                    color: VxTheme.text-muted;
-                                    font-size: 9px;
-                                    horizontal-alignment: center;
-                                }
-                            }
-
-                            if (current-view == 4 || current-view == 5) && root.members.length > 0 : Rectangle {
-                                height: 1px;
-                                background: VxTheme.sidebar-divider;
-                            }
-
-                            if (current-view == 4 || current-view == 5) && root.members.length > 0 : VerticalLayout {
-                                spacing: 0px;
-                                padding-top: 4px;
-
-                                Rectangle {
-                                    height: 22px;
-                                    HorizontalLayout {
-                                        padding-left: 8px;
-                                        SectionLabel {
-                                            text: "ONLINE \u{2014} " + root.members.length;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                }
-
-                                for member in root.members : Rectangle {
-                                    height: 30px;
-                                    border-radius: 5px;
-                                    background: member-hover.has-hover ? VxTheme.sidebar-item-hover : transparent;
-
-                                    member-hover := TouchArea {
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            spacing: 7px;
-
-                                            VerticalLayout {
-                                                alignment: center;
-                                                Rectangle {
-                                                    width: 20px; height: 20px; border-radius: 5px;
-                                                    background: VxTheme.avatar-color(member.color-index);
-                                                    Text {
-                                                        text: member.initial;
-                                                        color: #f0f0f8;
-                                                        font-size: 8px; font-weight: 700;
-                                                        horizontal-alignment: center; vertical-alignment: center;
-                                                    }
-                                                }
-                                            }
-
-                                            VerticalLayout {
-                                                alignment: center;
-                                                horizontal-stretch: 1;
-                                                Text {
-                                                    text: member.name;
-                                                    color: member.is-server-muted ? VxTheme.text-muted : VxTheme.text-primary;
-                                                    font-size: 10px; font-weight: 500;
-                                                    overflow: elide;
-                                                }
-                                            }
-
-                                            if member.is-server-muted : VerticalLayout {
-                                                alignment: center;
-                                                Text {
-                                                    text: "\u{1F507}";
-                                                    font-size: 9px;
-                                                }
-                                            }
-
-                                            if member.is-in-voice : VerticalLayout {
-                                                alignment: center;
-                                                Rectangle {
-                                                    width: 6px; height: 6px; border-radius: 3px;
-                                                    background: VxTheme.success;
-                                                }
-                                            }
-
-                                            // Moderation buttons (owner only, on hover)
-                                            if root.is-space-owner && member-hover.has-hover : HorizontalLayout {
-                                                spacing: 2px;
-                                                // Server mute toggle
-                                                Rectangle {
-                                                    width: 20px; height: 20px; border-radius: 4px;
-                                                    background: mute-btn.has-hover ? VxTheme.bg-elevated : transparent;
-                                                    mute-btn := TouchArea {
-                                                        clicked => { root.server-mute-member(member.id, !member.is-server-muted); }
-                                                        Text {
-                                                            text: member.is-server-muted ? "\u{1F50A}" : "\u{1F507}";
-                                                            font-size: 10px;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                                // Kick
-                                                Rectangle {
-                                                    width: 20px; height: 20px; border-radius: 4px;
-                                                    background: kick-btn.has-hover ? VxTheme.warning.transparentize(0.7) : transparent;
-                                                    kick-btn := TouchArea {
-                                                        clicked => { root.kick-member(member.id); }
-                                                        Text {
-                                                            text: "\u{1F462}";
-                                                            font-size: 10px;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                                // Ban
-                                                Rectangle {
-                                                    width: 20px; height: 20px; border-radius: 4px;
-                                                    background: ban-btn.has-hover ? VxTheme.danger.transparentize(0.7) : transparent;
-                                                    ban-btn := TouchArea {
-                                                        clicked => { root.ban-member(member.id); }
-                                                        Text {
-                                                            text: "\u{26D4}";
-                                                            font-size: 10px;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        if root.current-view == 0 : HomeView {
+                            wide: root.desktop-layout;
+                            server-address <=> root.server-address;
+                            user-name <=> root.user-name;
+                            status-text: root.status-text;
+                            is-connected: root.is-connected;
+                            spaces: root.spaces;
+                            space-name <=> root.space-name;
+                            space-invite-code <=> root.space-invite-code;
+                            show-quick-call <=> root.show-quick-call;
+                            join-code <=> root.join-code;
+                            room-password <=> root.room-password;
+                            connect-server => { root.connect-server(); }
+                            disconnect-server => { root.disconnect-server(); }
+                            find-server => { root.find-server(); }
+                            select-space(space-id) => { root.select-space(space-id); }
+                            create-space => { root.create-space(); }
+                            join-space => { root.join-space(); }
+                            create-room => { root.create-room(); }
+                            join-room(code) => { root.join-room(code); }
                         }
-                    }
-                }
-            }
 
-            // ═══════════════════════════════
-            //  CONTENT AREA
-            // ═══════════════════════════════
-            Rectangle {
-                background: VxTheme.bg-deep;
-                horizontal-stretch: 1;
-                vertical-stretch: 1;
-
-                // ═══════════════════════════════
-                //  HOME VIEW
-                // ═══════════════════════════════
-                if current-view == 0 : VerticalLayout {
-
-                    ScrollView {
-                        vertical-stretch: 1;
-
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 14px;
-                            alignment: start;
-
-                            // Welcome hero — clean, minimal
-                            Rectangle {
-                                VxCard {
-                                    VerticalLayout {
-                                        padding: 20px;
-                                        spacing: 8px;
-
-                                    HorizontalLayout {
-                                        spacing: 14px;
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                width: 44px; height: 44px; border-radius: 10px;
-                                                background: VxTheme.accent;
-                                                border-color: VxTheme.accent-glow;
-                                                border-width: 2px;
-                                                Text {
-                                                    text: "V";
-                                                    color: #f0f0f8;
-                                                    font-size: 18px; font-weight: 800;
-                                                    horizontal-alignment: center; vertical-alignment: center;
-                                                }
-                                            }
-                                        }
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            spacing: 4px;
-                                            horizontal-stretch: 1;
-                                            Text {
-                                                text: root.user-name != "" && root.user-name != "User" ?
-                                                      "Hey, " + root.user-name : "Voxlink";
-                                                color: VxTheme.text-primary;
-                                                font-size: 20px;
-                                                font-weight: 700;
-                                            }
-                                            HorizontalLayout {
-                                                spacing: 6px;
-                                                alignment: start;
-                                                StatusDot { active: root.is-connected; }
-                                                Text {
-                                                    text: root.status-text;
-                                                    color: root.is-connected ? VxTheme.success :
-                                                           root.status-text == "Connecting..." ? VxTheme.warning : VxTheme.text-muted;
-                                                    font-size: 11px; font-weight: 500;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                }
-                                // Accent top edge overlay
-                                AccentBar {
-                                    y: 0px;
-                                    width: parent.width;
-                                }
-                            }
-
-                            // ── Connection & Identity ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 16px;
-                                    spacing: 12px;
-
-                                    SectionLabel { text: "CONNECTION"; }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Server address"; }
-                                        VxInput {
-                                            text <=> root.server-address;
-                                            horizontal-stretch: 1;
-                                            accepted => { if !root.is-connected { root.connect-server(); } }
-                                        }
-                                    }
-
-                                    if !root.is-connected : VxButton {
-                                        label: root.status-text == "Connecting..." ? "Connecting..." : "Connect";
-                                        accent: true;
-                                        enabled: root.status-text != "Connecting...";
-                                        horizontal-stretch: 1;
-                                        clicked => { root.connect-server(); }
-                                    }
-                                    if root.is-connected : VxButton {
-                                        label: "Disconnect";
-                                        danger: true;
-                                        horizontal-stretch: 1;
-                                        clicked => { root.disconnect-server(); }
-                                    }
-
-                                    if !root.is-connected : HorizontalLayout {
-                                        alignment: end;
-                                        VxButton {
-                                            label: "Find on LAN";
-                                            small: true; ghost: true;
-                                            clicked => { root.find-server(); }
-                                        }
-                                    }
-
-                                    Divider {}
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Display name"; }
-                                        VxInput {
-                                            text <=> root.user-name;
-                                            placeholder: "Enter your name";
-                                            horizontal-stretch: 1;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Your Spaces ──
-                            if root.spaces.length > 0 : VerticalLayout {
-                                spacing: 6px;
-
-                                SectionLabel { text: "YOUR SPACES"; }
-
-                                for space in root.spaces : Rectangle {
-                                    height: 50px;
-                                    border-radius: 7px;
-                                    background: space-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-card;
-                                    border-color: space-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
-                                    border-width: 1px;
-                                    animate background { duration: 80ms; }
-
-                                    space-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.select-space(space.id); }
-                                    }
-
-                                    HorizontalLayout {
-                                        padding-left: 10px;
-                                        padding-right: 10px;
-                                        spacing: 10px;
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                width: 30px; height: 30px; border-radius: 7px;
-                                                background: VxTheme.avatar-color(space.color-index);
-                                                Text {
-                                                    text: space.initial;
-                                                    color: #f0f0f8;
-                                                    font-size: 12px; font-weight: 700;
-                                                    horizontal-alignment: center; vertical-alignment: center;
-                                                }
-                                            }
-                                        }
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            horizontal-stretch: 1;
-                                            spacing: 2px;
-                                            Text {
-                                                text: space.name;
-                                                color: VxTheme.text-primary;
-                                                font-size: 13px; font-weight: 600;
-                                                overflow: elide;
-                                            }
-                                            Text {
-                                                text: space.member-count + " members \u{00B7} " + space.channel-count + " channels";
-                                                color: VxTheme.text-muted;
-                                                font-size: 9px;
-                                            }
-                                        }
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Text {
-                                                text: "\u{203A}";
-                                                color: VxTheme.text-muted;
-                                                font-size: 16px;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Create / Join Space ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 16px;
-                                    spacing: 12px;
-
-                                    SectionLabel { text: "SPACE"; }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Space name"; }
-                                        VxInput {
-                                            placeholder: "My Space";
-                                            text <=> root.space-name;
-                                            horizontal-stretch: 1;
-                                            accepted => {
-                                                if root.is-connected && root.space-name != "" {
-                                                    root.create-space();
-                                                }
-                                            }
-                                        }
-                                    }
-                                    VxButton {
-                                        label: "Create Space";
-                                        accent: root.is-connected;
-                                        enabled: root.is-connected && root.space-name != "";
-                                        horizontal-stretch: 1;
-                                        clicked => { root.create-space(); }
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 12px;
-                                        alignment: center;
-                                        Divider { horizontal-stretch: 1; }
-                                        Text { text: "or join existing"; color: VxTheme.text-muted; font-size: 9px; font-weight: 500; vertical-alignment: center; }
-                                        Divider { horizontal-stretch: 1; }
-                                    }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Invite code"; }
-                                        VxInput {
-                                            placeholder: "Enter invite code";
-                                            text <=> root.space-invite-code;
-                                            horizontal-stretch: 1;
-                                            accepted => {
-                                                if root.is-connected && root.space-invite-code != "" {
-                                                    root.join-space();
-                                                }
-                                            }
-                                        }
-                                    }
-                                    VxButton {
-                                        label: "Join Space";
-                                        accent: true;
-                                        enabled: root.is-connected && root.space-invite-code != "";
-                                        horizontal-stretch: 1;
-                                        clicked => { root.join-space(); }
-                                    }
-                                }
-                            }
-
-                            // ── Quick Call ──
-                            Rectangle {
-                                height: 32px;
-                                border-radius: 7px;
-                                background: qc-toggle.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-card;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-                                animate background { duration: 80ms; }
-
-                                qc-toggle := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.show-quick-call = !root.show-quick-call; }
-                                }
-
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    alignment: space-between;
-
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: center;
-                                        SectionLabel { text: "QUICK CALL"; vertical-alignment: center; }
-                                        Text {
-                                            text: "join by code";
-                                            color: VxTheme.text-muted;
-                                            font-size: 9px;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                    Text {
-                                        text: root.show-quick-call ? "\u{2212}" : "+";
-                                        color: root.show-quick-call ? VxTheme.accent : VxTheme.text-muted;
-                                        font-size: 14px; font-weight: 600;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-
-                            if root.show-quick-call : VxCard {
-                                VerticalLayout {
-                                    padding: 16px;
-                                    spacing: 12px;
-
-                                    VxButton {
-                                        label: root.status-text == "Starting call..." ? "Starting..." :
-                                               root.is-connected ? "Start Call" : "Connect first";
-                                        accent: root.is-connected;
-                                        enabled: root.is-connected && root.status-text != "Starting call..." && root.status-text != "Joining call...";
-                                        horizontal-stretch: 1;
-                                        clicked => { root.create-room(); }
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 12px;
-                                        alignment: center;
-                                        Divider { horizontal-stretch: 1; }
-                                        Text { text: "or join"; color: VxTheme.text-muted; font-size: 9px; font-weight: 500; vertical-alignment: center; }
-                                        Divider { horizontal-stretch: 1; }
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        VxInput {
-                                            placeholder: "Call code";
-                                            text <=> root.join-code;
-                                            horizontal-stretch: 1;
-                                            accepted => {
-                                                if root.is-connected && root.join-code != "" {
-                                                    root.join-room(root.join-code);
-                                                }
-                                            }
-                                        }
-                                        VxButton {
-                                            label: "Join";
-                                            accent: true;
-                                            enabled: root.is-connected && root.join-code != "";
-                                            clicked => { root.join-room(root.join-code); }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Password (optional)"; }
-                                        VxInput {
-                                            placeholder: "Leave blank if none";
-                                            text <=> root.room-password;
-                                            horizontal-stretch: 1;
-                                        }
-                                    }
-                                }
-                            }
+                        if root.current-view == 1 : RoomView {
+                            wide: root.desktop-layout;
+                            room-code: root.room-code;
+                            participants: root.participants;
+                            is-connected: root.is-connected;
+                            status-text: root.status-text;
+                            room-status: root.room-status;
+                            is-muted: root.is-muted;
+                            is-deafened: root.is-deafened;
+                            is-open-mic: root.is-open-mic;
+                            mic-level: root.mic-level;
+                            ptt-key-display: root.ptt-key-display;
+                            in-space-channel: root.in-space-channel;
+                            current-space-name: root.current-space-name;
+                            show-copied <=> root.show-copied;
+                            copy-room-code => { root.copy-room-code(); }
+                            leave-room => { root.leave-room(); }
+                            leave-channel => { root.leave-channel(); }
+                            toggle-mute => { root.toggle-mute(); }
+                            toggle-deafen => { root.toggle-deafen(); }
+                            toggle-mic-mode => { root.toggle-mic-mode(); }
+                            volume-changed(peer-id, level) => { root.volume-changed(peer-id, level); }
+                            navigate(view-index) => { root.navigate(view-index); }
                         }
-                    }
-                }
 
-                // ═══════════════════════════════
-                //  ROOM VIEW
-                // ═══════════════════════════════
-                if current-view == 1 : VerticalLayout {
-                    spacing: 0px;
+                        if root.current-view == 2 : SettingsView {
+                            wide: root.desktop-layout;
+                            previous-view: root.previous-view;
+                            dark-mode: root.dark-mode;
+                            input-devices: root.input-devices;
+                            output-devices: root.output-devices;
+                            selected-input <=> root.selected-input;
+                            selected-output <=> root.selected-output;
+                            input-volume <=> root.input-volume;
+                            output-volume <=> root.output-volume;
+                            is-open-mic: root.is-open-mic;
+                            noise-suppression <=> root.noise-suppression;
+                            feedback-sound: root.feedback-sound;
+                            notifications-enabled: root.notifications-enabled;
+                            listening-keybind <=> root.listening-keybind;
+                            ptt-key-display: root.ptt-key-display;
+                            mute-key-display: root.mute-key-display;
+                            deafen-key-display: root.deafen-key-display;
+                            navigate(view-index) => { root.navigate(view-index); }
+                            toggle-dark-mode => { root.toggle-dark-mode(); }
+                            refresh-devices => { root.refresh-devices(); }
+                            input-volume-changed(level) => { root.input-volume-changed(level); }
+                            output-volume-changed(level) => { root.output-volume-changed(level); }
+                            toggle-mic-mode => { root.toggle-mic-mode(); }
+                            noise-suppression-changed(level) => { root.noise-suppression-changed(level); }
+                            toggle-feedback-sound => { root.toggle-feedback-sound(); }
+                            toggle-notifications => { root.toggle-notifications(); }
+                            clear-keybind(binding) => { root.clear-keybind(binding); }
+                        }
 
-                    // Room header
-                    Rectangle {
-                        height: 48px;
-                        background: VxTheme.bg-surface;
-                        Divider { y: parent.height - 1px; }
+                        if root.current-view == 4 : SpaceView {
+                            wide: root.desktop-layout;
+                            current-space-name: root.current-space-name;
+                            current-space-invite: root.current-space-invite;
+                            is-space-owner: root.is-space-owner;
+                            channels: root.channels;
+                            members: root.members;
+                            new-channel-name <=> root.new-channel-name;
+                            new-channel-is-voice <=> root.new-channel-is-voice;
+                            confirm-delete-visible <=> root.confirm-delete-visible;
+                            navigate(view-index) => { root.navigate(view-index); }
+                            copy-invite-code => { root.copy-invite-code(); }
+                            select-text-channel(channel-id) => { root.select-text-channel(channel-id); }
+                            join-channel(channel-id) => { root.join-channel(channel-id); }
+                            create-channel => { root.create-channel(); }
+                            leave-space => { root.leave-space(); }
+                            delete-space => { root.delete-space(); }
+                            kick-member(member-id) => { root.kick-member(member-id); }
+                            ban-member(member-id) => { root.ban-member(member-id); }
+                            server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
+                        }
 
-                        HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 12px;
-                            alignment: space-between;
+                        if root.current-view == 5 : ChatView {
+                            wide: root.desktop-layout;
+                            current-space-name: root.current-space-name;
+                            chat-channel-name: root.chat-channel-name;
+                            chat-messages: root.chat-messages;
+                            chat-input <=> root.chat-input;
+                            editing-message-id <=> root.editing-message-id;
+                            editing-original-content <=> root.editing-original-content;
+                            navigate(view-index) => { root.navigate(view-index); }
+                            send-text-message => { root.send-text-message(); }
+                            edit-text-message(message-id, content) => { root.edit-text-message(message-id, content); }
+                            delete-text-message(message-id) => { root.delete-text-message(message-id); }
+                            react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
+                        }
 
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 3px;
-
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-
-                                    // Room code badge
-                                    Rectangle {
-                                        height: 24px;
-                                        border-radius: 5px;
-                                        background: VxTheme.accent-subtle;
-                                        border-color: VxTheme.accent-glow;
-                                        border-width: 1px;
-                                        HorizontalLayout {
-                                            padding-left: 10px;
-                                            padding-right: 10px;
-                                            Text {
-                                                text: root.room-code;
-                                                color: VxTheme.accent;
-                                                font-size: 13px; font-weight: 800; letter-spacing: 3px;
-                                                vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    // Participant count
-                                    Rectangle {
-                                        width: 26px; height: 20px; border-radius: 5px;
-                                        background: VxTheme.bg-elevated;
-                                        border-color: VxTheme.border-subtle;
-                                        border-width: 1px;
-                                        Text {
-                                            text: root.participants.length + "";
-                                            color: VxTheme.text-secondary;
-                                            font-size: 10px; font-weight: 700;
-                                            horizontal-alignment: center; vertical-alignment: center;
-                                        }
-                                    }
-
-                                    // Copy code button
-                                    Rectangle {
-                                        height: 22px; border-radius: 5px;
-                                        background: copy-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                        border-color: root.show-copied ? VxTheme.success : VxTheme.border-subtle;
-                                        border-width: 1px;
-                                        animate background { duration: 80ms; }
-                                        animate border-color { duration: 200ms; }
-
-                                        copy-touch := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { root.copy-room-code(); root.show-copied = true; }
-                                        }
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            Text {
-                                                text: root.show-copied ? "\u{2713} Copied" : "Copy";
-                                                color: root.show-copied ? VxTheme.success : VxTheme.text-secondary;
-                                                font-size: 10px; font-weight: 600;
-                                                vertical-alignment: center;
-                                                animate color { duration: 200ms; }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    text: root.room-status != "" ? root.room-status :
-                                          !root.is-connected ? "Reconnecting..." :
-                                          root.is-deafened ? "Deafened" :
-                                          root.is-muted ? "Muted" :
-                                          root.is-open-mic ? "Open mic" :
-                                          root.ptt-key-display != "" ? "PTT (" + root.ptt-key-display + ")" : "Push-to-talk";
-                                    color: root.room-status != "" ? VxTheme.text-secondary :
-                                           !root.is-connected ? VxTheme.danger :
-                                           root.is-deafened || root.is-muted ? VxTheme.danger : VxTheme.success;
-                                    font-size: 9px; font-weight: 500;
-                                }
-                            }
-
-                            HorizontalLayout {
-                                alignment: center;
-                                if root.in-space-channel : VxButton {
-                                    label: "\u{2190} Leave";
-                                    small: true;
-                                    clicked => { root.leave-channel(); }
-                                }
-                                if !root.in-space-channel : VxButton {
-                                    label: "Leave Call";
-                                    danger: true;
-                                    clicked => { root.leave-room(); }
-                                }
-                            }
+                        if root.current-view == 3 : SystemView {
+                            wide: root.desktop-layout;
+                            perf: root.perf;
+                            uptime-text: root.uptime-text;
+                            version-text: root.version-text;
+                            room-code: root.room-code;
+                            participants: root.participants;
+                            is-open-mic: root.is-open-mic;
+                            ping-ms: root.ping-ms;
                         }
                     }
 
-                    // Connection lost banner with pulsing indicator
-                    if !root.is-connected : Rectangle {
-                        height: 28px;
-                        background: VxTheme.connection-lost-bg;
-                        Rectangle {
-                            y: parent.height - 1px;
-                            height: 1px;
-                            background: VxTheme.danger;
-                            opacity: 0.4;
-                        }
-                        HorizontalLayout {
-                            padding-left: 14px; padding-right: 14px;
-                            alignment: center; spacing: 8px;
-                            Rectangle {
-                                width: 6px; height: 6px; border-radius: 3px;
-                                background: VxTheme.danger;
-                                border-color: VxTheme.mic-glow-red;
-                                border-width: 3px;
-                                property <float> pulse-opacity: 1.0;
-                                opacity: self.pulse-opacity;
-                                animate pulse-opacity { duration: 800ms; }
-                                init => {
-                                    self.pulse-opacity = 0.3;
-                                }
-                            }
-                            Text {
-                                text: root.status-text;
-                                color: VxTheme.danger;
-                                font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-
-                    // Participants
-                    VerticalLayout {
-                        padding-left: 12px; padding-right: 12px;
-                        padding-top: 8px; padding-bottom: 2px;
-                        spacing: 2px;
-                        vertical-stretch: 1;
-
-                        SectionLabel { text: "PARTICIPANTS"; }
-
-                        if root.participants.length <= 1 : VerticalLayout {
-                            alignment: center;
-                            vertical-stretch: 1;
-                            spacing: 8px;
-
-                            HorizontalLayout {
-                                alignment: center;
-                                spacing: 6px;
-                                Rectangle {
-                                    width: 24px; height: 24px; border-radius: 6px;
-                                    background: VxTheme.bg-card;
-                                    border-color: VxTheme.border-subtle; border-width: 1px;
-                                    opacity: 0.5;
-                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 10px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
-                                }
-                                Rectangle {
-                                    width: 36px; height: 36px; border-radius: 8px;
-                                    background: VxTheme.accent-subtle;
-                                    border-color: VxTheme.accent-glow; border-width: 2px;
-                                    Text { text: "\u{1F3A4}"; font-size: 14px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
-                                }
-                                Rectangle {
-                                    width: 24px; height: 24px; border-radius: 6px;
-                                    background: VxTheme.bg-card;
-                                    border-color: VxTheme.border-subtle; border-width: 1px;
-                                    opacity: 0.5;
-                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 10px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
-                                }
-                            }
-
-                            Text {
-                                text: "Waiting for others...";
-                                color: VxTheme.text-secondary;
-                                font-size: 13px; font-weight: 600;
-                                horizontal-alignment: center;
-                            }
-                            Text {
-                                text: root.in-space-channel ? "Invite others to join this channel" :
-                                      "Share code " + root.room-code + " to invite";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
-                                horizontal-alignment: center;
-                            }
-                        }
-
-                        ListView {
-                            vertical-stretch: 1;
-
-                            for p[idx] in root.participants : Rectangle {
-                                height: 50px;
-                                background: p.is-speaking ? VxTheme.speaking-glow :
-                                            row-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                                border-radius: 8px;
-                                border-width: p.is-speaking ? 1px : 0px;
-                                border-color: p.is-speaking ? VxTheme.speaking-border : transparent;
-                                animate background { duration: 100ms; }
-                                animate border-color { duration: 100ms; }
-                                animate border-width { duration: 100ms; }
-
-                                row-touch := TouchArea { mouse-cursor: p.id != "self" ? pointer : default; }
-
-                                HorizontalLayout {
-                                    padding-left: 8px; padding-right: 10px; spacing: 10px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 28px; height: 28px; border-radius: 7px;
-                                            background: p.is-speaking ? VxTheme.accent : VxTheme.avatar-color(p.color-index);
-                                            animate background { duration: 100ms; }
-                                            Text {
-                                                text: p.initial; color: #f0f0f8;
-                                                font-size: 10px; font-weight: 700;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        alignment: center;
-                                        spacing: 3px;
-
-                                        Text {
-                                            text: p.id == "self" ? p.name + " (You)" : p.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 12px; font-weight: p.id == "self" ? 600 : 500;
-                                            overflow: elide;
-                                        }
-
-                                        if p.id == "self" : Rectangle {
-                                            height: 3px; border-radius: 1.5px;
-                                            background: VxTheme.border-subtle;
-                                            Rectangle {
-                                                width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                                                height: parent.height; border-radius: 1.5px;
-                                                background: root.is-muted ? VxTheme.danger : VxTheme.success;
-                                                animate width { duration: 40ms; }
-                                            }
-                                        }
-
-                                        if p.id != "self" : VxSlider {
-                                            value: p.volume; height: 14px;
-                                            changed(val) => { root.volume-changed(p.id, val); }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        spacing: 3px;
-                                        if (p.id == "self" && root.is-deafened) || (p.id != "self" && p.is-deafened) : Rectangle {
-                                            width: 36px; height: 16px; border-radius: 4px;
-                                            background: VxTheme.deafen-badge-bg;
-                                            border-color: VxTheme.warning;
-                                            border-width: 1px;
-                                            Text { text: "DEAF"; color: VxTheme.warning; font-size: 7px; font-weight: 700;
-                                                   horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
-                                        }
-                                        if p.is-muted : Rectangle {
-                                            width: 36px; height: 16px; border-radius: 4px;
-                                            background: VxTheme.mute-badge-bg;
-                                            border-color: VxTheme.danger;
-                                            border-width: 1px;
-                                            Text { text: "MUTE"; color: VxTheme.danger; font-size: 7px; font-weight: 700;
-                                                   horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
-                                        }
-                                        if p.is-speaking && !p.is-muted : Rectangle {
-                                            width: 8px; height: 8px; border-radius: 4px;
-                                            background: VxTheme.success;
-                                            border-color: VxTheme.success-dim;
-                                            border-width: 2px;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Mic level bar
-                    Rectangle {
-                        height: 3px;
-                        background: VxTheme.bg-surface;
-
-                        Rectangle {
-                            x: 0px;
-                            width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                            height: 6px;
-                            y: -1.5px;
-                            background: root.is-muted ? VxTheme.mic-glow-red :
-                                        root.mic-level > 0.15 ? VxTheme.mic-glow-yellow :
-                                        root.mic-level > 0.03 ? VxTheme.mic-glow-green : transparent;
-                            border-radius: 3px;
-                            animate width { duration: 50ms; }
-                        }
-
-                        Rectangle {
-                            x: 0px;
-                            width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                            height: parent.height;
-                            border-radius: 1.5px;
-                            background: root.is-muted ? VxTheme.danger :
-                                        root.is-deafened ? VxTheme.text-muted :
-                                        root.mic-level > 0.15 ? VxTheme.warning :
-                                        root.mic-level > 0.05 ? VxTheme.success : VxTheme.border-subtle;
-                            animate width { duration: 50ms; }
-                        }
-                    }
-
-                    // Control bar — refined, icon-focused
-                    Rectangle {
-                        height: 56px;
-                        background: VxTheme.bg-surface;
-                        Divider { y: 0px; }
-
-                        HorizontalLayout {
-                            padding-left: 10px; padding-right: 10px;
-                            spacing: 6px;
-                            alignment: center;
-
-                            // Mute
-                            Rectangle {
-                                horizontal-stretch: 1;
-                                height: 40px;
-                                border-radius: 8px;
-                                background: root.is-muted ? VxTheme.danger :
-                                            mute-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                border-color: root.is-muted ? VxTheme.danger : VxTheme.border-subtle;
-                                border-width: 1px;
-                                animate background { duration: 100ms; easing: ease-out; }
-                                mute-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-mute(); } }
-                                VerticalLayout {
-                                    alignment: center; spacing: 2px;
-                                    Text {
-                                        text: root.is-muted ? "\u{1F507}" : "\u{1F3A4}";
-                                        font-size: 14px;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: root.is-muted ? "Unmute" : "Mute";
-                                        color: root.is-muted ? #f0f0f8 : VxTheme.text-secondary;
-                                        font-size: 9px; font-weight: 600;
-                                        horizontal-alignment: center;
-                                    }
-                                }
-                            }
-
-                            // Deafen
-                            Rectangle {
-                                horizontal-stretch: 1;
-                                height: 40px;
-                                border-radius: 8px;
-                                background: root.is-deafened ? VxTheme.danger :
-                                            deafen-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                border-color: root.is-deafened ? VxTheme.danger : VxTheme.border-subtle;
-                                border-width: 1px;
-                                animate background { duration: 100ms; easing: ease-out; }
-                                deafen-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-deafen(); } }
-                                VerticalLayout {
-                                    alignment: center; spacing: 2px;
-                                    Text {
-                                        text: root.is-deafened ? "\u{1F515}" : "\u{1F50A}";
-                                        font-size: 14px;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: root.is-deafened ? "Undeafen" : "Deafen";
-                                        color: root.is-deafened ? #f0f0f8 : VxTheme.text-secondary;
-                                        font-size: 9px; font-weight: 600;
-                                        horizontal-alignment: center;
-                                    }
-                                }
-                            }
-
-                            // Mic mode
-                            Rectangle {
-                                horizontal-stretch: 1;
-                                height: 40px;
-                                border-radius: 8px;
-                                background: mic-mode-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                border-color: root.is-open-mic ? VxTheme.success : VxTheme.accent;
-                                border-width: 1px;
-                                animate background { duration: 100ms; easing: ease-out; }
-                                mic-mode-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-mic-mode(); } }
-                                VerticalLayout {
-                                    alignment: center; spacing: 2px;
-                                    Text {
-                                        text: root.is-open-mic ? "\u{1F399}" : "\u{270B}";
-                                        font-size: 14px;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: root.is-open-mic ? "Open" : "PTT";
-                                        color: root.is-open-mic ? VxTheme.success : VxTheme.accent;
-                                        font-size: 9px; font-weight: 600;
-                                        horizontal-alignment: center;
-                                    }
-                                }
-                            }
-
-                            // Settings
-                            Rectangle {
-                                width: 40px;
-                                height: 40px;
-                                border-radius: 8px;
-                                background: settings-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-                                animate background { duration: 100ms; easing: ease-out; }
-                                settings-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(2); } }
-                                Text {
-                                    text: "\u{2699}";
-                                    color: VxTheme.text-secondary;
-                                    font-size: 15px;
-                                    horizontal-alignment: center; vertical-alignment: center;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ═══════════════════════════════
-                //  SETTINGS VIEW
-                // ═══════════════════════════════
-                if current-view == 2 : VerticalLayout {
-
-                    ScrollView {
-                        vertical-stretch: 1;
-
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 12px;
-                            alignment: start;
-
-                            HorizontalLayout {
-                                alignment: space-between;
-                                Text {
-                                    text: "Settings";
-                                    color: VxTheme.text-primary;
-                                    font-size: 18px; font-weight: 700;
-                                    vertical-alignment: center;
-                                }
-                                if root.previous-view == 1 : VxButton {
-                                    label: "\u{2190} Back to call";
-                                    small: true;
-                                    clicked => { root.navigate(root.previous-view); }
-                                }
-                            }
-
-                            // ── Appearance ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "APPEARANCE"; }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        FieldLabel { text: VxTheme.dark-mode ? "Dark theme" : "Light theme"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        VxToggle {
-                                            checked: VxTheme.dark-mode;
-                                            toggled => { root.toggle-dark-mode(); }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Audio Devices ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        SectionLabel { text: "AUDIO DEVICES"; vertical-alignment: center; }
-                                        VxButton { label: "Refresh"; small: true; ghost: true; clicked => { root.refresh-devices(); } }
-                                    }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Input device"; }
-                                        if root.input-devices.length > 0 : ComboBox {
-                                            model: root.input-devices;
-                                            current-index <=> root.selected-input;
-                                        }
-                                        if root.input-devices.length == 0 : Text { text: "No microphones found"; color: VxTheme.danger; font-size: 10px; }
-                                    }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Output device"; }
-                                        if root.output-devices.length > 0 : ComboBox {
-                                            model: root.output-devices;
-                                            current-index <=> root.selected-output;
-                                        }
-                                        if root.output-devices.length == 0 : Text { text: "No speakers found"; color: VxTheme.danger; font-size: 10px; }
-                                    }
-                                }
-                            }
-
-                            // ── Volume Controls ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "VOLUME"; }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Input (Mic)"; }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            alignment: center;
-                                            VxSlider {
-                                                horizontal-stretch: 1;
-                                                value: root.input-volume / 2.0;
-                                                changed(val) => {
-                                                    root.input-volume = val * 2.0;
-                                                    root.input-volume-changed(root.input-volume);
-                                                }
-                                            }
-                                            Text {
-                                                text: Math.round(root.input-volume * 100) + "%";
-                                                color: VxTheme.text-secondary;
-                                                font-size: 10px; font-weight: 600;
-                                                min-width: 36px;
-                                                horizontal-alignment: right;
-                                                vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        spacing: 4px;
-                                        FieldLabel { text: "Output (Speaker)"; }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            alignment: center;
-                                            VxSlider {
-                                                horizontal-stretch: 1;
-                                                value: root.output-volume;
-                                                changed(val) => {
-                                                    root.output-volume = val;
-                                                    root.output-volume-changed(val);
-                                                }
-                                            }
-                                            Text {
-                                                text: Math.round(root.output-volume * 100) + "%";
-                                                color: VxTheme.text-secondary;
-                                                font-size: 10px; font-weight: 600;
-                                                min-width: 36px;
-                                                horizontal-alignment: right;
-                                                vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Voice Mode ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "VOICE MODE"; }
-
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        Rectangle {
-                                            height: 28px; border-radius: 5px;
-                                            background: VxTheme.bg-elevated;
-                                            border-color: VxTheme.accent; border-width: 1px;
-                                            horizontal-stretch: 1;
-                                            Text {
-                                                text: root.is-open-mic ? "Open Mic" : "Push-to-Talk";
-                                                color: VxTheme.accent;
-                                                font-size: 11px; font-weight: 600;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                        VxButton { label: "Switch"; small: true; clicked => { root.toggle-mic-mode(); } }
-                                    }
-                                }
-                            }
-
-                            // ── Noise Suppression ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "NOISE SUPPRESSION"; }
-                                    Text {
-                                        text: "Filters background noise in open mic mode";
-                                        color: VxTheme.text-muted; font-size: 9px;
-                                    }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        alignment: center;
-                                        Text { text: "Less"; color: VxTheme.text-muted; font-size: 9px; vertical-alignment: center; }
-                                        VxSlider {
-                                            horizontal-stretch: 1;
-                                            value: root.noise-suppression;
-                                            changed(val) => {
-                                                root.noise-suppression = val;
-                                                root.noise-suppression-changed(val);
-                                            }
-                                        }
-                                        Text { text: "More"; color: VxTheme.text-muted; font-size: 9px; vertical-alignment: center; }
-                                    }
-                                    HorizontalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            height: 18px;
-                                            min-width: 50px;
-                                            border-radius: 4px;
-                                            background: VxTheme.bg-elevated;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            Text {
-                                                text: root.noise-suppression < 0.2 ? "Off" :
-                                                      root.noise-suppression < 0.4 ? "Low" :
-                                                      root.noise-suppression < 0.6 ? "Medium" :
-                                                      root.noise-suppression < 0.8 ? "High" : "Max";
-                                                color: root.noise-suppression < 0.2 ? VxTheme.text-muted : VxTheme.accent;
-                                                font-size: 9px; font-weight: 600;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Feedback Sound ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "NOTIFICATION SOUNDS"; }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        FieldLabel { text: "Mute/deafen/join/leave tones"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        VxToggle {
-                                            checked: root.feedback-sound;
-                                            toggled => { root.toggle-feedback-sound(); }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Desktop Notifications ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "DESKTOP NOTIFICATIONS"; }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        FieldLabel { text: "Show notifications for joins/messages"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        VxToggle {
-                                            checked: root.notifications-enabled;
-                                            toggled => { root.toggle-notifications(); }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ── Keybinds ──
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 8px;
-
-                                    SectionLabel { text: "KEYBINDS"; }
-                                    Text { text: "Hold modifier + press key for combos"; color: VxTheme.text-muted; font-size: 9px; }
-
-                                    // PTT
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        FieldLabel { text: "Push-to-talk"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        if root.listening-keybind == "ptt" : Text { text: "Press key(s)..."; color: VxTheme.accent; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-                                        if root.listening-keybind != "ptt" : KeyPill { key-text: root.ptt-key-display != "" ? root.ptt-key-display : "None"; }
-                                        VxButton { label: root.listening-keybind == "ptt" ? "Cancel" : "Set"; small: true; ghost: true;
-                                            clicked => { root.listening-keybind = root.listening-keybind == "ptt" ? "" : "ptt"; } }
-                                        if root.ptt-key-display != "" && root.listening-keybind != "ptt" : VxButton {
-                                            label: "x"; small: true; ghost: true; clicked => { root.clear-keybind("ptt"); } }
-                                    }
-                                    Divider {}
-
-                                    // Mute
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        FieldLabel { text: "Toggle mute"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        if root.listening-keybind == "mute" : Text { text: "Press key(s)..."; color: VxTheme.accent; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-                                        if root.listening-keybind != "mute" : KeyPill { key-text: root.mute-key-display != "" ? root.mute-key-display : "None"; }
-                                        VxButton { label: root.listening-keybind == "mute" ? "Cancel" : "Set"; small: true; ghost: true;
-                                            clicked => { root.listening-keybind = root.listening-keybind == "mute" ? "" : "mute"; } }
-                                        if root.mute-key-display != "" && root.listening-keybind != "mute" : VxButton {
-                                            label: "x"; small: true; ghost: true; clicked => { root.clear-keybind("mute"); } }
-                                    }
-                                    Divider {}
-
-                                    // Deafen
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        FieldLabel { text: "Toggle deafen"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        if root.listening-keybind == "deafen" : Text { text: "Press key(s)..."; color: VxTheme.accent; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-                                        if root.listening-keybind != "deafen" : KeyPill { key-text: root.deafen-key-display != "" ? root.deafen-key-display : "None"; }
-                                        VxButton { label: root.listening-keybind == "deafen" ? "Cancel" : "Set"; small: true; ghost: true;
-                                            clicked => { root.listening-keybind = root.listening-keybind == "deafen" ? "" : "deafen"; } }
-                                        if root.deafen-key-display != "" && root.listening-keybind != "deafen" : VxButton {
-                                            label: "x"; small: true; ghost: true; clicked => { root.clear-keybind("deafen"); } }
-                                    }
-                                    Divider {}
-
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        FieldLabel { text: "Go back"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        KeyPill { key-text: "Esc"; }
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                alignment: center;
-                                Text { text: "Settings save automatically"; color: VxTheme.text-muted; font-size: 9px; }
-                            }
-                        }
-                    }
-                }
-
-                // ═══════════════════════════════
-                //  SPACE VIEW
-                // ═══════════════════════════════
-                if current-view == 4 : VerticalLayout {
-                    spacing: 0px;
-
-                    Rectangle {
-                        height: 48px;
-                        background: VxTheme.bg-surface;
-                        Divider { y: parent.height - 1px; }
-
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            alignment: space-between;
-
-                            HorizontalLayout {
-                                spacing: 6px;
-                                alignment: center;
-
-                                VxButton {
-                                    label: "\u{2190} Back";
-                                    small: true;
-                                    clicked => { root.navigate(0); }
-                                }
-
-                                Text {
-                                    text: root.current-space-name;
-                                    color: VxTheme.text-primary;
-                                    font-size: 15px; font-weight: 700;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-
-                            HorizontalLayout {
-                                spacing: 6px;
-                                alignment: center;
-
-                                Rectangle {
-                                    height: 26px; border-radius: 5px;
-                                    background: invite-copy-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                    border-color: VxTheme.border-subtle;
-                                    border-width: 1px;
-                                    animate background { duration: 80ms; }
-
-                                    invite-copy-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.copy-invite-code(); }
-                                    }
-                                    HorizontalLayout {
-                                        padding-left: 8px;
-                                        padding-right: 8px;
-                                        spacing: 5px;
-                                        alignment: center;
-                                        Text {
-                                            text: root.current-space-invite;
-                                            color: VxTheme.text-muted;
-                                            font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
-                                            vertical-alignment: center;
-                                        }
-                                        Text {
-                                            text: "Copy";
-                                            color: VxTheme.accent;
-                                            font-size: 10px; font-weight: 600;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    ScrollView {
-                        vertical-stretch: 1;
-
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 8px;
-                            alignment: start;
-
-                            // Text Channels
-                            SectionLabel { text: "TEXT CHANNELS"; }
-
-                            for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 0px : 34px;
-                                visible: !channel.is-voice;
-                                border-radius: 5px;
-                                background: txt-ch-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                                animate background { duration: 80ms; }
-
-                                txt-ch-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.select-text-channel(channel.id); }
-                                }
-
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 10px;
-                                    spacing: 8px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Text {
-                                            text: "#";
-                                            color: VxTheme.text-muted;
-                                            font-size: 14px; font-weight: 700;
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        horizontal-stretch: 1;
-                                        Text {
-                                            text: channel.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 12px; font-weight: 500;
-                                            overflow: elide;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Voice Channels
-                            SectionLabel { text: "VOICE CHANNELS"; }
-
-                            for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 38px : 0px;
-                                visible: channel.is-voice;
-                                border-radius: 5px;
-                                background: channel.peer-count > 0 ? VxTheme.speaking-row-bg :
-                                            vc-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                                animate background { duration: 80ms; }
-
-                                vc-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.join-channel(channel.id); }
-                                }
-
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 10px;
-                                    spacing: 8px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 6px; height: 6px; border-radius: 3px;
-                                            background: channel.peer-count > 0 ? VxTheme.accent : VxTheme.text-muted;
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        horizontal-stretch: 1;
-                                        Text {
-                                            text: channel.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 12px; font-weight: 500;
-                                            overflow: elide;
-                                        }
-                                    }
-
-                                    if channel.peer-count > 0 : VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 20px; height: 16px; border-radius: 4px;
-                                            background: VxTheme.bg-elevated;
-                                            Text {
-                                                text: channel.peer-count + "";
-                                                color: VxTheme.accent;
-                                                font-size: 9px; font-weight: 600;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Create channel
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 12px;
-                                    spacing: 8px;
-
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        FieldLabel { text: "New Channel"; vertical-alignment: center; horizontal-stretch: 1; }
-                                        Rectangle {
-                                            width: 54px; height: 22px; border-radius: 4px;
-                                            background: VxTheme.bg-elevated;
-                                            border-color: VxTheme.border-subtle; border-width: 1px;
-                                            type-toggle := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => { root.new-channel-is-voice = !root.new-channel-is-voice; }
-                                            }
-                                            Text {
-                                                text: root.new-channel-is-voice ? "Voice" : "Text";
-                                                color: VxTheme.accent;
-                                                font-size: 9px; font-weight: 600;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        VxInput {
-                                            text <=> root.new-channel-name;
-                                            placeholder: "channel-name";
-                                            horizontal-stretch: 1;
-                                            accepted => {
-                                                if root.new-channel-name != "" {
-                                                    root.create-channel();
-                                                }
-                                            }
-                                        }
-                                        VxButton {
-                                            label: "+";
-                                            accent: true;
-                                            small: true;
-                                            enabled: root.new-channel-name != "";
-                                            clicked => { root.create-channel(); }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Online members
-                            SectionLabel { text: "ONLINE"; }
-
-                            for member in root.members : Rectangle {
-                                height: 34px;
-                                border-radius: 5px;
-
-                                HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 8px;
-                                    spacing: 8px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 22px; height: 22px; border-radius: 6px;
-                                            background: VxTheme.avatar-color(member.color-index);
-                                            Text {
-                                                text: member.initial;
-                                                color: #f0f0f8;
-                                                font-size: 9px; font-weight: 700;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        horizontal-stretch: 1;
-                                        Text {
-                                            text: member.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 11px; font-weight: 500;
-                                            overflow: elide;
-                                        }
-                                    }
-
-                                    if member.is-in-voice : VerticalLayout {
-                                        alignment: center;
-                                        Text {
-                                            text: member.channel-name;
-                                            color: VxTheme.text-muted;
-                                            font-size: 9px;
-                                        }
-                                    }
-                                }
-                            }
-
-                            Rectangle { height: 8px; }
-                        }
-                    }
-
-                    // Bottom: Leave / Delete
-                    Rectangle {
-                        height: root.confirm-delete-visible ? 90px : 52px;
-                        background: VxTheme.bg-surface;
-                        animate height { duration: 120ms; easing: ease-out; }
-                        Divider { y: 0px; }
-                        VerticalLayout {
-                            spacing: 0px;
-                            HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 14px;
-                                padding-top: 8px;
-                                padding-bottom: root.confirm-delete-visible ? 4px : 8px;
-                                spacing: 10px;
-                                alignment: center;
-                                VxButton {
-                                    label: "Leave Space";
-                                    horizontal-stretch: 1;
-                                    clicked => { root.leave-space(); }
-                                }
-                                VxButton {
-                                    label: "Delete Space";
-                                    danger: true;
-                                    clicked => { root.confirm-delete-visible = true; }
-                                }
-                            }
-                            if root.confirm-delete-visible : HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 14px;
-                                padding-bottom: 8px;
-                                spacing: 8px;
-                                alignment: center;
-                                Text {
-                                    text: "Are you sure?";
-                                    color: VxTheme.danger;
-                                    font-size: 11px;
-                                    font-weight: 600;
-                                    vertical-alignment: center;
-                                }
-                                VxButton {
-                                    label: "Yes, Delete";
-                                    danger: true;
-                                    small: true;
-                                    clicked => {
-                                        root.confirm-delete-visible = false;
-                                        root.delete-space();
-                                    }
-                                }
-                                VxButton {
-                                    label: "Cancel";
-                                    small: true;
-                                    clicked => { root.confirm-delete-visible = false; }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ═══════════════════════════════
-                //  TEXT CHAT VIEW
-                // ═══════════════════════════════
-                if current-view == 5 : VerticalLayout {
-                    Rectangle {
-                        height: 42px;
-                        background: VxTheme.bg-surface;
-                        Divider { y: self.height - 1px; }
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 14px;
-                            spacing: 10px;
-                            alignment: start;
-
-                            VerticalLayout {
-                                alignment: center;
-                                VxButton {
-                                    label: "\u{2190} Back";
-                                    small: true;
-                                    clicked => { root.current-view = 4; }
-                                }
-                            }
-
-                            VerticalLayout {
-                                alignment: center;
-                                horizontal-stretch: 1;
-                                Text {
-                                    text: "# " + root.chat-channel-name;
-                                    color: VxTheme.text-primary;
-                                    font-size: 14px; font-weight: 600;
-                                }
-                            }
-                        }
-                    }
-
-                    ScrollView {
-                        vertical-stretch: 1;
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 6px;
-                            alignment: end;
-
-                            for msg in root.chat-messages : Rectangle {
-                                border-radius: 8px;
-                                background: msg-hover.has-hover
-                                    ? (msg.is-self ? VxTheme.msg-self-bg.darker(0.05) : VxTheme.msg-other-bg.darker(0.05))
-                                    : (msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg);
-                                border-color: root.editing-message-id == msg.message-id ? VxTheme.accent : transparent;
-                                border-width: root.editing-message-id == msg.message-id ? 1px : 0px;
-
-                                msg-hover := TouchArea {
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        padding-top: 7px;
-                                        padding-bottom: 7px;
-                                        spacing: 2px;
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            Text {
-                                                text: msg.sender-name;
-                                                color: msg.is-self ? VxTheme.accent : VxTheme.avatar-color(msg.color-index);
-                                                font-size: 10px; font-weight: 600;
-                                            }
-                                            Text {
-                                                text: msg.timestamp;
-                                                color: VxTheme.text-muted;
-                                                font-size: 9px;
-                                                vertical-alignment: center;
-                                            }
-                                            if msg.edited : Text {
-                                                text: "(edited)";
-                                                color: VxTheme.text-muted;
-                                                font-size: 8px;
-                                                vertical-alignment: center;
-                                            }
-                                            // Spacer
-                                            Rectangle { horizontal-stretch: 1; }
-                                            // Action buttons (visible on hover)
-                                            if msg-hover.has-hover : HorizontalLayout {
-                                                spacing: 2px;
-                                                // Quick reactions
-                                                for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F602}", "\u{1F389}"] : Rectangle {
-                                                    width: 22px; height: 20px;
-                                                    border-radius: 4px;
-                                                    background: react-ta.has-hover ? VxTheme.bg-elevated : transparent;
-                                                    react-ta := TouchArea {
-                                                        clicked => { root.react-to-message(msg.message-id, emoji); }
-                                                        Text {
-                                                            text: emoji;
-                                                            font-size: 11px;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                                // Edit button (own messages only)
-                                                if msg.is-self : Rectangle {
-                                                    width: 22px; height: 20px;
-                                                    border-radius: 4px;
-                                                    background: edit-ta.has-hover ? VxTheme.bg-elevated : transparent;
-                                                    edit-ta := TouchArea {
-                                                        clicked => {
-                                                            root.editing-message-id = msg.message-id;
-                                                            root.editing-original-content = msg.content;
-                                                            root.chat-input = msg.content;
-                                                        }
-                                                        Text {
-                                                            text: "\u{270F}";
-                                                            font-size: 11px;
-                                                            color: VxTheme.text-secondary;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                                // Delete button (own messages only)
-                                                if msg.is-self : Rectangle {
-                                                    width: 22px; height: 20px;
-                                                    border-radius: 4px;
-                                                    background: del-ta.has-hover ? VxTheme.danger : transparent;
-                                                    del-ta := TouchArea {
-                                                        clicked => { root.delete-text-message(msg.message-id); }
-                                                        Text {
-                                                            text: "\u{2715}";
-                                                            font-size: 11px;
-                                                            color: del-ta.has-hover ? VxTheme.text-primary : VxTheme.text-secondary;
-                                                            horizontal-alignment: center;
-                                                            vertical-alignment: center;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Text {
-                                            text: msg.content;
-                                            color: VxTheme.text-primary;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        if msg.reactions != "" : HorizontalLayout {
-                                            spacing: 4px;
-                                            Rectangle {
-                                                height: 20px;
-                                                border-radius: 10px;
-                                                background: VxTheme.bg-elevated;
-                                                border-color: VxTheme.border-subtle;
-                                                border-width: 1px;
-                                                HorizontalLayout {
-                                                    padding-left: 6px;
-                                                    padding-right: 6px;
-                                                    Text {
-                                                        text: msg.reactions;
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        vertical-alignment: center;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        background: VxTheme.bg-surface;
-                        VerticalLayout {
-                            // Edit mode banner
-                            if root.editing-message-id != "" : Rectangle {
-                                height: 28px;
-                                background: VxTheme.accent.transparentize(0.85);
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 8px;
-                                    alignment: center;
-                                    Text {
-                                        text: "Editing message";
-                                        color: VxTheme.accent;
-                                        font-size: 10px; font-weight: 500;
-                                        horizontal-stretch: 1;
-                                        vertical-alignment: center;
-                                    }
-                                    TouchArea {
-                                        width: 50px;
-                                        clicked => {
-                                            root.editing-message-id = "";
-                                            root.editing-original-content = "";
-                                            root.chat-input = "";
-                                        }
-                                        Text {
-                                            text: "Cancel";
-                                            color: VxTheme.text-secondary;
-                                            font-size: 10px;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                }
-                            }
-                            Divider { }
-                            Rectangle {
-                                height: 50px;
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 8px;
-                                    alignment: center;
-                                    VxInput {
-                                        text <=> root.chat-input;
-                                        placeholder: root.editing-message-id != ""
-                                            ? "Edit message..."
-                                            : "Message #" + root.chat-channel-name;
-                                        horizontal-stretch: 1;
-                                        accepted => {
-                                            if root.chat-input != "" {
-                                                if root.editing-message-id != "" {
-                                                    root.edit-text-message(root.editing-message-id, root.chat-input);
-                                                    root.editing-message-id = "";
-                                                    root.editing-original-content = "";
-                                                    root.chat-input = "";
-                                                } else {
-                                                    root.send-text-message();
-                                                }
-                                            }
-                                        }
-                                    }
-                                    VxButton {
-                                        label: root.editing-message-id != "" ? "Save" : "Send";
-                                        accent: true;
-                                        enabled: root.chat-input != "";
-                                        clicked => {
-                                            if root.editing-message-id != "" {
-                                                root.edit-text-message(root.editing-message-id, root.chat-input);
-                                                root.editing-message-id = "";
-                                                root.editing-original-content = "";
-                                                root.chat-input = "";
-                                            } else {
-                                                root.send-text-message();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ═══════════════════════════════
-                //  SYSTEM VIEW
-                // ═══════════════════════════════
-                if current-view == 3 : VerticalLayout {
-
-                    ScrollView {
-                        vertical-stretch: 1;
-
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 12px;
-                            alignment: start;
-
-                            Text {
-                                text: "System";
-                                color: VxTheme.text-primary;
-                                font-size: 18px; font-weight: 700;
-                            }
-
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 3px;
-                                    SectionLabel { text: "RESOURCES"; }
-                                    Rectangle { height: 3px; }
-                                    MetricRow { metric-label: "CPU"; metric-value: round(root.perf.cpu-percent) + "%";
-                                        indicator-color: root.perf.cpu-percent < 50 ? VxTheme.success : root.perf.cpu-percent < 80 ? VxTheme.warning : VxTheme.danger; }
-                                    MetricRow { metric-label: "Memory"; metric-value: round(root.perf.memory-mb * 10) / 10 + " MB";
-                                        indicator-color: root.perf.memory-mb < 100 ? VxTheme.success : root.perf.memory-mb < 250 ? VxTheme.warning : VxTheme.danger; }
-                                    MetricRow { metric-label: "Uptime"; metric-value: root.uptime-text; indicator-color: VxTheme.accent; }
-                                }
-                            }
-
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 3px;
-                                    SectionLabel { text: "STATUS"; }
-                                    Rectangle { height: 3px; }
-                                    MetricRow { metric-label: "Audio"; metric-value: root.perf.audio-active ? "Active" : "Idle";
-                                        indicator-color: root.perf.audio-active ? VxTheme.success : VxTheme.text-muted; }
-                                    MetricRow { metric-label: "Network"; metric-value: root.perf.network-connected ? "Connected" : "Offline";
-                                        indicator-color: root.perf.network-connected ? VxTheme.success : VxTheme.danger; }
-                                    MetricRow { metric-label: "Dropped"; metric-value: root.perf.dropped-frames + "";
-                                        indicator-color: root.perf.dropped-frames == 0 ? VxTheme.success : root.perf.dropped-frames < 10 ? VxTheme.warning : VxTheme.danger; }
-                                    MetricRow { metric-label: "Call"; metric-value: root.room-code != "" ? root.room-code + " (" + root.participants.length + ")" : "\u{2014}";
-                                        indicator-color: root.room-code != "" ? VxTheme.accent : VxTheme.text-muted; }
-                                    MetricRow { metric-label: "Mic"; metric-value: root.is-open-mic ? "Open Mic" : "Push-to-Talk";
-                                        indicator-color: VxTheme.accent; }
-                                }
-                            }
-
-                            VxCard {
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 8px;
-                                    SectionLabel { text: "ABOUT"; }
-
-                                    HorizontalLayout {
-                                        spacing: 12px;
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                width: 32px; height: 32px; border-radius: 8px;
-                                                background: VxTheme.accent;
-                                                border-color: VxTheme.accent-glow;
-                                                border-width: 2px;
-                                                Text {
-                                                    text: "V";
-                                                    color: #f0f0f8;
-                                                    font-size: 14px; font-weight: 800;
-                                                    horizontal-alignment: center; vertical-alignment: center;
-                                                }
-                                            }
-                                        }
-                                        VerticalLayout {
-                                            alignment: center;
-                                            spacing: 2px;
-                                            horizontal-stretch: 1;
-                                            Text { text: "Voxlink"; color: VxTheme.text-primary; font-size: 15px; font-weight: 700; }
-                                            Text { text: "Voice without limits"; color: VxTheme.text-muted; font-size: 9px; }
-                                        }
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Rectangle {
-                                                height: 20px; border-radius: 4px;
-                                                background: VxTheme.accent-subtle;
-                                                border-color: VxTheme.accent-glow;
-                                                border-width: 1px;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    Text { text: "v" + root.version-text; color: VxTheme.accent; font-size: 10px; font-weight: 700;
-                                                           vertical-alignment: center; }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Divider {}
-
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: 42px;
-                                            border-radius: 6px;
-                                            background: VxTheme.bg-surface;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            VerticalLayout {
-                                                alignment: center; spacing: 2px;
-                                                Text { text: "Rust + Slint"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
-                                                Text { text: "Engine"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
-                                            }
-                                        }
-                                        Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: 42px;
-                                            border-radius: 6px;
-                                            background: VxTheme.bg-surface;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            VerticalLayout {
-                                                alignment: center; spacing: 2px;
-                                                Text { text: "48kHz / 20ms"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
-                                                Text { text: "Audio"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
-                                            }
-                                        }
-                                        Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: 42px;
-                                            border-radius: 6px;
-                                            background: VxTheme.bg-surface;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            VerticalLayout {
-                                                alignment: center; spacing: 2px;
-                                                Text { text: "Opus 64kbps"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
-                                                Text { text: "Codec"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ─── Bottom Tab Bar ───
-        if current-view != 1 && current-view != 4 && current-view != 5 : Rectangle {
-            height: 50px;
-            background: VxTheme.bg-surface;
-            AccentBar { y: 0px; opacity: 0.25; }
-
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 4px;
-
-                // Home
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: current-view == 0 ? VxTheme.tab-active-bg : tab-home.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 6px;
-                    animate background { duration: 80ms; }
-                    tab-home := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(0); } }
-                    VerticalLayout {
-                        alignment: center; spacing: 2px;
-                        Text { text: "\u{2302}"; color: current-view == 0 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        Text { text: "Home"; color: current-view == 0 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 9px; font-weight: current-view == 0 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        HorizontalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: current-view == 0 ? 14px : 0px; height: 2px;
-                                border-radius: 1px;
-                                background: VxTheme.accent;
-                                animate width { duration: 120ms; easing: ease-out; }
-                            }
-                        }
-                    }
-                }
-                // Settings
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: current-view == 2 ? VxTheme.tab-active-bg : tab-settings.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 6px;
-                    animate background { duration: 80ms; }
-                    tab-settings := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(2); } }
-                    VerticalLayout {
-                        alignment: center; spacing: 2px;
-                        Text { text: "\u{2699}"; color: current-view == 2 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        Text { text: "Settings"; color: current-view == 2 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 9px; font-weight: current-view == 2 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        HorizontalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: current-view == 2 ? 14px : 0px; height: 2px;
-                                border-radius: 1px;
-                                background: VxTheme.accent;
-                                animate width { duration: 120ms; easing: ease-out; }
-                            }
-                        }
-                    }
-                }
-                // System
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: current-view == 3 ? VxTheme.tab-active-bg : tab-perf.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 6px;
-                    animate background { duration: 80ms; }
-                    tab-perf := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(3); } }
-                    VerticalLayout {
-                        alignment: center; spacing: 2px;
-                        Text { text: "\u{2261}"; color: current-view == 3 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        Text { text: "System"; color: current-view == 3 ? VxTheme.accent : VxTheme.text-muted;
-                            font-size: 9px; font-weight: current-view == 3 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 120ms; } }
-                        HorizontalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: current-view == 3 ? 14px : 0px; height: 2px;
-                                border-radius: 1px;
-                                background: VxTheme.accent;
-                                animate width { duration: 120ms; easing: ease-out; }
-                            }
-                        }
+                    if !root.desktop-layout && root.current-view != 1 && root.current-view != 4 && root.current-view != 5 : BottomNav {
+                        current-view: root.current-view;
+                        navigate(view-index) => { root.navigate(view-index); }
                     }
                 }
             }

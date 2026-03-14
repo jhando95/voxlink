@@ -167,23 +167,23 @@ fn populate_devices(
     let inputs: Vec<String> = audio_guard
         .list_input_devices()
         .into_iter()
-        .map(|d| d.name)
+        .map(|d| format!("{}{}", d.name, d.device_type.label()))
         .collect();
     let outputs: Vec<String> = audio_guard
         .list_output_devices()
         .into_iter()
-        .map(|d| d.name)
+        .map(|d| format!("{}{}", d.name, d.device_type.label()))
         .collect();
 
     let input_idx = config
         .input_device
         .as_ref()
-        .and_then(|saved| inputs.iter().position(|n| n == saved))
+        .and_then(|saved| inputs.iter().position(|n| n.starts_with(saved.as_str())))
         .unwrap_or(0);
     let output_idx = config
         .output_device
         .as_ref()
-        .and_then(|saved| outputs.iter().position(|n| n == saved))
+        .and_then(|saved| outputs.iter().position(|n| n.starts_with(saved.as_str())))
         .unwrap_or(0);
 
     ui_shell::set_device_lists(window, &inputs, &outputs);

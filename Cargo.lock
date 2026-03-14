@@ -286,7 +286,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app_desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "audio_core",
  "config_store",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "audio_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "audiopus",
@@ -794,12 +794,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -994,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "config_store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "directories",
  "log",
@@ -1161,56 +1155,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "windows 0.54.0",
-]
-
-[[package]]
-name = "cpp"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f36bcac3d8234c1fb813358e83d1bb6b0290a3d2b3b5efc6b88bfeaf9d8eec17"
-dependencies = [
- "cpp_macros",
-]
-
-[[package]]
-name = "cpp_build"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27f8638c97fbd79cc6fc80b616e0e74b49bac21014faed590bbc89b7e2676c90"
-dependencies = [
- "cc",
- "cpp_common",
- "lazy_static",
- "proc-macro2",
- "regex",
- "syn",
- "unicode-xid",
-]
-
-[[package]]
-name = "cpp_common"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25fcfea2ee05889597d35e986c2ad0169694320ae5cc8f6d2640a4bb8a884560"
-dependencies = [
- "lazy_static",
- "proc-macro2",
- "syn",
-]
-
-[[package]]
-name = "cpp_macros"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d156158fe86e274820f5a53bc9edb0885a6e7113909497aa8d883b69dd171871"
-dependencies = [
- "aho-corasick",
- "byteorder",
- "cpp_common",
- "lazy_static",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1692,27 +1636,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "femtovg"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35695993a8264f5dfa8facc135c003965cea40d83705b49e0f8c3a3b632a2171"
-dependencies = [
- "bitflags 2.11.0",
- "bytemuck",
- "fnv",
- "glow",
- "image",
- "imgref",
- "itertools 0.14.0",
- "log",
- "rgb",
- "slotmap",
- "ttf-parser 0.25.1",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1754,12 +1677,6 @@ name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
-
-[[package]]
-name = "fnv"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
@@ -1969,28 +1886,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "gbm"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce852e998d3ca5e4a97014fb31c940dc5ef344ec7d364984525fd11e8a547e6a"
-dependencies = [
- "bitflags 2.11.0",
- "drm",
- "drm-fourcc",
- "gbm-sys",
- "libc",
-]
-
-[[package]]
-name = "gbm-sys"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c13a5f2acc785d8fb6bf6b7ab6bfb0ef5dad4f4d97e8e70bb8e470722312f76f"
-dependencies = [
- "libc",
 ]
 
 [[package]]
@@ -2283,36 +2178,13 @@ dependencies = [
  "bytemuck",
  "calloop 0.14.4",
  "drm",
- "gbm",
- "glutin",
  "i-slint-common",
  "i-slint-core",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-software",
  "input",
  "memmap2",
  "nix",
- "raw-window-handle",
  "xkbcommon",
-]
-
-[[package]]
-name = "i-slint-backend-qt"
-version = "1.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9d5db3221f453439ec5ad9b6ac3bb8d2b4825b2f8734f0cde4b67d7336c3da"
-dependencies = [
- "const-field-offset",
- "cpp",
- "cpp_build",
- "i-slint-common",
- "i-slint-core",
- "i-slint-core-macros",
- "lyon_path",
- "pin-project",
- "pin-weak",
- "qttypes",
- "vtable",
 ]
 
 [[package]]
@@ -2323,12 +2195,10 @@ checksum = "ce5a7e591a7257096e1f3da1bbb9ad6a140c307d0eee74f008a0b412fdb20dec"
 dependencies = [
  "cfg-if",
  "i-slint-backend-linuxkms",
- "i-slint-backend-qt",
  "i-slint-backend-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
 ]
 
 [[package]]
@@ -2351,7 +2221,6 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "imgref",
@@ -2473,29 +2342,6 @@ dependencies = [
  "quote",
  "serde_json",
  "syn",
-]
-
-[[package]]
-name = "i-slint-renderer-femtovg"
-version = "1.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb6eccda447999bc6222988500b841b64c953988986af182334e7ba9a30f0edd"
-dependencies = [
- "cfg-if",
- "const-field-offset",
- "derive_more",
- "femtovg",
- "glow",
- "i-slint-common",
- "i-slint-core",
- "i-slint-core-macros",
- "imgref",
- "lyon_path",
- "pin-weak",
- "rgb",
- "ttf-parser 0.25.1",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -2775,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "integration_tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "serde_json",
@@ -3168,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "media_transport"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "audio_core",
@@ -3319,7 +3165,7 @@ dependencies = [
 
 [[package]]
 name = "net_control"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3981,7 +3827,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf_metrics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "shared_types",
  "sysinfo",
@@ -4215,17 +4061,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "qttypes"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7edf5b38c97ad8900ad2a8418ee44b4adceaa866a4a3405e2f1c909871d7ebd"
-dependencies = [
- "cpp",
- "cpp_build",
- "semver",
 ]
 
 [[package]]
@@ -4861,7 +4696,7 @@ dependencies = [
 
 [[package]]
 name = "shared_types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4885,7 +4720,7 @@ dependencies = [
 
 [[package]]
 name = "signaling_server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "env_logger",
  "futures-util",
@@ -4980,12 +4815,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d25b87d458205e79efb30545cae083aec2ccb1b192c46a55ae6d54403cdacb33"
 dependencies = [
  "const-field-offset",
- "i-slint-backend-qt",
  "i-slint-backend-selector",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-software",
  "num-traits",
  "once_cell",
@@ -5718,7 +5551,7 @@ dependencies = [
 
 [[package]]
 name = "ui_shell"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "shared_types",
@@ -5932,7 +5765,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voice_engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "shared_types",

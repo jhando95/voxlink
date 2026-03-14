@@ -86,9 +86,12 @@ pub fn setup_refresh_devices(
         let audio = audio.clone();
         let window_weak = window_weak.clone();
         rt_handle.spawn(async move {
-            let aud = audio.lock().await;
-            let inputs: Vec<String> = aud.list_input_devices().into_iter().map(|d| d.name).collect();
-            let outputs: Vec<String> = aud.list_output_devices().into_iter().map(|d| d.name).collect();
+            let mut aud = audio.lock().await;
+            aud.refresh_host();
+            let inputs: Vec<String> = aud.list_input_devices().into_iter()
+                .map(|d| format!("{}{}", d.name, d.device_type.label())).collect();
+            let outputs: Vec<String> = aud.list_output_devices().into_iter()
+                .map(|d| format!("{}{}", d.name, d.device_type.label())).collect();
             if let Some(w) = window_weak.upgrade() {
                 ui_shell::set_device_lists(&w, &inputs, &outputs);
             }

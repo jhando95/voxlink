@@ -48,6 +48,86 @@ type EncodedFrameCallback = Box<dyn Fn(Arc<[u8]>) + Send>;
 pub struct AudioDevice {
     pub name: String,
     pub is_default: bool,
+    /// Hint about device type (headphones, speakers, headset mic, etc.)
+    pub device_type: DeviceType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceType {
+    Unknown,
+    Headphones,
+    Headset,
+    Speakers,
+    Microphone,
+    Webcam,
+    VirtualDevice,
+}
+
+impl DeviceType {
+    /// Classify a device by its name using common patterns across platforms
+    fn from_name(name: &str, is_input: bool) -> Self {
+        let lower = name.to_lowercase();
+        // Virtual/software devices
+        if lower.contains("virtual") || lower.contains("soundflower")
+            || lower.contains("blackhole") || lower.contains("loopback")
+            || lower.contains("cable") || lower.contains("voicemeeter")
+        {
+            return DeviceType::VirtualDevice;
+        }
+        // Webcam mics
+        if is_input && (lower.contains("webcam") || lower.contains("camera")
+            || lower.contains("facetime") || lower.contains("c920")
+            || lower.contains("c922") || lower.contains("brio"))
+        {
+            return DeviceType::Webcam;
+        }
+        // Headsets (have both mic and speakers — look for gaming/headset keywords)
+        if lower.contains("headset") || lower.contains("arctis")
+            || lower.contains("hyperx") || lower.contains("steelseries")
+            || lower.contains("corsair") || lower.contains("razer")
+            || lower.contains("astro") || lower.contains("jabra")
+            || lower.contains("plantronics") || lower.contains("poly")
+        {
+            return DeviceType::Headset;
+        }
+        // Headphones (output only, no mic implied)
+        if !is_input && (lower.contains("headphone") || lower.contains("airpod")
+            || lower.contains("earphone") || lower.contains("buds")
+            || lower.contains("wh-1000") || lower.contains("wf-1000")
+            || lower.contains("qc35") || lower.contains("qc45"))
+        {
+            return DeviceType::Headphones;
+        }
+        // Speakers
+        if !is_input && (lower.contains("speaker") || lower.contains("monitor")
+            || lower.contains("soundbar") || lower.contains("macbook pro speaker")
+            || lower.contains("built-in output") || lower.contains("realtek"))
+        {
+            return DeviceType::Speakers;
+        }
+        // Microphone
+        if is_input && (lower.contains("microphone") || lower.contains("mic")
+            || lower.contains("built-in") || lower.contains("internal")
+            || lower.contains("blue yeti") || lower.contains("rode")
+            || lower.contains("at2020") || lower.contains("samson"))
+        {
+            return DeviceType::Microphone;
+        }
+        DeviceType::Unknown
+    }
+
+    /// Return a display suffix hint for the UI
+    pub fn label(&self) -> &'static str {
+        match self {
+            DeviceType::Headphones => " (Headphones)",
+            DeviceType::Headset => " (Headset)",
+            DeviceType::Speakers => " (Speakers)",
+            DeviceType::Microphone => " (Mic)",
+            DeviceType::Webcam => " (Webcam)",
+            DeviceType::VirtualDevice => " (Virtual)",
+            DeviceType::Unknown => "",
+        }
+    }
 }
 
 pub struct AudioEngine {
@@ -106,6 +186,12 @@ impl AudioEngine {
 
     // ─── Device Enumeration ───
 
+    /// Re-enumerate the host to pick up hot-plugged devices
+    pub fn refresh_host(&mut self) {
+        self.host = cpal::default_host();
+        log::info!("Audio host refreshed (re-enumerated devices)");
+    }
+
     pub fn list_input_devices(&self) -> Vec<AudioDevice> {
         let default_name = self
             .host
@@ -120,13 +206,14 @@ impl AudioEngine {
                     .filter_map(|d| {
                         let name = d.name().ok()?;
                         let is_default = default_name.as_deref() == Some(&name);
-                        Some(AudioDevice { name, is_default })
+                        let device_type = DeviceType::from_name(&name, true);
+                        Some(AudioDevice { name, is_default, device_type })
                     })
                     .collect()
             })
             .unwrap_or_default();
         log::info!("Found {} input devices: {:?}", devices.len(),
-            devices.iter().map(|d| &d.name).collect::<Vec<_>>());
+            devices.iter().map(|d| format!("{}{}", d.name, d.device_type.label())).collect::<Vec<_>>());
         devices
     }
 
@@ -144,13 +231,14 @@ impl AudioEngine {
                     .filter_map(|d| {
                         let name = d.name().ok()?;
                         let is_default = default_name.as_deref() == Some(&name);
-                        Some(AudioDevice { name, is_default })
+                        let device_type = DeviceType::from_name(&name, false);
+                        Some(AudioDevice { name, is_default, device_type })
                     })
                     .collect()
             })
             .unwrap_or_default();
         log::info!("Found {} output devices: {:?}", devices.len(),
-            devices.iter().map(|d| &d.name).collect::<Vec<_>>());
+            devices.iter().map(|d| format!("{}{}", d.name, d.device_type.label())).collect::<Vec<_>>());
         devices
     }
 

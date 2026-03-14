@@ -1,0 +1,523 @@
+import { ScrollView } from "std-widgets.slint";
+import { VxTheme } from "../theme.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxToggle } from "../components.slint";
+
+export component SettingsView inherits Rectangle {
+    in property <bool> wide: false;
+    in property <int> previous-view: 0;
+    in property <bool> dark-mode: true;
+    in property <[string]> input-devices: [];
+    in property <[string]> output-devices: [];
+    in-out property <int> selected-input: 0;
+    in-out property <int> selected-output: 0;
+    in-out property <float> input-volume: 1.0;
+    in-out property <float> output-volume: 1.0;
+    in property <bool> is-open-mic: true;
+    in-out property <float> noise-suppression: 0.5;
+    in property <bool> feedback-sound: true;
+    in property <bool> notifications-enabled: true;
+    in-out property <string> listening-keybind: "";
+    in property <string> ptt-key-display: "";
+    in property <string> mute-key-display: "";
+    in property <string> deafen-key-display: "";
+    callback navigate(int);
+    callback toggle-dark-mode();
+    callback refresh-devices();
+    callback input-volume-changed(float);
+    callback output-volume-changed(float);
+    callback toggle-mic-mode();
+    callback noise-suppression-changed(float);
+    callback toggle-feedback-sound();
+    callback toggle-notifications();
+    callback clear-keybind(string);
+
+    background: transparent;
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "Audio and preferences";
+                    color: VxTheme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                }
+                if root.previous-view == 1 : VxButton {
+                    label: "Back to call";
+                    soft: true;
+                    clicked => { root.navigate(root.previous-view); }
+                }
+            }
+
+            if root.wide : HorizontalLayout {
+                spacing: 18px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+                            SectionLabel { text: "APPEARANCE"; }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: root.dark-mode ? "Dark console theme" : "Light console theme";
+                                        color: VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: "The theme changes instantly without touching the audio pipeline.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                VxToggle {
+                                    checked: root.dark-mode;
+                                    toggled => { root.toggle-dark-mode(); }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "DEVICE ROUTING"; }
+                                VxButton {
+                                    label: "Refresh";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.refresh-devices(); }
+                                }
+                            }
+
+                            if root.input-devices.length > 0 || root.output-devices.length > 0 : HorizontalLayout {
+                                spacing: 10px;
+                                if root.input-devices.length > 0 : VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Selected input";
+                                    value: root.input-devices[root.selected-input];
+                                    detail: "Mic route used for capture.";
+                                    tone: VxTheme.accent;
+                                }
+                                if root.output-devices.length > 0 : VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Selected output";
+                                    value: root.output-devices[root.selected-output];
+                                    detail: "Speaker route used for playback.";
+                                    tone: VxTheme.success;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Input device"; }
+                                if root.input-devices.length > 0 : VerticalLayout {
+                                    spacing: 8px;
+                                    for device[idx] in root.input-devices : VxOptionRow {
+                                        label: device;
+                                        detail: idx == root.selected-input ? "Current capture route" : "Tap to switch capture route";
+                                        selected: idx == root.selected-input;
+                                        clicked => { root.selected-input = idx; }
+                                    }
+                                }
+                                if root.input-devices.length == 0 : Text {
+                                    text: "No microphones found";
+                                    color: VxTheme.danger;
+                                    font-size: 10px;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Output device"; }
+                                if root.output-devices.length > 0 : VerticalLayout {
+                                    spacing: 8px;
+                                    for device[idx] in root.output-devices : VxOptionRow {
+                                        label: device;
+                                        detail: idx == root.selected-output ? "Current playback route" : "Tap to switch playback route";
+                                        selected: idx == root.selected-output;
+                                        clicked => { root.selected-output = idx; }
+                                    }
+                                }
+                                if root.output-devices.length == 0 : Text {
+                                    text: "No speakers found";
+                                    color: VxTheme.danger;
+                                    font-size: 10px;
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+                            SectionLabel { text: "LEVELS"; }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Mic gain"; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    VxSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.input-volume / 2.0;
+                                        changed(val) => {
+                                            root.input-volume = val * 2.0;
+                                            root.input-volume-changed(root.input-volume);
+                                        }
+                                    }
+                                    Text {
+                                        text: Math.round(root.input-volume * 100) + "%";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        min-width: 44px;
+                                        horizontal-alignment: right;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Speaker output"; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    VxSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.output-volume;
+                                        changed(val) => {
+                                            root.output-volume = val;
+                                            root.output-volume-changed(val);
+                                        }
+                                    }
+                                    Text {
+                                        text: Math.round(root.output-volume * 100) + "%";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        min-width: 44px;
+                                        horizontal-alignment: right;
+                                    }
+                                }
+                            }
+
+                            Divider {}
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Noise suppression"; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "Less";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                        vertical-alignment: center;
+                                    }
+                                    VxSlider {
+                                        horizontal-stretch: 1;
+                                        value: root.noise-suppression;
+                                        changed(val) => {
+                                            root.noise-suppression = val;
+                                            root.noise-suppression-changed(val);
+                                        }
+                                    }
+                                    Text {
+                                        text: "More";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Text {
+                                    text: root.noise-suppression < 0.2 ? "Off" :
+                                          root.noise-suppression < 0.4 ? "Low" :
+                                          root.noise-suppression < 0.6 ? "Medium" :
+                                          root.noise-suppression < 0.8 ? "High" : "Max";
+                                    color: root.noise-suppression < 0.2 ? VxTheme.text-muted : VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    width: 360px;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+                            SectionLabel { text: "VOICE MODE"; }
+                            Text {
+                                text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
+                                color: VxTheme.text-primary;
+                                font-size: 15px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.is-open-mic
+                                    ? "Use this when the room is quiet and you want a natural flow."
+                                    : "Use this when you need tighter control over when you transmit.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            VxButton {
+                                label: root.is-open-mic ? "Switch to push to talk" : "Switch to open mic";
+                                accent: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-mic-mode(); }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "ALERTS"; }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Join, leave, mute, and deafen sounds";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.feedback-sound;
+                                    toggled => { root.toggle-feedback-sound(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Desktop notifications for messages and joins";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    wrap: word-wrap;
+                                }
+                                VxToggle {
+                                    checked: root.notifications-enabled;
+                                    toggled => { root.toggle-notifications(); }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "KEYBINDS"; }
+                            Text {
+                                text: "Hold modifiers and a key to capture combinations.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Push to talk"; horizontal-stretch: 1; }
+                                if root.listening-keybind == "ptt" : Text {
+                                    text: "Listening…";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                if root.listening-keybind != "ptt" : KeyPill {
+                                    key-text: root.ptt-key-display != "" ? root.ptt-key-display : "None";
+                                }
+                                VxButton {
+                                    label: root.listening-keybind == "ptt" ? "Cancel" : "Set";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.listening-keybind = root.listening-keybind == "ptt" ? "" : "ptt"; }
+                                }
+                                if root.ptt-key-display != "" && root.listening-keybind != "ptt" : VxButton {
+                                    label: "Clear";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.clear-keybind("ptt"); }
+                                }
+                            }
+                            Divider {}
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Toggle mute"; horizontal-stretch: 1; }
+                                if root.listening-keybind == "mute" : Text {
+                                    text: "Listening…";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                if root.listening-keybind != "mute" : KeyPill {
+                                    key-text: root.mute-key-display != "" ? root.mute-key-display : "None";
+                                }
+                                VxButton {
+                                    label: root.listening-keybind == "mute" ? "Cancel" : "Set";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.listening-keybind = root.listening-keybind == "mute" ? "" : "mute"; }
+                                }
+                                if root.mute-key-display != "" && root.listening-keybind != "mute" : VxButton {
+                                    label: "Clear";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.clear-keybind("mute"); }
+                                }
+                            }
+                            Divider {}
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Toggle deafen"; horizontal-stretch: 1; }
+                                if root.listening-keybind == "deafen" : Text {
+                                    text: "Listening…";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                if root.listening-keybind != "deafen" : KeyPill {
+                                    key-text: root.deafen-key-display != "" ? root.deafen-key-display : "None";
+                                }
+                                VxButton {
+                                    label: root.listening-keybind == "deafen" ? "Cancel" : "Set";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.listening-keybind = root.listening-keybind == "deafen" ? "" : "deafen"; }
+                                }
+                                if root.deafen-key-display != "" && root.listening-keybind != "deafen" : VxButton {
+                                    label: "Clear";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.clear-keybind("deafen"); }
+                                }
+                            }
+
+                            Divider {}
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Quick back"; horizontal-stretch: 1; }
+                                KeyPill { key-text: "Esc"; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.wide : VerticalLayout {
+                spacing: 18px;
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "APPEARANCE"; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: root.dark-mode ? "Dark theme" : "Light theme";
+                                color: VxTheme.text-primary;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-stretch: 1;
+                            }
+                            VxToggle {
+                                checked: root.dark-mode;
+                                toggled => { root.toggle-dark-mode(); }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "DEVICE ROUTING"; }
+                            VxButton {
+                                label: "Refresh";
+                                small: true;
+                                ghost: true;
+                                clicked => { root.refresh-devices(); }
+                            }
+                        }
+                        if root.input-devices.length > 0 : VerticalLayout {
+                            spacing: 8px;
+                            FieldLabel { text: "Input"; }
+                            for device[idx] in root.input-devices : VxOptionRow {
+                                label: device;
+                                detail: idx == root.selected-input ? "Current capture route" : "";
+                                selected: idx == root.selected-input;
+                                clicked => { root.selected-input = idx; }
+                            }
+                        }
+                        if root.output-devices.length > 0 : VerticalLayout {
+                            spacing: 8px;
+                            FieldLabel { text: "Output"; }
+                            for device[idx] in root.output-devices : VxOptionRow {
+                                label: device;
+                                detail: idx == root.selected-output ? "Current playback route" : "";
+                                selected: idx == root.selected-output;
+                                clicked => { root.selected-output = idx; }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "VOICE MODE"; }
+                        VxButton {
+                            label: root.is-open-mic ? "Switch to push to talk" : "Switch to open mic";
+                            accent: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.toggle-mic-mode(); }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: "Settings save automatically.";
+                color: VxTheme.text-muted;
+                font-size: 10px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

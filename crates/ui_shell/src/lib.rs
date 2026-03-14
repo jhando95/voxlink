@@ -171,8 +171,10 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
     let color_index = m.sender_name.bytes()
         .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
     let reactions_str = format_reactions(&m.reactions);
+    let sender_initial = m.sender_name.chars().next().unwrap_or('?').to_uppercase().to_string();
     ChatMessage {
         sender_name: m.sender_name.clone().into(),
+        sender_initial: sender_initial.into(),
         content: m.content.clone().into(),
         timestamp: format_timestamp(m.timestamp).into(),
         is_self: m.sender_name == self_name,

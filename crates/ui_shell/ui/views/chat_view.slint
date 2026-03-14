@@ -1,0 +1,283 @@
+import { ScrollView } from "std-widgets.slint";
+import { ChatMessage, VxTheme } from "../theme.slint";
+import { Divider, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
+
+export component ChatView inherits Rectangle {
+    in property <bool> wide: false;
+    in property <string> current-space-name: "";
+    in property <string> chat-channel-name: "";
+    in property <[ChatMessage]> chat-messages: [];
+    in-out property <string> chat-input: "";
+    in-out property <string> editing-message-id: "";
+    in-out property <string> editing-original-content: "";
+    callback navigate(int);
+    callback send-text-message();
+    callback edit-text-message(string, string);
+    callback delete-text-message(string);
+    callback react-to-message(string, string);
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 18px;
+        padding: 24px;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: 10px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                Text {
+                    text: "# " + root.chat-channel-name;
+                    color: VxTheme.text-primary;
+                    font-size: 24px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.current-space-name != "" ? root.current-space-name : "Text chat";
+                    color: VxTheme.text-muted;
+                    font-size: 10px;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                VxButton {
+                    label: "Back";
+                    soft: true;
+                    clicked => { root.navigate(4); }
+                }
+                VxStatusPill {
+                    label: root.chat-messages.length + " messages";
+                    tone: VxTheme.accent;
+                    fill: VxTheme.accent-subtle;
+                }
+            }
+        }
+
+        VxCard {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                spacing: 0px;
+                vertical-stretch: 1;
+
+                if root.editing-message-id != "" : Rectangle {
+                    background: VxTheme.accent-subtle;
+                    border-color: VxTheme.accent-border;
+                    border-width: 0px;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 10px;
+                        Text {
+                            text: "Editing message";
+                            color: VxTheme.accent;
+                            font-size: 10px;
+                            font-weight: 700;
+                            horizontal-stretch: 1;
+                        }
+                        VxButton {
+                            label: "Cancel";
+                            small: true;
+                            ghost: true;
+                            clicked => {
+                                root.editing-message-id = "";
+                                root.editing-original-content = "";
+                                root.chat-input = "";
+                            }
+                        }
+                    }
+                }
+
+                Divider {}
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        padding: root.wide ? 20px : 16px;
+                        spacing: 10px;
+
+                        if root.chat-messages.length == 0 : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-soft;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 6px;
+                                Text {
+                                    text: "No messages yet";
+                                    color: VxTheme.text-primary;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: "Start the channel with a clean first message.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                }
+                            }
+                        }
+
+                        for msg in root.chat-messages : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
+                            border-color: root.editing-message-id == msg.message-id ? VxTheme.accent-border : VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                padding-top: 14px;
+                                padding-bottom: 14px;
+                                spacing: 12px;
+
+                                VxAvatar {
+                                    avatar-size: 30px;
+                                    initial: msg.sender-initial;
+                                    color-index: msg.color-index;
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 6px;
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text {
+                                            text: msg.sender-name;
+                                            color: msg.is-self ? VxTheme.accent : VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                        }
+                                        Text {
+                                            text: msg.timestamp;
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                        }
+                                        if msg.edited : Text {
+                                            text: "edited";
+                                            color: VxTheme.text-muted;
+                                            font-size: 8px;
+                                            font-weight: 700;
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}"] : Rectangle {
+                                                height: 22px;
+                                                border-radius: VxTheme.radius-pill;
+                                                background: react-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                                border-color: VxTheme.border-subtle;
+                                                border-width: 1px;
+
+                                                react-touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.react-to-message(msg.message-id, emoji); }
+                                                }
+
+                                                HorizontalLayout {
+                                                    padding-left: 8px;
+                                                    padding-right: 8px;
+                                                    Text {
+                                                        text: emoji;
+                                                        font-size: 11px;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                            }
+
+                                            if msg.is-self : VxButton {
+                                                label: "Edit";
+                                                small: true;
+                                                ghost: true;
+                                                clicked => {
+                                                    root.editing-message-id = msg.message-id;
+                                                    root.editing-original-content = msg.content;
+                                                    root.chat-input = msg.content;
+                                                }
+                                            }
+
+                                            if msg.is-self : VxButton {
+                                                label: "Delete";
+                                                small: true;
+                                                ghost: true;
+                                                clicked => { root.delete-text-message(msg.message-id); }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: msg.content;
+                                        color: VxTheme.text-primary;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if msg.reactions != "" : VxStatusPill {
+                                        label: msg.reactions;
+                                        tone: VxTheme.text-secondary;
+                                        fill: VxTheme.bg-soft;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider {}
+
+                Rectangle {
+                    background: VxTheme.bg-panel;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 14px;
+                        padding-bottom: 14px;
+                        spacing: 10px;
+
+                        VxInput {
+                            text <=> root.chat-input;
+                            placeholder: root.editing-message-id != "" ? "Edit message" : "Message #" + root.chat-channel-name;
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if root.chat-input != "" {
+                                    if root.editing-message-id != "" {
+                                        root.edit-text-message(root.editing-message-id, root.chat-input);
+                                        root.editing-message-id = "";
+                                        root.editing-original-content = "";
+                                        root.chat-input = "";
+                                    } else {
+                                        root.send-text-message();
+                                    }
+                                }
+                            }
+                        }
+
+                        VxButton {
+                            label: root.editing-message-id != "" ? "Save" : "Send";
+                            accent: true;
+                            enabled: root.chat-input != "";
+                            clicked => {
+                                if root.editing-message-id != "" {
+                                    root.edit-text-message(root.editing-message-id, root.chat-input);
+                                    root.editing-message-id = "";
+                                    root.editing-original-content = "";
+                                    root.chat-input = "";
+                                } else {
+                                    root.send-text-message();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

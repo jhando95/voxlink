@@ -1,8 +1,6 @@
 import { LineEdit } from "std-widgets.slint";
 import { VxTheme } from "theme.slint";
 
-// ─── Button ───
-
 export component VxButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> accent: false;
@@ -10,23 +8,41 @@ export component VxButton inherits Rectangle {
     in property <bool> small: false;
     in property <bool> enabled: true;
     in property <bool> ghost: false;
+    in property <bool> soft: false;
     callback clicked();
 
-    height: root.small ? 28px : 36px;
-    min-width: root.small ? 44px : 64px;
-    border-radius: root.small ? 5px : 7px;
+    height: root.small ? 34px : 40px;
+    min-width: root.small ? 56px : 88px;
+    border-radius: root.small ? 10px : VxTheme.radius-control;
+    clip: true;
     background: root.ghost ? transparent :
-                !root.enabled ? VxTheme.bg-elevated :
-                touch.pressed ? (root.accent ? VxTheme.accent-pressed : (root.danger ? VxTheme.danger-pressed : VxTheme.bg-card)) :
-                touch.has-hover ? (root.accent ? VxTheme.accent-hover : (root.danger ? VxTheme.danger-hover : VxTheme.btn-hover-bg)) :
-                root.accent ? VxTheme.accent : (root.danger ? VxTheme.danger : VxTheme.bg-elevated);
+                !root.enabled ? VxTheme.bg-raised :
+                touch.pressed ? (root.danger ? VxTheme.danger-pressed :
+                                root.accent ? VxTheme.accent-pressed :
+                                root.soft ? VxTheme.surface-active : VxTheme.bg-raised) :
+                touch.has-hover ? (root.danger ? VxTheme.danger-hover :
+                                  root.accent ? VxTheme.accent-hover :
+                                  root.soft ? VxTheme.card-hover-bg : VxTheme.btn-hover-bg) :
+                root.danger ? VxTheme.danger :
+                root.accent ? VxTheme.accent :
+                root.soft ? VxTheme.bg-soft : VxTheme.bg-raised;
     border-color: root.ghost ? transparent :
-                  !root.enabled ? VxTheme.border-subtle :
-                  root.accent ? VxTheme.accent :
-                  root.danger ? VxTheme.danger : VxTheme.border-subtle;
+                  root.danger ? VxTheme.danger :
+                  root.accent ? VxTheme.accent-border :
+                  root.soft ? VxTheme.border-strong : VxTheme.border-subtle;
     border-width: root.ghost ? 0px : 1px;
 
-    animate background { duration: 100ms; easing: ease-out; }
+    animate background { duration: 90ms; easing: ease-out; }
+    animate border-color { duration: 90ms; easing: ease-out; }
+
+    Rectangle {
+        width: parent.width;
+        height: 1px;
+        background: root.accent || root.danger
+            ? #ffffff36
+            : VxTheme.accent-subtle;
+        opacity: root.ghost ? 0 : 1;
+    }
 
     touch := TouchArea {
         mouse-cursor: root.enabled ? pointer : default;
@@ -37,159 +53,354 @@ export component VxButton inherits Rectangle {
 
     HorizontalLayout {
         alignment: center;
-        padding-left: root.small ? 8px : 14px;
-        padding-right: root.small ? 8px : 14px;
+        spacing: 6px;
+        padding-left: root.small ? 10px : 14px;
+        padding-right: root.small ? 10px : 14px;
+
         Text {
             text: root.label;
-            color: root.ghost ? VxTheme.text-muted :
+            color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                    !root.enabled ? VxTheme.text-muted :
-                   root.accent || root.danger ? #f0f0f8 : VxTheme.text-secondary;
+                   root.accent || root.danger ? VxTheme.text-inverse : VxTheme.text-primary;
             font-size: root.small ? 11px : 12px;
-            font-weight: root.accent || root.danger ? 600 : 500;
-            letter-spacing: root.accent || root.danger ? 0.2px : 0px;
-            vertical-alignment: center;
+            font-weight: root.accent || root.danger ? 700 : 600;
+            letter-spacing: root.small ? 0.1px : 0.15px;
             horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }
 
-// ─── Card ───
-
 export component VxCard inherits Rectangle {
     background: VxTheme.bg-card;
-    border-radius: 8px;
+    border-radius: VxTheme.radius-card;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
-}
+    clip: true;
 
-// ─── Input ───
+    Rectangle {
+        width: parent.width;
+        height: 1px;
+        background: @linear-gradient(90deg, transparent 0%, VxTheme.accent-border 20%, transparent 100%);
+        opacity: 0.9;
+    }
+}
 
 export component VxInput inherits Rectangle {
     in-out property <string> text <=> inner.text;
     in property <string> placeholder: "";
     callback accepted();
 
-    height: 36px;
+    height: 42px;
+    border-radius: VxTheme.radius-control;
     background: VxTheme.bg-input;
-    border-radius: 7px;
     border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
     border-width: inner.has-focus ? 2px : 1px;
+    clip: true;
 
     animate border-color { duration: 100ms; easing: ease-out; }
     animate border-width { duration: 100ms; easing: ease-out; }
 
+    Rectangle {
+        width: parent.width;
+        height: 1px;
+        background: inner.has-focus ? VxTheme.accent-border : VxTheme.accent-subtle;
+    }
+
     inner := LineEdit {
+        x: 12px;
+        y: 9px;
+        width: parent.width - 24px;
+        height: parent.height - 18px;
         placeholder-text: root.placeholder;
         accepted => { root.accepted(); }
     }
 }
 
-// ─── Section Label ───
-
 export component SectionLabel inherits Text {
     color: VxTheme.text-muted;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1.4px;
+    letter-spacing: 1.2px;
 }
-
-// ─── Field Label (above inputs) ───
 
 export component FieldLabel inherits Text {
     color: VxTheme.text-secondary;
-    font-size: 10px;
-    font-weight: 500;
+    font-size: 11px;
+    font-weight: 600;
 }
-
-// ─── Keyboard Shortcut Pill ───
 
 export component KeyPill inherits Rectangle {
     in property <string> key-text: "";
-    min-width: 26px;
-    height: 22px;
-    background: VxTheme.bg-elevated;
-    border-radius: 4px;
+
+    min-width: 30px;
+    height: 24px;
+    border-radius: 8px;
+    background: VxTheme.bg-raised;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
+
     HorizontalLayout {
-        padding-left: 7px;
-        padding-right: 7px;
+        padding-left: 8px;
+        padding-right: 8px;
         Text {
             text: root.key-text;
-            color: VxTheme.text-muted;
+            color: VxTheme.text-primary;
             font-size: 10px;
-            font-weight: 600;
+            font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
     }
 }
 
-// ─── Status Dot (LED-style) ───
-
 export component StatusDot inherits Rectangle {
     in property <bool> active: false;
-    width: 8px;
-    height: 8px;
-    border-radius: 4px;
+
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
     background: root.active ? VxTheme.success : VxTheme.text-muted;
     border-color: root.active ? VxTheme.success-dim : transparent;
     border-width: root.active ? 3px : 0px;
-    animate background { duration: 200ms; }
-    animate border-color { duration: 200ms; }
-    animate border-width { duration: 200ms; }
-}
 
-// ─── Accent Bar (header underline) ───
+    animate background { duration: 160ms; }
+    animate border-color { duration: 160ms; }
+    animate border-width { duration: 160ms; }
+}
 
 export component AccentBar inherits Rectangle {
     height: 2px;
 
     Rectangle {
         x: 0px;
-        width: parent.width * 0.33;
+        width: parent.width * 0.42;
         height: parent.height;
         background: VxTheme.header-accent-left;
     }
     Rectangle {
-        x: parent.width * 0.33;
-        width: parent.width * 0.34;
+        x: parent.width * 0.42;
+        width: parent.width * 0.28;
         height: parent.height;
         background: VxTheme.header-accent-mid;
     }
     Rectangle {
-        x: parent.width * 0.67;
-        width: parent.width * 0.33;
+        x: parent.width * 0.70;
+        width: parent.width * 0.30;
         height: parent.height;
         background: VxTheme.header-accent-right;
     }
 }
 
-// ─── Metric Row ───
+export component VxStatusPill inherits Rectangle {
+    in property <string> label: "";
+    in property <color> tone: VxTheme.accent;
+    in property <color> fill: VxTheme.accent-subtle;
+
+    height: 24px;
+    border-radius: VxTheme.radius-pill;
+    background: root.fill;
+    border-color: root.tone.transparentize(0.45);
+    border-width: 1px;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.tone;
+        }
+        Text {
+            text: root.label;
+            color: root.tone;
+            font-size: 10px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component VxStatBlock inherits Rectangle {
+    in property <string> label: "";
+    in property <string> value: "";
+    in property <string> detail: "";
+    in property <color> tone: VxTheme.accent;
+
+    border-radius: VxTheme.radius-card;
+    background: VxTheme.bg-soft;
+    border-color: VxTheme.border-subtle;
+    border-width: 1px;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 3px;
+        Text {
+            text: root.label;
+            color: VxTheme.text-muted;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+        }
+        Text {
+            text: root.value;
+            color: root.tone;
+            font-size: 17px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        if root.detail != "" : Text {
+            text: root.detail;
+            color: VxTheme.text-secondary;
+            font-size: 10px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component VxActionTile inherits Rectangle {
+    in property <string> eyebrow: "";
+    in property <string> title: "";
+    in property <string> detail: "";
+    in property <bool> active: false;
+    in property <color> tone: VxTheme.accent;
+    callback clicked();
+
+    border-radius: VxTheme.radius-card;
+    background: root.active ? root.tone.transparentize(0.86) : VxTheme.bg-soft;
+    border-color: root.active ? root.tone.transparentize(0.40) : VxTheme.border-subtle;
+    border-width: 1px;
+    clip: true;
+
+    animate background { duration: 90ms; easing: ease-out; }
+    animate border-color { duration: 90ms; easing: ease-out; }
+
+    Rectangle {
+        width: parent.width;
+        height: 2px;
+        background: root.active ? root.tone : VxTheme.accent-subtle;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 5px;
+        Text {
+            text: root.eyebrow;
+            color: VxTheme.text-muted;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+        }
+        Text {
+            text: root.title;
+            color: root.active ? root.tone : VxTheme.text-primary;
+            font-size: 17px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.detail;
+            color: VxTheme.text-secondary;
+            font-size: 10px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component VxOptionRow inherits Rectangle {
+    in property <string> label: "";
+    in property <string> detail: "";
+    in property <bool> selected: false;
+    callback clicked();
+
+    border-radius: VxTheme.radius-control;
+    background: root.selected ? VxTheme.tab-active-bg :
+                touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+    border-color: root.selected ? VxTheme.accent-border : VxTheme.border-subtle;
+    border-width: 1px;
+
+    animate background { duration: 80ms; easing: ease-out; }
+    animate border-color { duration: 80ms; easing: ease-out; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 10px;
+        alignment: center;
+
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: root.selected ? VxTheme.accent : VxTheme.bg-panel;
+            border-color: root.selected ? VxTheme.accent : VxTheme.border-strong;
+            border-width: 2px;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: VxTheme.text-primary;
+                font-size: 11px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            if root.detail != "" : Text {
+                text: root.detail;
+                color: VxTheme.text-muted;
+                font-size: 9px;
+                overflow: elide;
+            }
+        }
+
+        if root.selected : VxStatusPill {
+            label: "Active";
+            tone: VxTheme.accent;
+            fill: VxTheme.accent-subtle;
+        }
+    }
+}
 
 export component MetricRow inherits Rectangle {
     in property <string> metric-label: "";
     in property <string> metric-value: "";
     in property <color> indicator-color: VxTheme.success;
 
-    height: 34px;
-    background: VxTheme.bg-surface;
-    border-radius: 6px;
+    height: 40px;
+    background: VxTheme.bg-soft;
+    border-radius: VxTheme.radius-control;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: 14px;
+        padding-right: 14px;
         alignment: space-between;
 
         HorizontalLayout {
             spacing: 8px;
             alignment: center;
             Rectangle {
-                width: 6px;
-                height: 6px;
-                border-radius: 3px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
                 background: root.indicator-color;
             }
             Text {
@@ -199,57 +410,54 @@ export component MetricRow inherits Rectangle {
                 vertical-alignment: center;
             }
         }
+
         Text {
             text: root.metric-value;
             color: VxTheme.text-primary;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
             vertical-alignment: center;
         }
     }
 }
 
-// ─── Volume Slider ───
-
 export component VxSlider inherits Rectangle {
     in-out property <float> value: 1.0;
     callback changed(float);
 
-    height: 20px;
+    height: 22px;
     background: transparent;
 
-    // Track
     Rectangle {
         x: 0px;
-        y: (parent.height - 4px) / 2;
+        y: (parent.height - 6px) / 2;
         width: parent.width;
-        height: 4px;
-        border-radius: 2px;
+        height: 6px;
+        border-radius: 3px;
         background: VxTheme.border-subtle;
 
-        // Fill
         Rectangle {
             width: parent.width * root.value;
             height: parent.height;
-            border-radius: 2px;
+            border-radius: 3px;
             background: VxTheme.accent;
             animate width { duration: 50ms; easing: ease-out; }
         }
     }
 
-    // Thumb
     Rectangle {
-        x: (parent.width - 14px) * root.value;
-        y: (parent.height - 14px) / 2;
-        width: 14px;
-        height: 14px;
-        border-radius: 7px;
-        background: touch.pressed ? VxTheme.accent : touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary;
-        border-color: VxTheme.accent;
-        border-width: touch.pressed ? 2px : 0px;
+        x: (parent.width - 16px) * root.value;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: touch.pressed ? VxTheme.text-primary :
+                    touch.has-hover ? VxTheme.accent : VxTheme.bg-panel;
+        border-color: touch.pressed ? VxTheme.text-primary : VxTheme.accent;
+        border-width: 2px;
 
         animate background { duration: 80ms; easing: ease-out; }
-        animate border-width { duration: 80ms; }
+        animate border-color { duration: 80ms; easing: ease-out; }
     }
 
     touch := TouchArea {
@@ -267,40 +475,139 @@ export component VxSlider inherits Rectangle {
     }
 }
 
-// ─── Divider ───
-
 export component Divider inherits Rectangle {
     height: 1px;
     background: VxTheme.border-subtle;
 }
 
-// ─── Toggle Switch ───
+export component VxLogo inherits Rectangle {
+    in property <length> logo-size: 28px;
+
+    width: root.logo-size;
+    height: root.logo-size;
+    border-radius: root.logo-size * 0.26;
+    background: @linear-gradient(145deg, VxTheme.header-accent-left 0%, VxTheme.header-accent-mid 55%, VxTheme.header-accent-right 100%);
+    clip: true;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: @radial-gradient(circle, #ffffff20 0%, transparent 70%);
+    }
+
+    property <length> band-w: root.logo-size * 0.12;
+    property <length> band-gap: root.logo-size * 0.07;
+    property <length> band-start-x: (root.logo-size - (band-w * 3 + band-gap * 2)) / 2;
+
+    Rectangle {
+        x: root.band-start-x;
+        y: root.logo-size * 0.34;
+        width: root.band-w;
+        height: root.logo-size * 0.34;
+        border-radius: root.band-w / 2;
+        background: #f3fbffcc;
+    }
+    Rectangle {
+        x: root.band-start-x + root.band-w + root.band-gap;
+        y: root.logo-size * 0.20;
+        width: root.band-w;
+        height: root.logo-size * 0.60;
+        border-radius: root.band-w / 2;
+        background: #f5fdff;
+    }
+    Rectangle {
+        x: root.band-start-x + (root.band-w + root.band-gap) * 2;
+        y: root.logo-size * 0.28;
+        width: root.band-w;
+        height: root.logo-size * 0.44;
+        border-radius: root.band-w / 2;
+        background: #f3fbffe0;
+    }
+}
+
+export component VxLogoBig inherits Rectangle {
+    width: 72px;
+    height: 72px;
+
+    VxLogo {
+        logo-size: 72px;
+    }
+}
+
+export component VxAvatar inherits Rectangle {
+    in property <string> initial: "";
+    in property <int> color-index: 0;
+    in property <length> avatar-size: 36px;
+    in property <bool> is-speaking: false;
+    in property <bool> show-status: false;
+    in property <bool> is-online: false;
+
+    width: root.avatar-size;
+    height: root.avatar-size;
+    border-radius: root.avatar-size / 2;
+    background: VxTheme.avatar-color(root.color-index);
+    border-color: root.is-speaking ? VxTheme.speaking-border : VxTheme.bg-panel;
+    border-width: root.is-speaking ? 2px : 1px;
+    clip: true;
+
+    animate border-color { duration: 180ms; }
+    animate border-width { duration: 180ms; }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: @linear-gradient(160deg, #ffffff1c 0%, transparent 55%, #00101a20 100%);
+    }
+
+    Text {
+        text: root.initial;
+        color: VxTheme.text-inverse;
+        font-size: root.avatar-size * 0.38;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    if root.show-status : Rectangle {
+        x: parent.width - self.width - 1px;
+        y: parent.height - self.height - 1px;
+        width: root.avatar-size * 0.32;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.is-online ? VxTheme.success : VxTheme.text-muted;
+        border-color: VxTheme.bg-panel;
+        border-width: 2px;
+    }
+}
 
 export component VxToggle inherits Rectangle {
     in-out property <bool> checked: false;
     callback toggled();
 
-    width: 44px;
-    height: 24px;
-    border-radius: 12px;
-    background: root.checked ? VxTheme.accent : VxTheme.bg-elevated;
-    border-color: root.checked ? VxTheme.accent : VxTheme.border-subtle;
+    width: 48px;
+    height: 26px;
+    border-radius: 13px;
+    background: root.checked ? VxTheme.accent : VxTheme.bg-raised;
+    border-color: root.checked ? VxTheme.accent-border : VxTheme.border-subtle;
     border-width: 1px;
+
     animate background { duration: 120ms; easing: ease-out; }
+    animate border-color { duration: 120ms; easing: ease-out; }
 
     toggle-touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.toggled(); }
     }
 
-    // Knob
     Rectangle {
-        x: root.checked ? parent.width - self.width - 2px : 2px;
-        y: 2px;
+        x: root.checked ? parent.width - self.width - 3px : 3px;
+        y: 3px;
         width: 20px;
         height: 20px;
         border-radius: 10px;
-        background: #f0f0f6;
+        background: #f7fcff;
         animate x { duration: 120ms; easing: ease-out; }
     }
 }

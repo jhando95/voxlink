@@ -1,0 +1,576 @@
+import { ListView, ScrollView } from "std-widgets.slint";
+import { ParticipantData, VxTheme } from "../theme.slint";
+import { Divider, FieldLabel, SectionLabel, VxActionTile, VxAvatar, VxButton, VxCard, VxSlider, VxStatBlock, VxStatusPill } from "../components.slint";
+
+export component RoomView inherits Rectangle {
+    in property <bool> wide: false;
+    in property <string> room-code: "";
+    in property <[ParticipantData]> participants: [];
+    in property <bool> is-connected: false;
+    in property <string> status-text: "";
+    in property <string> room-status: "";
+    in property <bool> is-muted: false;
+    in property <bool> is-deafened: false;
+    in property <bool> is-open-mic: true;
+    in property <float> mic-level: 0.0;
+    in property <string> ptt-key-display: "";
+    in property <bool> in-space-channel: false;
+    in property <string> current-space-name: "";
+    in-out property <bool> show-copied: false;
+    callback copy-room-code();
+    callback leave-room();
+    callback leave-channel();
+    callback toggle-mute();
+    callback toggle-deafen();
+    callback toggle-mic-mode();
+    callback volume-changed(string, float);
+    callback navigate(int);
+
+    background: transparent;
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+
+            if !root.is-connected : Rectangle {
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.connection-lost-bg;
+                border-color: VxTheme.danger;
+                border-width: 1px;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    spacing: 10px;
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: VxTheme.danger;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Connection unstable";
+                            color: VxTheme.danger;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.status-text;
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                        }
+                    }
+                }
+            }
+
+            if root.wide : HorizontalLayout {
+                spacing: 18px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 18px;
+
+                    VxCard {
+                        Rectangle {
+                            width: parent.width;
+                            height: parent.height;
+                            background: @linear-gradient(135deg, VxTheme.accent-subtle 0%, transparent 55%, VxTheme.warning-soft 100%);
+                        }
+
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 16px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 6px;
+                                    Text {
+                                        text: root.in-space-channel ? "VOICE CHANNEL" : "QUICK ROOM";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        letter-spacing: 1px;
+                                    }
+                                    Text {
+                                        text: root.room-code;
+                                        color: VxTheme.text-primary;
+                                        font-size: 30px;
+                                        font-weight: 800;
+                                        letter-spacing: 3px;
+                                    }
+                                    Text {
+                                        text: root.in-space-channel && root.current-space-name != ""
+                                            ? root.current-space-name
+                                            : "A fast voice stage with almost no interface drag.";
+                                        color: VxTheme.text-secondary;
+                                        font-size: 11px;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Rectangle {
+                                        height: 34px;
+                                        border-radius: VxTheme.radius-control;
+                                        background: copy-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                        border-color: root.show-copied ? VxTheme.success : VxTheme.border-subtle;
+                                        border-width: 1px;
+
+                                        copy-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.copy-room-code();
+                                                root.show-copied = true;
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            spacing: 8px;
+                                            Text {
+                                                text: root.show-copied ? "Copied to clipboard" : "Copy room code";
+                                                color: root.show-copied ? VxTheme.success : VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                    }
+
+                                    VxStatusPill {
+                                        label: root.room-status != "" ? root.room-status :
+                                               root.is-deafened ? "Listening only" :
+                                               root.is-muted ? "Muted" :
+                                               root.is-open-mic ? "Open mic live" :
+                                               root.ptt-key-display != "" ? "PTT on " + root.ptt-key-display : "Push to talk";
+                                        tone: root.is-deafened || root.is-muted ? VxTheme.danger :
+                                              root.is-open-mic ? VxTheme.success : VxTheme.accent;
+                                        fill: root.is-deafened || root.is-muted ? VxTheme.mute-badge-bg :
+                                              root.is-open-mic ? VxTheme.success-dim : VxTheme.accent-subtle;
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Members";
+                                    value: root.participants.length + "";
+                                    detail: root.participants.length == 1 ? "You are first in the room." : "Active listeners and speakers.";
+                                    tone: VxTheme.text-primary;
+                                }
+                                VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Transmit";
+                                    value: root.is-open-mic ? "Open mic" : "Push to talk";
+                                    detail: root.is-open-mic ? "Always ready while unmuted." :
+                                            root.ptt-key-display != "" ? "Hold " + root.ptt-key-display + " to transmit." : "Hold your PTT binding to transmit.";
+                                    tone: root.is-open-mic ? VxTheme.success : VxTheme.accent;
+                                }
+                                VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Connection";
+                                    value: root.is-connected ? "Stable" : "Recovering";
+                                    detail: root.is-connected ? "Voice path is healthy." : root.status-text;
+                                    tone: root.is-connected ? VxTheme.success : VxTheme.danger;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Local mic activity"; }
+                                Rectangle {
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: VxTheme.bg-soft;
+
+                                    Rectangle {
+                                        width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
+                                        height: parent.height;
+                                        border-radius: 4px;
+                                        background: root.is-muted ? VxTheme.danger :
+                                                    root.is-deafened ? VxTheme.text-muted :
+                                                    root.mic-level > 0.15 ? VxTheme.warning :
+                                                    root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
+                                        animate width { duration: 50ms; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "PARTICIPANTS"; }
+                                Text {
+                                    text: root.participants.length + " in call";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+
+                            if root.participants.length <= 1 : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-stage;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 18px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Waiting for the rest of the room";
+                                        color: VxTheme.text-primary;
+                                        font-size: 13px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: root.in-space-channel
+                                            ? "Invite people into the channel and the stage updates instantly."
+                                            : "Send the room code to bring more voices in.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            ListView {
+                                vertical-stretch: 1;
+
+                                for p[idx] in root.participants : Rectangle {
+                                    height: p.id == "self" ? 84px : 68px;
+                                    border-radius: VxTheme.radius-card;
+                                    background: p.is-speaking ? VxTheme.speaking-row-bg :
+                                                row-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
+                                    border-color: p.is-speaking ? VxTheme.speaking-border : VxTheme.border-subtle;
+                                    border-width: 1px;
+
+                                    row-touch := TouchArea { mouse-cursor: p.id != "self" ? pointer : default; }
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        spacing: 12px;
+                                        alignment: center;
+
+                                        VxAvatar {
+                                            avatar-size: p.id == "self" ? 40px : 34px;
+                                            initial: p.initial;
+                                            color-index: p.color-index;
+                                            is-speaking: p.is-speaking;
+                                        }
+
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            alignment: center;
+                                            spacing: 4px;
+
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: center;
+                                                Text {
+                                                    text: p.id == "self" ? p.name + "  ·  You" : p.name;
+                                                    color: VxTheme.text-primary;
+                                                    font-size: 12px;
+                                                    font-weight: 700;
+                                                    overflow: elide;
+                                                }
+                                                if p.is-speaking && !p.is-muted : VxStatusPill {
+                                                    label: "Live";
+                                                    tone: VxTheme.success;
+                                                    fill: VxTheme.success-dim;
+                                                }
+                                            }
+
+                                            if p.id == "self" : Rectangle {
+                                                height: 6px;
+                                                border-radius: 3px;
+                                                background: VxTheme.bg-panel;
+                                                Rectangle {
+                                                    width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
+                                                    height: parent.height;
+                                                    border-radius: 3px;
+                                                    background: root.is-muted ? VxTheme.danger :
+                                                                root.mic-level > 0.15 ? VxTheme.warning :
+                                                                root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
+                                                    animate width { duration: 40ms; }
+                                                }
+                                            }
+
+                                            if p.id != "self" : HorizontalLayout {
+                                                spacing: 10px;
+                                                alignment: center;
+                                                FieldLabel {
+                                                    text: "Peer level";
+                                                    vertical-alignment: center;
+                                                }
+                                                VxSlider {
+                                                    horizontal-stretch: 1;
+                                                    value: p.volume;
+                                                    changed(val) => { root.volume-changed(p.id, val); }
+                                                }
+                                                Text {
+                                                    text: Math.round(p.volume * 100) + "%";
+                                                    color: VxTheme.text-secondary;
+                                                    font-size: 10px;
+                                                    font-weight: 700;
+                                                    min-width: 34px;
+                                                    horizontal-alignment: right;
+                                                }
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 6px;
+                                            if (p.id == "self" && root.is-muted) || (p.id != "self" && p.is-muted) : VxStatusPill {
+                                                label: "Muted";
+                                                tone: VxTheme.danger;
+                                                fill: VxTheme.mute-badge-bg;
+                                            }
+                                            if (p.id == "self" && root.is-deafened) || (p.id != "self" && p.is-deafened) : VxStatusPill {
+                                                label: "Deaf";
+                                                tone: VxTheme.warning;
+                                                fill: VxTheme.deafen-badge-bg;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    width: 320px;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "CONTROL DECK"; }
+
+                            VxStatBlock {
+                                label: "Local monitor";
+                                value: Math.round(clamp(root.mic-level * 500.0, 0.0, 100.0)) + "%";
+                                detail: root.is-muted ? "Muted locally." :
+                                        root.mic-level > 0.15 ? "Hot signal, back off slightly." :
+                                        root.mic-level > 0.05 ? "Healthy speaking level." : "Quiet standby level.";
+                                tone: root.is-muted ? VxTheme.danger :
+                                      root.mic-level > 0.15 ? VxTheme.warning :
+                                      root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
+                            }
+
+                            VxActionTile {
+                                eyebrow: "MICROPHONE";
+                                title: root.is-muted ? "Muted" : "Live";
+                                detail: root.is-muted ? "Tap to rejoin the room instantly." : "Tap to mute yourself without leaving the channel.";
+                                active: root.is-muted;
+                                tone: VxTheme.danger;
+                                clicked => { root.toggle-mute(); }
+                            }
+
+                            VxActionTile {
+                                eyebrow: "OUTPUT";
+                                title: root.is-deafened ? "Quiet mode" : "Listening";
+                                detail: root.is-deafened ? "Tap to hear the room again." : "Tap to silence incoming audio while staying connected.";
+                                active: root.is-deafened;
+                                tone: VxTheme.warning;
+                                clicked => { root.toggle-deafen(); }
+                            }
+
+                            VxActionTile {
+                                eyebrow: "CAPTURE";
+                                title: root.is-open-mic ? "Open mic" : "Push to talk";
+                                detail: root.is-open-mic ? "Hands-free when the room is calm." :
+                                        root.ptt-key-display != "" ? "Hold " + root.ptt-key-display + " whenever you want to transmit." :
+                                        "Hold your PTT binding whenever you want to transmit.";
+                                active: !root.is-open-mic;
+                                tone: root.is-open-mic ? VxTheme.success : VxTheme.accent;
+                                clicked => { root.toggle-mic-mode(); }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VxButton {
+                                    label: "Settings";
+                                    soft: true;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.navigate(2); }
+                                }
+                                VxButton {
+                                    label: root.in-space-channel ? "Leave Channel" : "Leave Call";
+                                    danger: true;
+                                    horizontal-stretch: 1;
+                                    clicked => {
+                                        if root.in-space-channel {
+                                            root.leave-channel();
+                                        } else {
+                                            root.leave-room();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.wide : VerticalLayout {
+                spacing: 18px;
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        Text {
+                            text: root.room-code;
+                            color: VxTheme.text-primary;
+                            font-size: 24px;
+                            font-weight: 800;
+                            letter-spacing: 2px;
+                        }
+                        VxStatusPill {
+                            label: root.room-status != "" ? root.room-status :
+                                   root.is-open-mic ? "Open mic live" : "Push to talk";
+                            tone: root.is-muted || root.is-deafened ? VxTheme.danger : VxTheme.accent;
+                            fill: root.is-muted || root.is-deafened ? VxTheme.mute-badge-bg : VxTheme.accent-subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            VxButton {
+                                label: root.show-copied ? "Copied" : "Copy";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => {
+                                    root.copy-room-code();
+                                    root.show-copied = true;
+                                }
+                            }
+                            VxButton {
+                                label: root.in-space-channel ? "Leave" : "Leave Call";
+                                danger: true;
+                                horizontal-stretch: 1;
+                                clicked => {
+                                    if root.in-space-channel {
+                                        root.leave-channel();
+                                    } else {
+                                        root.leave-room();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "PARTICIPANTS"; }
+
+                        ListView {
+                            vertical-stretch: 1;
+
+                            for p[idx] in root.participants : Rectangle {
+                                height: 72px;
+                                border-radius: VxTheme.radius-card;
+                                background: p.is-speaking ? VxTheme.speaking-row-bg : VxTheme.bg-soft;
+                                border-color: p.is-speaking ? VxTheme.speaking-border : VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 34px;
+                                        initial: p.initial;
+                                        color-index: p.color-index;
+                                        is-speaking: p.is-speaking;
+                                    }
+
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 3px;
+                                        Text {
+                                            text: p.id == "self" ? p.name + "  ·  You" : p.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                        }
+                                        if p.id != "self" : VxSlider {
+                                            value: p.volume;
+                                            changed(val) => { root.volume-changed(p.id, val); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "CONTROLS"; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            VxButton {
+                                label: root.is-muted ? "Unmute" : "Mute";
+                                danger: root.is-muted;
+                                soft: !root.is-muted;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-mute(); }
+                            }
+                            VxButton {
+                                label: root.is-deafened ? "Undeafen" : "Deafen";
+                                soft: !root.is-deafened;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-deafen(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            VxButton {
+                                label: root.is-open-mic ? "Open mic" : "Push to talk";
+                                accent: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-mic-mode(); }
+                            }
+                            VxButton {
+                                label: "Settings";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.navigate(2); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

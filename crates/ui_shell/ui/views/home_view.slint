@@ -1,0 +1,584 @@
+import { ScrollView } from "std-widgets.slint";
+import { SpaceData, VxTheme } from "../theme.slint";
+import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatusPill } from "../components.slint";
+
+export component HomeView inherits Rectangle {
+    in property <bool> wide: false;
+    in-out property <string> server-address: "";
+    in-out property <string> user-name: "";
+    in property <string> status-text: "";
+    in property <bool> is-connected: false;
+    in property <[SpaceData]> spaces: [];
+    in-out property <string> space-name: "";
+    in-out property <string> space-invite-code: "";
+    in-out property <bool> show-quick-call: false;
+    in-out property <string> join-code: "";
+    in-out property <string> room-password: "";
+    callback connect-server();
+    callback disconnect-server();
+    callback find-server();
+    callback select-space(string);
+    callback create-space();
+    callback join-space();
+    callback create-room();
+    callback join-room(string);
+
+    background: transparent;
+
+    ScrollView {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 18px;
+
+            VxCard {
+                HorizontalLayout {
+                    padding: 22px;
+                    spacing: 18px;
+
+                    VxLogo { logo-size: 58px; }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: root.user-name != "" && root.user-name != "User"
+                                ? "Welcome back, " + root.user-name
+                                : "Voice with less drag";
+                            color: VxTheme.text-primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: "A calmer, faster desktop shell for calls, spaces, and chat.";
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            StatusDot { active: root.is-connected; }
+                            VxStatusPill {
+                                label: root.status-text;
+                                tone: root.is-connected ? VxTheme.success :
+                                      root.status-text == "Connecting..." ? VxTheme.warning : VxTheme.text-secondary;
+                                fill: root.is-connected ? VxTheme.success-dim :
+                                      root.status-text == "Connecting..." ? VxTheme.warning-soft : VxTheme.bg-soft;
+                            }
+                            if root.spaces.length > 0 : VxStatusPill {
+                                label: root.spaces.length + " spaces";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.wide : HorizontalLayout {
+                spacing: 18px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+
+                            SectionLabel { text: "SERVER"; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Server address"; }
+                                VxInput {
+                                    text <=> root.server-address;
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if !root.is-connected {
+                                            root.connect-server();
+                                        }
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                if !root.is-connected : VxButton {
+                                    label: root.status-text == "Connecting..." ? "Connecting..." : "Connect";
+                                    accent: true;
+                                    enabled: root.status-text != "Connecting...";
+                                    horizontal-stretch: 1;
+                                    clicked => { root.connect-server(); }
+                                }
+                                if root.is-connected : VxButton {
+                                    label: "Disconnect";
+                                    danger: true;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.disconnect-server(); }
+                                }
+                                if !root.is-connected : VxButton {
+                                    label: "Find on LAN";
+                                    soft: true;
+                                    clicked => { root.find-server(); }
+                                }
+                            }
+
+                            Divider {}
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Display name"; }
+                                VxInput {
+                                    text <=> root.user-name;
+                                    placeholder: "Enter a display name";
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "SPACES"; }
+                                if root.spaces.length > 0 : Text {
+                                    text: root.spaces.length + " linked";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+
+                            if root.spaces.length == 0 : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 5px;
+                                    Text {
+                                        text: "Your workspace rail is empty.";
+                                        color: VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: "Create a space to get channels, members, and chat in one place.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            for space in root.spaces : Rectangle {
+                                height: 60px;
+                                border-radius: VxTheme.radius-card;
+                                background: space-wide-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: space-wide-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                space-wide-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.select-space(space.id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 12px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 36px;
+                                        initial: space.initial;
+                                        color-index: space.color-index;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: space.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: space.member-count + " members  ·  " + space.channel-count + " channels";
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    VxStatusPill {
+                                        label: "Open";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    width: 340px;
+                    spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            SectionLabel { text: "SPACE BUILDER"; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Create a new space"; }
+                                VxInput {
+                                    text <=> root.space-name;
+                                    placeholder: "Studio, Guild, Squad";
+                                    accepted => {
+                                        if root.is-connected && root.space-name != "" {
+                                            root.create-space();
+                                        }
+                                    }
+                                }
+                            }
+
+                            VxButton {
+                                label: "Create Space";
+                                accent: true;
+                                enabled: root.is-connected && root.space-name != "";
+                                horizontal-stretch: 1;
+                                clicked => { root.create-space(); }
+                            }
+
+                            Divider {}
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Join by invite"; }
+                                VxInput {
+                                    text <=> root.space-invite-code;
+                                    placeholder: "Paste invite code";
+                                    accepted => {
+                                        if root.is-connected && root.space-invite-code != "" {
+                                            root.join-space();
+                                        }
+                                    }
+                                }
+                            }
+
+                            VxButton {
+                                label: "Join Space";
+                                soft: true;
+                                enabled: root.is-connected && root.space-invite-code != "";
+                                horizontal-stretch: 1;
+                                clicked => { root.join-space(); }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "QUICK CALL"; }
+                                VxButton {
+                                    label: root.show-quick-call ? "Hide" : "Show";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.show-quick-call = !root.show-quick-call; }
+                                }
+                            }
+
+                            Text {
+                                text: "Fast room codes for ad-hoc voice without a full space.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+
+                            if root.show-quick-call : VerticalLayout {
+                                spacing: 10px;
+
+                                VxButton {
+                                    label: root.status-text == "Starting call..." ? "Starting..." :
+                                           root.is-connected ? "Start Call" : "Connect first";
+                                    accent: true;
+                                    enabled: root.is-connected && root.status-text != "Starting call..." && root.status-text != "Joining call...";
+                                    horizontal-stretch: 1;
+                                    clicked => { root.create-room(); }
+                                }
+
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    FieldLabel { text: "Join by room code"; }
+                                    VxInput {
+                                        text <=> root.join-code;
+                                        placeholder: "Room code";
+                                        accepted => {
+                                            if root.is-connected && root.join-code != "" {
+                                                root.join-room(root.join-code);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VxButton {
+                                        label: "Join";
+                                        soft: true;
+                                        enabled: root.is-connected && root.join-code != "";
+                                        clicked => { root.join-room(root.join-code); }
+                                    }
+                                    VxInput {
+                                        text <=> root.room-password;
+                                        placeholder: "Password (optional)";
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !root.wide : VerticalLayout {
+                spacing: 18px;
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 14px;
+
+                        SectionLabel { text: "SERVER"; }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            FieldLabel { text: "Server address"; }
+                            VxInput {
+                                text <=> root.server-address;
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if !root.is-connected {
+                                        root.connect-server();
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            if !root.is-connected : VxButton {
+                                label: root.status-text == "Connecting..." ? "Connecting..." : "Connect";
+                                accent: true;
+                                enabled: root.status-text != "Connecting...";
+                                horizontal-stretch: 1;
+                                clicked => { root.connect-server(); }
+                            }
+                            if root.is-connected : VxButton {
+                                label: "Disconnect";
+                                danger: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.disconnect-server(); }
+                            }
+                            if !root.is-connected : VxButton {
+                                label: "Find on LAN";
+                                soft: true;
+                                clicked => { root.find-server(); }
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            FieldLabel { text: "Display name"; }
+                            VxInput {
+                                text <=> root.user-name;
+                                placeholder: "Enter a display name";
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "SPACE BUILDER"; }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            FieldLabel { text: "Create a new space"; }
+                            VxInput {
+                                text <=> root.space-name;
+                                placeholder: "Studio, Guild, Squad";
+                                accepted => {
+                                    if root.is-connected && root.space-name != "" {
+                                        root.create-space();
+                                    }
+                                }
+                            }
+                        }
+
+                        VxButton {
+                            label: "Create Space";
+                            accent: true;
+                            enabled: root.is-connected && root.space-name != "";
+                            horizontal-stretch: 1;
+                            clicked => { root.create-space(); }
+                        }
+
+                        Divider {}
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            FieldLabel { text: "Join by invite"; }
+                            VxInput {
+                                text <=> root.space-invite-code;
+                                placeholder: "Paste invite code";
+                                accepted => {
+                                    if root.is-connected && root.space-invite-code != "" {
+                                        root.join-space();
+                                    }
+                                }
+                            }
+                        }
+
+                        VxButton {
+                            label: "Join Space";
+                            soft: true;
+                            enabled: root.is-connected && root.space-invite-code != "";
+                            horizontal-stretch: 1;
+                            clicked => { root.join-space(); }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "QUICK CALL"; }
+                            VxButton {
+                                label: root.show-quick-call ? "Hide" : "Show";
+                                small: true;
+                                ghost: true;
+                                clicked => { root.show-quick-call = !root.show-quick-call; }
+                            }
+                        }
+
+                        if root.show-quick-call : VerticalLayout {
+                            spacing: 10px;
+                            VxButton {
+                                label: root.status-text == "Starting call..." ? "Starting..." :
+                                       root.is-connected ? "Start Call" : "Connect first";
+                                accent: true;
+                                enabled: root.is-connected && root.status-text != "Starting call..." && root.status-text != "Joining call...";
+                                horizontal-stretch: 1;
+                                clicked => { root.create-room(); }
+                            }
+                            VxInput {
+                                text <=> root.join-code;
+                                placeholder: "Room code";
+                                accepted => {
+                                    if root.is-connected && root.join-code != "" {
+                                        root.join-room(root.join-code);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxButton {
+                                    label: "Join";
+                                    soft: true;
+                                    enabled: root.is-connected && root.join-code != "";
+                                    clicked => { root.join-room(root.join-code); }
+                                }
+                                VxInput {
+                                    text <=> root.room-password;
+                                    placeholder: "Password";
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.spaces.length > 0 : VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "SPACES"; }
+                        for space in root.spaces : Rectangle {
+                            height: 54px;
+                            border-radius: VxTheme.radius-card;
+                            background: space-compact-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            space-compact-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.select-space(space.id); }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                alignment: center;
+
+                                VxAvatar {
+                                    avatar-size: 32px;
+                                    initial: space.initial;
+                                    color-index: space.color-index;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: space.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: space.member-count + " members";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
