@@ -88,6 +88,9 @@ if systemctl list-units --all | grep -q partyvoice; then
     sudo systemctl daemon-reload
 fi
 
+# Stop running service before overwriting binary (avoids "Text file busy")
+sudo systemctl stop voxlink 2>/dev/null || true
+
 # Copy binary to /opt
 sudo mkdir -p /opt/voxlink
 sudo cp "$BINARY" /opt/voxlink/signaling_server
