@@ -63,6 +63,10 @@ pub struct AudioEngine {
     mic_level_raw: Arc<AtomicU32>,
     /// Noise gate sensitivity (0.0–1.0 stored as 0–1000). Shared with capture callback.
     noise_gate_sensitivity: Arc<AtomicU32>,
+    /// Input gain (mic boost/cut, 0.0–2.0 stored as 0–2000). Shared with capture callback.
+    input_gain: Arc<AtomicU32>,
+    /// Output volume (master, 0.0–1.0 stored as 0–1000). Shared with playback callback.
+    output_volume: Arc<AtomicU32>,
     /// Keybind feedback tone generator.
     feedback_tone: FeedbackTone,
     /// Set to true when a stream error occurs — signals the app to attempt recovery (#1)
@@ -87,6 +91,8 @@ impl AudioEngine {
             opus_decoders: Mutex::new(HashMap::new()),
             mic_level_raw: Arc::new(AtomicU32::new(0)),
             noise_gate_sensitivity: Arc::new(AtomicU32::new(500)), // 0.5 default
+            input_gain: Arc::new(AtomicU32::new(1000)), // 1.0 default (unity gain)
+            output_volume: Arc::new(AtomicU32::new(1000)), // 1.0 default
             feedback_tone: FeedbackTone::new(),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
@@ -265,6 +271,7 @@ impl AudioEngine {
         let vad_enabled = self.vad_enabled.clone();
         let mic_level = self.mic_level_raw.clone();
         let sensitivity = self.noise_gate_sensitivity.clone();
+        let input_gain = self.input_gain.clone();
 
         // All buffers pre-allocated once — zero allocation in the audio callback
         let mut capture_ring = CaptureRing::new(FRAME_SIZE * 4);
@@ -286,6 +293,14 @@ impl AudioEngine {
                 while capture_ring.read_frame(&mut frame_buf) {
                     // Remove DC offset and low-frequency rumble
                     hp_filter.process(&mut frame_buf);
+
+                    // Apply user input gain (mic boost/cut)
+                    let gain = input_gain.load(Ordering::Relaxed) as f32 / 1000.0;
+                    if (gain - 1.0).abs() > 0.01 {
+                        for s in frame_buf.iter_mut() {
+                            *s *= gain;
+                        }
+                    }
 
                     let energy = frame_energy(&frame_buf);
                     // Show mic level even when muted (UI feedback)
@@ -388,6 +403,7 @@ impl AudioEngine {
 
         let peer_buffers = self.peer_buffers.clone();
         let is_deafened = self.is_deafened.clone();
+        let output_volume = self.output_volume.clone();
         let feedback_playback = self.feedback_tone.playback_state();
 
         let stream = device.build_output_stream(
@@ -415,8 +431,10 @@ impl AudioEngine {
                         peer.adapt(consumed, data.len());
                     }
 
+                    // Apply master output volume
+                    let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;
                     for sample in data.iter_mut() {
-                        *sample = soft_clip(*sample);
+                        *sample = soft_clip(*sample * vol);
                     }
                 }
             },
@@ -484,10 +502,7 @@ impl AudioEngine {
                 log::warn!("Opus decode error from {sender_id}: {e}, attempting PLC");
                 // Packet Loss Concealment: ask Opus to interpolate from previous state
                 let plc_output = MutSignals::try_from(&mut out[..]).ok()?;
-                match decoder.decode(None::<OpusPacket<'_>>, plc_output, false) {
-                    Ok(n) => Some(n),
-                    Err(_) => None,
-                }
+                decoder.decode(None::<OpusPacket<'_>>, plc_output, false).ok()
             }
         }
     }
@@ -535,6 +550,18 @@ impl AudioEngine {
         self.noise_gate_sensitivity.store(val, Ordering::Relaxed);
     }
 
+    /// Set input gain (0.0 = silent, 1.0 = unity, 2.0 = +6dB boost)
+    pub fn set_input_gain(&self, gain: f32) {
+        let val = (gain.clamp(0.0, 2.0) * 1000.0) as u32;
+        self.input_gain.store(val, Ordering::Relaxed);
+    }
+
+    /// Set master output volume (0.0 = muted, 1.0 = full)
+    pub fn set_output_volume(&self, volume: f32) {
+        let val = (volume.clamp(0.0, 1.0) * 1000.0) as u32;
+        self.output_volume.store(val, Ordering::Relaxed);
+    }
+
     /// Play a feedback tone for mute on/off.
     pub fn play_feedback_mute(&self, muted: bool) {
         self.feedback_tone.trigger(if muted { FeedbackAction::MuteOn } else { FeedbackAction::MuteOff });
@@ -543,5 +570,11 @@ impl AudioEngine {
     /// Play a feedback tone for deafen on/off.
     pub fn play_feedback_deafen(&self, deafened: bool) {
         self.feedback_tone.trigger(if deafened { FeedbackAction::DeafenOn } else { FeedbackAction::DeafenOff });
+    }
+
+    /// Play a notification sound for peer join/leave.
+    pub fn play_notification(&self, joined: bool) {
+        // Use higher tone for join, lower for leave
+        self.feedback_tone.trigger(if joined { FeedbackAction::MuteOff } else { FeedbackAction::DeafenOn });
     }
 }

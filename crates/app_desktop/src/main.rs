@@ -53,10 +53,13 @@ fn main() {
         }
     }));
 
-    // #6: Wire noise gate sensitivity from config
+    // #6: Wire noise gate sensitivity + volume from config
     // noise_suppression: 0=off, 1=max; sensitivity: inverted (1-suppression)
     rt.block_on(async {
-        audio.lock().await.set_sensitivity(1.0 - config.noise_suppression);
+        let aud = audio.lock().await;
+        aud.set_sensitivity(1.0 - config.noise_suppression);
+        aud.set_input_gain(config.input_volume);
+        aud.set_output_volume(config.output_volume);
     });
 
     let media = Arc::new(TokioMutex::new(media_transport::MediaSession::new(
@@ -101,9 +104,12 @@ fn main() {
     let is_dark = config.dark_mode.unwrap_or(true);
     window.set_dark_mode(is_dark);
 
-    // Apply feedback sound and noise suppression from config
+    // Apply feedback sound, noise suppression, and volume from config
     window.set_feedback_sound(config.feedback_sound);
     window.set_noise_suppression(config.noise_suppression);
+    window.set_input_volume(config.input_volume);
+    window.set_output_volume(config.output_volume);
+    window.set_notifications_enabled(config.notifications_enabled);
 
     // Wire all UI callbacks
     callbacks::setup(
@@ -122,6 +128,9 @@ fn main() {
         saved_input_device, saved_output_device, &rt_handle,
         ptt_key, mute_key, deafen_key,
     );
+
+    // M7B: Check for updates in background
+    helpers::check_for_updates(&window);
 
     log::info!("Voxlink ready");
     window.run().unwrap();

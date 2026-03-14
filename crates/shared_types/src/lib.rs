@@ -176,6 +176,25 @@ pub enum SignalMessage {
     MemberOnline { member: MemberInfo },
     MemberOffline { member_id: String },
     MemberChannelChanged { member_id: String, channel_id: Option<String>, channel_name: Option<String> },
+
+    // Auth (Milestone 4)
+    Authenticate { token: Option<String>, user_name: String },
+    Authenticated { token: String, user_id: String },
+
+    // Chat improvements (Milestone 5)
+    EditTextMessage { channel_id: String, message_id: String, new_content: String },
+    DeleteTextMessage { channel_id: String, message_id: String },
+    ReactToMessage { channel_id: String, message_id: String, emoji: String },
+    TextMessageEdited { channel_id: String, message_id: String, new_content: String },
+    TextMessageDeleted { channel_id: String, message_id: String },
+    MessageReaction { channel_id: String, message_id: String, emoji: String, user_name: String },
+
+    // Moderation (Milestone 6)
+    KickMember { member_id: String },
+    MuteMember { member_id: String, muted: bool },
+    BanMember { member_id: String },
+    Kicked { reason: String },
+    MemberMuted { member_id: String, muted: bool },
 }
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
@@ -196,6 +215,18 @@ pub struct TextMessageData {
     pub sender_name: String,
     pub content: String,
     pub timestamp: u64, // unix seconds
+    #[serde(default)]
+    pub message_id: String,
+    #[serde(default)]
+    pub edited: bool,
+    #[serde(default)]
+    pub reactions: Vec<ReactionData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReactionData {
+    pub emoji: String,
+    pub users: Vec<String>,
 }
 
 pub const SAMPLE_RATE: u32 = 48000;

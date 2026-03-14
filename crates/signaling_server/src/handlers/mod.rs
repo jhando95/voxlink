@@ -1,5 +1,7 @@
+pub mod auth;
 pub mod channel;
 pub mod chat;
+pub mod moderation;
 pub mod room;
 pub mod space;
 

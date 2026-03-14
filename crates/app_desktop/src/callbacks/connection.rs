@@ -36,6 +36,15 @@ pub fn setup_connect(
             match net.connect(&addr).await {
                 Ok(()) => {
                     log::info!("Connected to server");
+                    // Send Authenticate after connecting
+                    let cfg = config_store::load_config();
+                    let auth_msg = shared_types::SignalMessage::Authenticate {
+                        token: cfg.auth_token,
+                        user_name: cfg.user_name,
+                    };
+                    if let Err(e) = net.send_signal(&auth_msg).await {
+                        log::warn!("Failed to send auth: {e}");
+                    }
                     if let Some(w) = window_weak.upgrade() {
                         w.set_is_connected(true);
                         w.set_status_text("Connected".into());

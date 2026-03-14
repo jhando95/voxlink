@@ -1,5 +1,5 @@
 use crate::{send_error, send_to, validate_name};
-use crate::{ChannelMeta, Peer, Room, Space, State};
+use crate::{ChannelMeta, Db, Peer, Room, Space, State};
 use shared_types::{ChannelInfo, ChannelType, MemberInfo, SignalMessage, SpaceInfo};
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,7 +20,7 @@ pub async fn broadcast_to_space(state: &State, space_id: &str, exclude_id: &str,
     }
 }
 
-pub async fn handle_create_space(state: &State, peer_id: &str, name: String, user_name: String) {
+pub async fn handle_create_space(state: &State, peer_id: &str, name: String, user_name: String, db: &Db) {
     if let Err(e) = validate_name(&name) {
         send_error(state, peer_id, &e).await;
         return;
@@ -56,7 +56,7 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
     let channel_meta = ChannelMeta {
         id: channel_id.clone(),
         name: "General".into(),
-        room_key,
+        room_key: room_key.clone(),
         channel_type: ChannelType::Voice,
     };
 
@@ -76,14 +76,14 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
 
     let space_info = SpaceInfo {
         id: space_id.clone(),
-        name,
-        invite_code,
+        name: name.clone(),
+        invite_code: invite_code.clone(),
         member_count: 1,
         channel_count: 1,
     };
 
     let channels = vec![ChannelInfo {
-        id: channel_id,
+        id: channel_id.clone(),
         name: "General".into(),
         peer_count: 0,
         channel_type: ChannelType::Voice,
@@ -94,30 +94,87 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
     if let Some(peer) = s.peers.get(peer_id).cloned() {
         drop(s);
         send_to(&peer, &SignalMessage::SpaceCreated { space: space_info, channels }).await;
+    } else {
+        drop(s);
+    }
+
+    // Persist space and channel to DB
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id;
+        let sname = name;
+        let sinvite = invite_code;
+        let sowner = peer_id.to_string();
+        let cid = channel_id;
+        let rk = room_key;
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.save_space(&crate::persistence::SpaceRow {
+                id: sid.clone(),
+                name: sname,
+                invite_code: sinvite,
+                owner_id: sowner,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            }) {
+                log::error!("Failed to persist space: {e}");
+            }
+            if let Err(e) = db.save_channel(&crate::persistence::ChannelRow {
+                id: cid,
+                space_id: sid,
+                name: "General".into(),
+                room_key: rk,
+                channel_type: "voice".into(),
+            }) {
+                log::error!("Failed to persist channel: {e}");
+            }
+        });
     }
 }
 
-pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String, user_name: String) {
+pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String, user_name: String, db: &Db) {
     if let Err(e) = validate_name(&user_name) {
         send_error(state, peer_id, &e).await;
         return;
     }
 
-    let mut s = state.write().await;
-
-    // O(1) lookup via invite_index
-    let space_id = s.invite_index.get(&invite_code).cloned();
-
-    let space_id = match space_id {
-        Some(id) => id,
-        None => {
-            if let Some(peer) = s.peers.get(peer_id).cloned() {
-                drop(s);
-                send_to(&peer, &SignalMessage::Error { message: "Invalid invite code".into() }).await;
+    // Resolve space_id and check ban before taking write lock
+    let (space_id, check_id) = {
+        let s = state.read().await;
+        let space_id = match s.invite_index.get(&invite_code).cloned() {
+            Some(id) => id,
+            None => {
+                if let Some(peer) = s.peers.get(peer_id).cloned() {
+                    drop(s);
+                    send_to(&peer, &SignalMessage::Error { message: "Invalid invite code".into() }).await;
+                }
+                return;
             }
+        };
+        let check_id = if let Some(peer) = s.peers.get(peer_id) {
+            peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string())
+        } else {
+            peer_id.to_string()
+        };
+        (space_id, check_id)
+    };
+
+    // Check ban (outside state lock to avoid blocking)
+    if let Some(ref db) = db {
+        let db_clone = db.clone();
+        let sid = space_id.clone();
+        let cid = check_id;
+        let banned = tokio::task::spawn_blocking(move || {
+            db_clone.is_banned(&sid, &cid).unwrap_or(false)
+        }).await.unwrap_or(false);
+        if banned {
+            send_error(state, peer_id, "You are banned from this space").await;
             return;
         }
-    };
+    }
+
+    let mut s = state.write().await;
 
     // Set peer name and space_id
     if let Some(peer) = s.peers.get(peer_id) {
@@ -248,7 +305,7 @@ pub async fn handle_leave_space(state: &State, peer_id: &str) {
     log::info!("Peer {peer_id} left space {space_id}");
 }
 
-pub async fn handle_delete_space(state: &State, peer_id: &str) {
+pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
     let space_id = {
         let s = state.read().await;
         match s.peers.get(peer_id) {
@@ -304,6 +361,17 @@ pub async fn handle_delete_space(state: &State, peer_id: &str) {
         *peer.space_id.lock().await = None;
         peer.set_room_code(None).await;
         send_to(peer, &SignalMessage::SpaceDeleted).await;
+    }
+
+    // Persist deletion
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.delete_space(&sid) {
+                log::error!("Failed to delete space from DB: {e}");
+            }
+        });
     }
 
     log::info!("Space {space_id} deleted by {peer_id}");

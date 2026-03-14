@@ -59,6 +59,7 @@ pub fn drain_audio_and_update_speaking(
 }
 
 /// Handle connection monitoring, auto-reconnect, and auto-rejoin.
+#[allow(clippy::too_many_arguments)]
 pub fn check_connection(
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     w: &MainWindow,
@@ -94,18 +95,29 @@ pub fn check_connection(
         *reconnect_cooldown.borrow_mut() = 3; // first attempt after 3 ticks (~3s)
     }
 
-    // Connection just restored — update status and auto-rejoin if in room view
+    // Connection just restored — re-authenticate and auto-rejoin if in room view
     if connected && !prev_connected {
         w.set_status_text("Connected".into());
         w.set_room_status(slint::SharedString::default());
         let room_code = w.get_room_code().to_string();
-        if w.get_current_view() == 1 && !room_code.is_empty() {
-            let user_name = w.get_user_name().to_string();
-            let is_muted = w.get_is_muted();
-            let is_deafened = w.get_is_deafened();
-            let network = network.clone();
-            rt_handle.spawn(async move {
-                let net = network.lock().await;
+        let user_name = w.get_user_name().to_string();
+        let is_in_room = w.get_current_view() == 1 && !room_code.is_empty();
+        let is_muted = w.get_is_muted();
+        let is_deafened = w.get_is_deafened();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+
+            // Re-authenticate after reconnect
+            let cfg = config_store::load_config();
+            let _ = net
+                .send_signal(&SignalMessage::Authenticate {
+                    token: cfg.auth_token,
+                    user_name: user_name.clone(),
+                })
+                .await;
+
+            if is_in_room {
                 log::info!("Auto-rejoining room {room_code}");
                 let _ = net
                     .send_signal(&SignalMessage::JoinRoom {
@@ -120,8 +132,8 @@ pub fn check_connection(
                 if is_deafened {
                     let _ = net.send_signal(&SignalMessage::DeafenChanged { is_deafened }).await;
                 }
-            });
-        }
+            }
+        });
     }
 
     // Reconnect attempts with exponential backoff

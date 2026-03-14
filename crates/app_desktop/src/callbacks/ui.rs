@@ -160,6 +160,21 @@ pub fn setup_toggle_feedback_sound(window: &MainWindow) {
     });
 }
 
+pub fn setup_toggle_notifications(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_notifications(move || {
+        let Some(w) = window_weak.upgrade() else { return; };
+        let new_val = !w.get_notifications_enabled();
+        w.set_notifications_enabled(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.notifications_enabled = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
 pub fn setup_noise_suppression(
     window: &MainWindow,
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
@@ -167,6 +182,34 @@ pub fn setup_noise_suppression(
 ) {
     let audio = audio.clone();
     let rt_handle = rt_handle.clone();
+    let audio2 = audio.clone();
+    let rt_handle2 = rt_handle.clone();
+    window.on_input_volume_changed(move |val| {
+        let audio = audio2.clone();
+        rt_handle2.spawn(async move {
+            audio.lock().await.set_input_gain(val);
+        });
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.input_volume = val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+
+    let audio3 = audio.clone();
+    let rt_handle3 = rt_handle.clone();
+    window.on_output_volume_changed(move |val| {
+        let audio = audio3.clone();
+        rt_handle3.spawn(async move {
+            audio.lock().await.set_output_volume(val);
+        });
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.output_volume = val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+
     window.on_noise_suppression_changed(move |val| {
         // Slider: 0=off (no suppression), 1=max (aggressive suppression)
         // Noise gate sensitivity: 0=least sensitive (high threshold), 1=most sensitive (low threshold)

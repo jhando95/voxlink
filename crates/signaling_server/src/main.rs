@@ -1,4 +1,5 @@
 mod handlers;
+pub mod persistence;
 
 use futures_util::{SinkExt, StreamExt};
 use shared_types::SignalMessage;
@@ -85,6 +86,8 @@ type Tx = futures_util::stream::SplitSink<
 struct Peer {
     id: String,
     name: Mutex<String>,
+    /// Persistent user identity (set by auth). Used for ban checks across reconnections.
+    user_id: Mutex<Option<String>>,
     room_code: Mutex<Option<String>>,
     /// Lock-free room code cache for the audio relay hot path.
     /// Avoids acquiring room_code mutex on every audio frame (~50fps per peer).
@@ -153,6 +156,7 @@ struct ServerState {
     next_id: u64,
     next_space_id: u64,
     next_channel_id: u64,
+    next_message_id: u64,
     connections_per_ip: HashMap<IpAddr, u32>,
 }
 
@@ -166,6 +170,7 @@ impl ServerState {
             next_id: 1,
             next_space_id: 1,
             next_channel_id: 1,
+            next_message_id: 1,
             connections_per_ip: HashMap::new(),
         }
     }
@@ -212,9 +217,16 @@ impl ServerState {
         self.next_channel_id += 1;
         id
     }
+
+    fn alloc_message_id(&mut self) -> String {
+        let id = format!("m{}", self.next_message_id);
+        self.next_message_id += 1;
+        id
+    }
 }
 
 type State = Arc<RwLock<ServerState>>;
+type Db = Option<Arc<persistence::Database>>;
 
 // ─── Main ───
 
@@ -251,7 +263,106 @@ async fn main() {
     let proto = if tls_acceptor.is_some() { "wss" } else { "ws" };
     log::info!("Signaling server listening on {proto}://{addr}");
 
+    // Initialize persistence
+    let db_path = std::env::var("PV_DB_PATH").unwrap_or_else(|_| "./voxlink.db".into());
+    let db = match persistence::Database::open(std::path::Path::new(&db_path)) {
+        Ok(db) => {
+            log::info!("Database opened at {db_path}");
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            log::error!("Failed to open database: {e} — running without persistence");
+            None
+        }
+    };
+
     let state: State = Arc::new(RwLock::new(ServerState::new()));
+
+    // Load persisted spaces from DB
+    if let Some(ref db) = db {
+        if let Ok(space_rows) = db.load_all_spaces() {
+            let mut s = state.write().await;
+            for sr in &space_rows {
+                let channels_rows = db.load_channels_for_space(&sr.id).unwrap_or_default();
+                let mut channels = Vec::new();
+                for cr in &channels_rows {
+                    let ct = if cr.channel_type == "text" {
+                        shared_types::ChannelType::Text
+                    } else {
+                        shared_types::ChannelType::Voice
+                    };
+                    channels.push(ChannelMeta {
+                        id: cr.id.clone(),
+                        name: cr.name.clone(),
+                        room_key: cr.room_key.clone(),
+                        channel_type: ct,
+                    });
+                    // Create room entries for voice channels
+                    if ct == shared_types::ChannelType::Voice {
+                        s.rooms.entry(cr.room_key.clone()).or_insert_with(|| Room {
+                            peer_ids: Vec::new(),
+                            password: None,
+                            created_at: Instant::now(),
+                        });
+                    }
+                }
+
+                // Load text message history
+                let mut text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>> =
+                    HashMap::new();
+                for cr in &channels_rows {
+                    if cr.channel_type == "text" {
+                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, MAX_CHANNEL_MESSAGES) {
+                            let dq: VecDeque<_> = msgs
+                                .into_iter()
+                                .map(|m| shared_types::TextMessageData {
+                                    sender_id: m.sender_id,
+                                    sender_name: m.sender_name,
+                                    content: m.content,
+                                    timestamp: m.timestamp as u64,
+                                    message_id: m.id,
+                                    edited: false,
+                                    reactions: Vec::new(),
+                                })
+                                .collect();
+                            if !dq.is_empty() {
+                                text_messages.insert(cr.id.clone(), dq);
+                            }
+                        }
+                    }
+                }
+
+                s.invite_index
+                    .insert(sr.invite_code.clone(), sr.id.clone());
+                s.spaces.insert(
+                    sr.id.clone(),
+                    Space {
+                        id: sr.id.clone(),
+                        name: sr.name.clone(),
+                        invite_code: sr.invite_code.clone(),
+                        owner_id: sr.owner_id.clone(),
+                        channels,
+                        member_ids: Vec::new(),
+                        text_messages,
+                        created_at: Instant::now(),
+                    },
+                );
+            }
+
+            // Restore ID allocators past the max persisted IDs
+            let max_space = db.max_id_suffix("spaces", "id").unwrap_or(0);
+            let max_channel = db.max_id_suffix("channels", "id").unwrap_or(0);
+            let max_message = db.max_id_suffix("messages", "id").unwrap_or(0);
+            s.next_space_id = s.next_space_id.max(max_space + 1);
+            s.next_channel_id = s.next_channel_id.max(max_channel + 1);
+            s.next_message_id = s.next_message_id.max(max_message + 1);
+
+            log::info!(
+                "Loaded {} space(s) from database",
+                space_rows.len()
+            );
+        }
+    }
 
     // Start LAN discovery beacon
     let discover_addr = format!("{proto}://{addr}");
@@ -299,6 +410,7 @@ async fn main() {
 
         let state = state.clone();
         let tls = tls_acceptor.clone();
+        let db = db.clone();
         tokio::spawn(async move {
             let server_stream = if let Some(acceptor) = tls {
                 match acceptor.accept(stream).await {
@@ -313,7 +425,7 @@ async fn main() {
                 ServerStream::Plain(stream)
             };
 
-            handle_connection(state.clone(), server_stream, addr).await;
+            handle_connection(state.clone(), server_stream, addr, db).await;
             decrement_ip(&state, addr.ip()).await;
         });
     }
@@ -380,7 +492,7 @@ async fn run_discovery(server_addr: String) {
 
 // ─── Connection Handler ───
 
-async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr) {
+async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr, db: Db) {
     let ws = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -399,6 +511,7 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr)
             Arc::new(Peer {
                 id: id.clone(),
                 name: Mutex::new(format!("User-{}", &id)),
+                user_id: Mutex::new(None),
                 room_code: Mutex::new(None),
                 room_code_cache: std::sync::RwLock::new(None),
                 is_muted: AtomicBool::new(false),
@@ -444,7 +557,7 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr)
                     continue;
                 }
                 if let Ok(signal) = serde_json::from_str::<SignalMessage>(&text) {
-                    handle_signal(&state, &peer_id, signal).await;
+                    handle_signal(&state, &peer_id, signal, &db).await;
                 }
             }
             Ok(Message::Binary(data)) => {
@@ -520,7 +633,7 @@ fn validate_password(pw: &Option<String>) -> Result<(), String> {
 
 // ─── Signal Handler ───
 
-async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage) {
+async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db) {
     match msg {
         SignalMessage::CreateRoom { user_name, password } => {
             handlers::room::handle_create_room(state, peer_id, user_name, password).await;
@@ -538,16 +651,16 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage) {
             handlers::room::handle_deafen_changed(state, peer_id, is_deafened).await;
         }
         SignalMessage::CreateSpace { name, user_name } => {
-            handlers::space::handle_create_space(state, peer_id, name, user_name).await;
+            handlers::space::handle_create_space(state, peer_id, name, user_name, db).await;
         }
         SignalMessage::JoinSpace { invite_code, user_name } => {
-            handlers::space::handle_join_space(state, peer_id, invite_code, user_name).await;
+            handlers::space::handle_join_space(state, peer_id, invite_code, user_name, db).await;
         }
         SignalMessage::LeaveSpace => {
             handlers::space::handle_leave_space(state, peer_id).await;
         }
         SignalMessage::CreateChannel { channel_name, channel_type } => {
-            handlers::channel::handle_create_channel(state, peer_id, channel_name, channel_type).await;
+            handlers::channel::handle_create_channel(state, peer_id, channel_name, channel_type, db).await;
         }
         SignalMessage::JoinChannel { channel_id } => {
             handlers::channel::handle_join_channel(state, peer_id, channel_id).await;
@@ -556,13 +669,34 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage) {
             handlers::channel::handle_leave_channel(state, peer_id).await;
         }
         SignalMessage::DeleteSpace => {
-            handlers::space::handle_delete_space(state, peer_id).await;
+            handlers::space::handle_delete_space(state, peer_id, db).await;
         }
         SignalMessage::SelectTextChannel { channel_id } => {
             handlers::chat::handle_select_text_channel(state, peer_id, channel_id).await;
         }
         SignalMessage::SendTextMessage { channel_id, content } => {
-            handlers::chat::handle_send_text_message(state, peer_id, channel_id, content).await;
+            handlers::chat::handle_send_text_message(state, peer_id, channel_id, content, db).await;
+        }
+        SignalMessage::Authenticate { token, user_name } => {
+            handlers::auth::handle_authenticate(state, peer_id, token, user_name, db).await;
+        }
+        SignalMessage::EditTextMessage { channel_id, message_id, new_content } => {
+            handlers::chat::handle_edit_text_message(state, peer_id, channel_id, message_id, new_content, db).await;
+        }
+        SignalMessage::DeleteTextMessage { channel_id, message_id } => {
+            handlers::chat::handle_delete_text_message(state, peer_id, channel_id, message_id, db).await;
+        }
+        SignalMessage::ReactToMessage { channel_id, message_id, emoji } => {
+            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji).await;
+        }
+        SignalMessage::KickMember { member_id } => {
+            handlers::moderation::handle_kick_member(state, peer_id, member_id).await;
+        }
+        SignalMessage::MuteMember { member_id, muted } => {
+            handlers::moderation::handle_mute_member(state, peer_id, member_id, muted).await;
+        }
+        SignalMessage::BanMember { member_id } => {
+            handlers::moderation::handle_ban_member(state, peer_id, member_id, db).await;
         }
         _ => {}
     }

@@ -36,6 +36,14 @@ pub struct AppConfig {
     pub feedback_sound: bool,
     #[serde(default = "default_noise_suppression")]
     pub noise_suppression: f32,
+    #[serde(default = "default_volume")]
+    pub input_volume: f32,
+    #[serde(default = "default_volume")]
+    pub output_volume: f32,
+    #[serde(default = "default_notifications")]
+    pub notifications_enabled: bool,
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +67,14 @@ fn default_feedback_sound() -> bool {
 
 fn default_noise_suppression() -> f32 {
     0.5
+}
+
+fn default_volume() -> f32 {
+    1.0
+}
+
+fn default_notifications() -> bool {
+    true
 }
 
 fn default_server_address() -> String {
@@ -86,6 +102,10 @@ impl Default for AppConfig {
             last_channel_id: None,
             feedback_sound: default_feedback_sound(),
             noise_suppression: default_noise_suppression(),
+            input_volume: default_volume(),
+            output_volume: default_volume(),
+            notifications_enabled: default_notifications(),
+            auth_token: None,
         }
     }
 }
@@ -175,6 +195,10 @@ mod tests {
             last_channel_id: Some("c1".into()),
             feedback_sound: true,
             noise_suppression: 0.6,
+            input_volume: 1.5,
+            output_volume: 0.8,
+            notifications_enabled: true,
+            auth_token: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();

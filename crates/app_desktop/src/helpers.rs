@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
@@ -62,6 +63,10 @@ pub fn auto_save_settings(
             last_channel_id: existing.last_channel_id,
             feedback_sound: existing.feedback_sound,
             noise_suppression: existing.noise_suppression,
+            input_volume: existing.input_volume,
+            output_volume: existing.output_volume,
+            notifications_enabled: existing.notifications_enabled,
+            auth_token: existing.auth_token,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
@@ -130,7 +135,83 @@ pub fn save_window_size(width: u32, height: u32) {
     let _ = config_store::save_config(&cfg);
 }
 
+/// Send a desktop notification (non-blocking).
+pub fn send_notification(title: &str, body: &str) {
+    let title = title.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        if let Err(e) = notify_rust::Notification::new()
+            .summary(&title)
+            .body(&body)
+            .appname("Voxlink")
+            .show()
+        {
+            log::debug!("Notification failed: {e}");
+        }
+    });
+}
+
+/// Save auth token to config in background.
+pub fn save_auth_token_async(token: String) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.auth_token = Some(token);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+/// Check GitHub Releases for a newer version. Runs in a background thread.
+/// Sets `update-available` and `update-version` on the window if a newer release exists.
+pub fn check_for_updates(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    std::thread::spawn(move || {
+        match fetch_latest_version() {
+            Some(latest) if latest != current && is_newer(&latest, &current) => {
+                log::info!("Update available: v{latest} (current: v{current})");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_update_available(true);
+                    w.set_update_version(latest.into());
+                }
+            }
+            Some(_) => log::debug!("Running latest version"),
+            None => log::debug!("Update check failed or skipped"),
+        }
+    });
+}
+
+fn fetch_latest_version() -> Option<String> {
+    // GitHub Releases API returns latest release tag
+    let url = "https://api.github.com/repos/jph/voxlink/releases/latest";
+    let body = ureq::get(url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .header("User-Agent", "Voxlink-Desktop")
+        .call()
+        .ok()?
+        .into_body()
+        .read_to_string()
+        .ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let tag = parsed.get("tag_name")?.as_str()?;
+    // Strip leading 'v' if present
+    Some(tag.strip_prefix('v').unwrap_or(tag).to_string())
+}
+
+/// Compare semver strings: returns true if `a` is newer than `b`.
+fn is_newer(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let parts: Vec<u32> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+        (
+            parts.first().copied().unwrap_or(0),
+            parts.get(1).copied().unwrap_or(0),
+            parts.get(2).copied().unwrap_or(0),
+        )
+    };
+    parse(a) > parse(b)
+}
+
 /// Start audio capture + playback if not already running.
+#[allow(clippy::too_many_arguments)]
 pub fn start_audio_if_needed(
     started: &Rc<RefCell<bool>>,
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,

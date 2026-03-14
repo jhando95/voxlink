@@ -160,20 +160,36 @@ pub fn set_members(window: &MainWindow, members: &[shared_types::MemberInfo]) {
 pub fn set_chat_messages(window: &MainWindow, messages: &[shared_types::TextMessageData], self_name: &str) {
     let model: Vec<ChatMessage> = messages
         .iter()
-        .map(|m| {
-            let color_index = m.sender_name.bytes()
-                .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
-            ChatMessage {
-                sender_name: m.sender_name.clone().into(),
-                content: m.content.clone().into(),
-                timestamp: format_timestamp(m.timestamp).into(),
-                is_self: m.sender_name == self_name,
-                color_index: color_index as i32,
-            }
-        })
+        .map(|m| text_msg_to_chat_msg(m, self_name))
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_chat_messages(rc.into());
+}
+
+pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) -> ChatMessage {
+    let color_index = m.sender_name.bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
+    let reactions_str = format_reactions(&m.reactions);
+    ChatMessage {
+        sender_name: m.sender_name.clone().into(),
+        content: m.content.clone().into(),
+        timestamp: format_timestamp(m.timestamp).into(),
+        is_self: m.sender_name == self_name,
+        color_index: color_index as i32,
+        message_id: m.message_id.clone().into(),
+        edited: m.edited,
+        reactions: reactions_str.into(),
+    }
+}
+
+pub fn format_reactions(reactions: &[shared_types::ReactionData]) -> String {
+    if reactions.is_empty() {
+        return String::new();
+    }
+    reactions.iter()
+        .map(|r| format!("{} {}", r.emoji, r.users.len()))
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 pub fn format_timestamp(unix_secs: u64) -> String {

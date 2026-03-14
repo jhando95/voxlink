@@ -25,6 +25,10 @@ pub struct NetworkClient {
     audio_tx_internal: mpsc::Sender<Vec<u8>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
     server_url: Arc<Mutex<Option<String>>>,
+    /// Last measured round-trip time in milliseconds (-1 = unknown).
+    last_ping_ms: Arc<std::sync::atomic::AtomicI32>,
+    /// Timestamp of last sent ping (for measuring RTT).
+    ping_sent_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl Default for NetworkClient {
@@ -45,6 +49,8 @@ impl NetworkClient {
             audio_tx_internal: audio_tx,
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             server_url: Arc::new(Mutex::new(None)),
+            last_ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+            ping_sent_at: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -76,6 +82,8 @@ impl NetworkClient {
         let sig_tx = self.signal_tx_internal.clone();
         let audio_tx = self.audio_tx_internal.clone();
         let connected = self.connected.clone();
+        let last_ping_ms_rx = self.last_ping_ms.clone();
+        let ping_sent_at_rx = self.ping_sent_at.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = rx.next().await {
@@ -95,7 +103,14 @@ impl NetworkClient {
                             }
                         }
                     }
-                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {} // keepalive
+                    Ok(Message::Ping(_)) => {} // server keepalive
+                    Ok(Message::Pong(_)) => {
+                        // Measure RTT from our last sent Ping
+                        if let Some(sent) = ping_sent_at_rx.lock().await.take() {
+                            let rtt = sent.elapsed().as_millis() as i32;
+                            last_ping_ms_rx.store(rtt, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
                     Ok(Message::Close(_)) => break,
                     Err(e) => {
                         log::warn!("WebSocket error: {e}");
@@ -147,6 +162,19 @@ impl NetworkClient {
     /// sender_id and audio data as zero-copy slices.
     pub fn try_recv_audio(&mut self) -> Option<Vec<u8>> {
         self.audio_rx.try_recv().ok()
+    }
+
+    /// Send a WebSocket Ping to measure latency. Call `ping_ms()` to read the result.
+    pub async fn send_ping(&self) {
+        if let Some(tx) = self.ws_tx.lock().await.as_mut() {
+            *self.ping_sent_at.lock().await = Some(std::time::Instant::now());
+            let _ = tx.send(Message::Ping(vec![].into())).await;
+        }
+    }
+
+    /// Last measured round-trip time in milliseconds, or -1 if unknown.
+    pub fn ping_ms(&self) -> i32 {
+        self.last_ping_ms.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub async fn disconnect(&mut self) {

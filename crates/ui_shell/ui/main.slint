@@ -1,6 +1,6 @@
 import { ListView, ComboBox, ScrollView } from "std-widgets.slint";
 import { ParticipantData, PerfData, SpaceData, ChannelData, MemberData, ChatMessage, VxTheme } from "theme.slint";
-import { VxButton, VxCard, VxInput, SectionLabel, FieldLabel, KeyPill, StatusDot, MetricRow, VxSlider, Divider, AccentBar } from "components.slint";
+import { VxButton, VxCard, VxInput, SectionLabel, FieldLabel, KeyPill, StatusDot, MetricRow, VxSlider, Divider, AccentBar, VxToggle } from "components.slint";
 
 // ─── Main Window ───
 
@@ -47,6 +47,9 @@ export component MainWindow inherits Window {
     changed dark-mode => { VxTheme.dark-mode = self.dark-mode; }
     in-out property <bool> feedback-sound: true;
     in-out property <float> noise-suppression: 0.5;
+    in-out property <float> input-volume: 1.0;
+    in-out property <float> output-volume: 1.0;
+    in-out property <int> ping-ms: -1;
 
     // Space state
     in-out property <[SpaceData]> spaces: [];
@@ -67,10 +70,18 @@ export component MainWindow inherits Window {
     in-out property <string> chat-channel-name: "";
     in-out property <string> chat-input: "";
 
+    // Notifications
+    in-out property <bool> notifications-enabled: true;
+    callback toggle-notifications();
+
+    // Update banner
+    in-out property <bool> update-available: false;
+    in-out property <string> update-version: "";
+
     // Delete confirmation
     in-out property <bool> confirm-delete-visible: false;
 
-    // Sidebar — only for spaces & friends
+    // Sidebar
     in-out property <bool> sidebar-expanded: false;
     property <length> sidebar-w: sidebar-expanded ? 180px : 0px;
 
@@ -102,6 +113,8 @@ export component MainWindow inherits Window {
     callback delete-space();
     callback toggle-feedback-sound();
     callback noise-suppression-changed(float);
+    callback input-volume-changed(float);
+    callback output-volume-changed(float);
     callback select-text-channel(string);
     callback send-text-message();
 
@@ -110,7 +123,7 @@ export component MainWindow inherits Window {
 
         // ─── Header Bar ───
         Rectangle {
-            height: 44px;
+            height: 40px;
             background: VxTheme.bg-surface;
             AccentBar { y: parent.height - 2px; }
 
@@ -123,16 +136,15 @@ export component MainWindow inherits Window {
                     spacing: 8px;
                     alignment: center;
 
-                    // Sidebar toggle — Spaces panel
+                    // Sidebar toggle
                     if root.spaces.length > 0 : Rectangle {
-                        height: 30px;
-                        border-radius: 7px;
+                        height: 28px;
+                        border-radius: 6px;
                         background: root.sidebar-expanded ? VxTheme.accent-glow :
                                     sb-toggle.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                         border-color: root.sidebar-expanded ? VxTheme.accent : VxTheme.border-subtle;
                         border-width: 1px;
-                        animate background { duration: 80ms; }
-                        animate border-color { duration: 80ms; }
+                        animate background { duration: 100ms; }
 
                         sb-toggle := TouchArea {
                             mouse-cursor: pointer;
@@ -142,70 +154,74 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             padding-left: 8px;
                             padding-right: 10px;
-                            spacing: 6px;
+                            spacing: 5px;
                             alignment: center;
 
                             Text {
                                 text: root.sidebar-expanded ? "\u{2715}" : "\u{2630}";
                                 color: root.sidebar-expanded ? VxTheme.accent : VxTheme.text-secondary;
-                                font-size: root.sidebar-expanded ? 11px : 13px;
+                                font-size: root.sidebar-expanded ? 10px : 12px;
                                 font-weight: 600;
                                 vertical-alignment: center;
                             }
                             Text {
                                 text: root.sidebar-expanded ? "Close" : "Spaces";
                                 color: root.sidebar-expanded ? VxTheme.accent : VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 9px;
                                 font-weight: 600;
                                 vertical-alignment: center;
                             }
                         }
                     }
 
+                    // Brand mark
                     Rectangle {
-                        width: 24px; height: 24px; border-radius: 7px;
+                        width: 22px; height: 22px; border-radius: 5px;
                         background: VxTheme.accent;
                         Text {
-                            text: "VX";
+                            text: "V";
                             color: #f0f0f8;
-                            font-size: 9px; font-weight: 800; letter-spacing: 0.3px;
+                            font-size: 11px; font-weight: 800;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                     }
 
                     Text {
-                        text: "VOX";
-                        color: VxTheme.accent;
-                        font-size: 12px; font-weight: 800; letter-spacing: 1.8px;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: "LINK";
+                        text: "VOXLINK";
                         color: VxTheme.text-primary;
-                        font-size: 12px; font-weight: 600; letter-spacing: 1.8px;
+                        font-size: 11px; font-weight: 700; letter-spacing: 2px;
                         vertical-alignment: center;
                     }
                 }
 
                 HorizontalLayout {
-                    spacing: 5px;
+                    spacing: 6px;
                     alignment: center;
 
+                    // Mute/deafen indicators in header
                     if current-view == 1 && root.is-muted : Rectangle {
-                        width: 18px; height: 18px; border-radius: 9px;
+                        width: 46px; height: 20px; border-radius: 4px;
                         background: VxTheme.mute-badge-bg;
                         border-color: VxTheme.danger;
                         border-width: 1px;
-                        Text { text: "\u{1F507}"; font-size: 9px;
-                               horizontal-alignment: center; vertical-alignment: center; }
+                        HorizontalLayout {
+                            alignment: center; spacing: 3px;
+                            Rectangle { width: 5px; height: 5px; border-radius: 2.5px; background: VxTheme.danger; }
+                            Text { text: "MUTE"; color: VxTheme.danger; font-size: 8px; font-weight: 700;
+                                   letter-spacing: 0.5px; vertical-alignment: center; }
+                        }
                     }
                     if current-view == 1 && root.is-deafened : Rectangle {
-                        width: 18px; height: 18px; border-radius: 9px;
+                        width: 46px; height: 20px; border-radius: 4px;
                         background: VxTheme.deafen-badge-bg;
                         border-color: VxTheme.warning;
                         border-width: 1px;
-                        Text { text: "\u{1F515}"; font-size: 9px;
-                               horizontal-alignment: center; vertical-alignment: center; }
+                        HorizontalLayout {
+                            alignment: center; spacing: 3px;
+                            Rectangle { width: 5px; height: 5px; border-radius: 2.5px; background: VxTheme.warning; }
+                            Text { text: "DEAF"; color: VxTheme.warning; font-size: 8px; font-weight: 700;
+                                   letter-spacing: 0.5px; vertical-alignment: center; }
+                        }
                     }
 
                     StatusDot { active: root.is-connected; }
@@ -217,6 +233,59 @@ export component MainWindow inherits Window {
                         font-size: 9px; font-weight: 600; letter-spacing: 0.8px;
                         vertical-alignment: center;
                     }
+                    if root.is-connected && root.ping-ms >= 0 : Rectangle {
+                        height: 18px; border-radius: 4px;
+                        background: VxTheme.bg-elevated;
+                        border-color: VxTheme.border-subtle;
+                        border-width: 1px;
+                        HorizontalLayout {
+                            padding-left: 5px; padding-right: 6px;
+                            spacing: 4px;
+                            alignment: center;
+                            Rectangle {
+                                width: 6px; height: 6px; border-radius: 3px;
+                                background: root.ping-ms < 60 ? VxTheme.success :
+                                           root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            Text {
+                                text: root.ping-ms + "ms";
+                                color: root.ping-ms < 60 ? VxTheme.success :
+                                       root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                                font-size: 9px; font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Update banner ───
+        if root.update-available : Rectangle {
+            height: 28px;
+            background: VxTheme.accent-glow;
+            border-color: VxTheme.accent;
+            border-width: 0px;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                alignment: center;
+                spacing: 6px;
+
+                Text {
+                    text: "\u{2191}";
+                    color: VxTheme.accent;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Voxlink v" + root.update-version + " is available";
+                    color: VxTheme.text-primary;
+                    font-size: 11px;
+                    font-weight: 500;
+                    vertical-alignment: center;
                 }
             }
         }
@@ -227,14 +296,13 @@ export component MainWindow inherits Window {
             vertical-stretch: 1;
 
             // ═══════════════════════════════
-            //  LEFT SIDEBAR — Spaces & Members
+            //  LEFT SIDEBAR
             // ═══════════════════════════════
             if root.sidebar-expanded : Rectangle {
                 width: root.sidebar-w;
                 background: VxTheme.sidebar-bg;
-                animate width { duration: 150ms; easing: ease-out; }
+                animate width { duration: 120ms; easing: ease-out; }
 
-                // Right border
                 Rectangle {
                     x: parent.width - 1px;
                     width: 1px;
@@ -245,9 +313,8 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     spacing: 0px;
 
-                    // Section label
                     Rectangle {
-                        height: 30px;
+                        height: 28px;
                         HorizontalLayout {
                             padding-left: 12px;
                             padding-right: 12px;
@@ -256,9 +323,8 @@ export component MainWindow inherits Window {
                                 text: "SPACES";
                                 vertical-alignment: center;
                             }
-                            // Close sidebar
                             Rectangle {
-                                width: 20px; height: 20px; border-radius: 4px;
+                                width: 18px; height: 18px; border-radius: 4px;
                                 background: close-sb.has-hover ? VxTheme.sidebar-item-hover : transparent;
                                 close-sb := TouchArea {
                                     mouse-cursor: pointer;
@@ -267,14 +333,13 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "\u{00D7}";
                                     color: VxTheme.text-muted;
-                                    font-size: 14px;
+                                    font-size: 13px;
                                     horizontal-alignment: center; vertical-alignment: center;
                                 }
                             }
                         }
                     }
 
-                    // Space list
                     ScrollView {
                         vertical-stretch: 1;
 
@@ -284,8 +349,8 @@ export component MainWindow inherits Window {
                             alignment: start;
 
                             for space in root.spaces : Rectangle {
-                                height: 44px;
-                                border-radius: 8px;
+                                height: 42px;
+                                border-radius: 6px;
                                 background: (current-view == 4 || current-view == 5 || (current-view == 1 && root.in-space-channel))
                                             && root.current-space-id == space.id ? VxTheme.sidebar-item-active :
                                             sp-sb.has-hover ? VxTheme.sidebar-item-hover : transparent;
@@ -304,12 +369,12 @@ export component MainWindow inherits Window {
                                     VerticalLayout {
                                         alignment: center;
                                         Rectangle {
-                                            width: 30px; height: 30px; border-radius: 15px;
+                                            width: 28px; height: 28px; border-radius: 6px;
                                             background: VxTheme.avatar-color(space.color-index);
                                             Text {
                                                 text: space.initial;
                                                 color: #f0f0f8;
-                                                font-size: 12px; font-weight: 700;
+                                                font-size: 11px; font-weight: 700;
                                                 horizontal-alignment: center; vertical-alignment: center;
                                             }
                                         }
@@ -322,7 +387,7 @@ export component MainWindow inherits Window {
                                         Text {
                                             text: space.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 12px; font-weight: 600;
+                                            font-size: 11px; font-weight: 600;
                                             overflow: elide;
                                         }
                                         Text {
@@ -334,7 +399,6 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Empty state
                             if root.spaces.length == 0 : VerticalLayout {
                                 padding: 12px;
                                 spacing: 4px;
@@ -345,26 +409,24 @@ export component MainWindow inherits Window {
                                     horizontal-alignment: center;
                                 }
                                 Text {
-                                    text: "Create or join one from Home";
+                                    text: "Create or join from Home";
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
                                     horizontal-alignment: center;
                                 }
                             }
 
-                            // Divider before members (if inside a space)
                             if (current-view == 4 || current-view == 5) && root.members.length > 0 : Rectangle {
                                 height: 1px;
                                 background: VxTheme.sidebar-divider;
                             }
 
-                            // Members list (when viewing a space)
                             if (current-view == 4 || current-view == 5) && root.members.length > 0 : VerticalLayout {
                                 spacing: 0px;
                                 padding-top: 4px;
 
                                 Rectangle {
-                                    height: 24px;
+                                    height: 22px;
                                     HorizontalLayout {
                                         padding-left: 8px;
                                         SectionLabel {
@@ -375,18 +437,18 @@ export component MainWindow inherits Window {
                                 }
 
                                 for member in root.members : Rectangle {
-                                    height: 32px;
-                                    border-radius: 6px;
+                                    height: 30px;
+                                    border-radius: 5px;
 
                                     HorizontalLayout {
                                         padding-left: 8px;
                                         padding-right: 8px;
-                                        spacing: 8px;
+                                        spacing: 7px;
 
                                         VerticalLayout {
                                             alignment: center;
                                             Rectangle {
-                                                width: 22px; height: 22px; border-radius: 11px;
+                                                width: 20px; height: 20px; border-radius: 5px;
                                                 background: VxTheme.avatar-color(member.color-index);
                                                 Text {
                                                     text: member.initial;
@@ -403,7 +465,7 @@ export component MainWindow inherits Window {
                                             Text {
                                                 text: member.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px; font-weight: 500;
+                                                font-size: 10px; font-weight: 500;
                                                 overflow: elide;
                                             }
                                         }
@@ -440,98 +502,66 @@ export component MainWindow inherits Window {
                         vertical-stretch: 1;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 20px;
                             spacing: 14px;
                             alignment: start;
 
-                            // Welcome hero
+                            // Welcome hero — clean, minimal
                             Rectangle {
-                                height: 94px;
-                                border-radius: 14px;
-                                background: VxTheme.bg-card;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
+                                VxCard {
+                                    VerticalLayout {
+                                        padding: 20px;
+                                        spacing: 8px;
 
-                                // Accent top edge
-                                Rectangle {
-                                    y: 0px;
-                                    height: 3px;
-                                    border-radius: 14px;
-                                    clip: true;
-                                    Rectangle {
-                                        x: 0px;
-                                        width: parent.width * 0.33;
-                                        height: parent.height;
-                                        background: VxTheme.header-accent-left;
-                                    }
-                                    Rectangle {
-                                        x: parent.width * 0.33;
-                                        width: parent.width * 0.34;
-                                        height: parent.height;
-                                        background: VxTheme.header-accent-mid;
-                                    }
-                                    Rectangle {
-                                        x: parent.width * 0.67;
-                                        width: parent.width * 0.33;
-                                        height: parent.height;
-                                        background: VxTheme.header-accent-right;
+                                    HorizontalLayout {
+                                        spacing: 14px;
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 44px; height: 44px; border-radius: 10px;
+                                                background: VxTheme.accent;
+                                                border-color: VxTheme.accent-glow;
+                                                border-width: 2px;
+                                                Text {
+                                                    text: "V";
+                                                    color: #f0f0f8;
+                                                    font-size: 18px; font-weight: 800;
+                                                    horizontal-alignment: center; vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 4px;
+                                            horizontal-stretch: 1;
+                                            Text {
+                                                text: root.user-name != "" && root.user-name != "User" ?
+                                                      "Hey, " + root.user-name : "Voxlink";
+                                                color: VxTheme.text-primary;
+                                                font-size: 20px;
+                                                font-weight: 700;
+                                            }
+                                            HorizontalLayout {
+                                                spacing: 6px;
+                                                alignment: start;
+                                                StatusDot { active: root.is-connected; }
+                                                Text {
+                                                    text: root.status-text;
+                                                    color: root.is-connected ? VxTheme.success :
+                                                           root.status-text == "Connecting..." ? VxTheme.warning : VxTheme.text-muted;
+                                                    font-size: 11px; font-weight: 500;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-
-                                HorizontalLayout {
-                                    padding-left: 20px;
-                                    padding-right: 20px;
-                                    spacing: 16px;
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        Rectangle {
-                                            width: 52px; height: 52px; border-radius: 14px;
-                                            background: VxTheme.accent;
-                                            border-color: VxTheme.accent-glow;
-                                            border-width: 2px;
-                                            Text {
-                                                text: "VX";
-                                                color: #f0f0f8;
-                                                font-size: 18px; font-weight: 800; letter-spacing: 0.5px;
-                                                horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalLayout {
-                                        alignment: center;
-                                        spacing: 5px;
-                                        horizontal-stretch: 1;
-                                        Text {
-                                            text: root.user-name != "" && root.user-name != "User" ?
-                                                  "Hey, " + root.user-name : "Voxlink";
-                                            color: VxTheme.text-primary;
-                                            font-size: 22px;
-                                            font-weight: 700;
-                                        }
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            alignment: start;
-                                            Rectangle {
-                                                width: 7px; height: 7px; y: 3px;
-                                                border-radius: 3.5px;
-                                                background: root.is-connected ? VxTheme.success :
-                                                           root.status-text == "Connecting..." ? VxTheme.warning : VxTheme.text-muted;
-                                                border-color: root.is-connected ? VxTheme.success-dim : transparent;
-                                                border-width: root.is-connected ? 2px : 0px;
-                                                animate background { duration: 200ms; }
-                                                animate border-color { duration: 200ms; }
-                                            }
-                                            Text {
-                                                text: root.status-text;
-                                                color: root.is-connected ? VxTheme.success :
-                                                       root.status-text == "Connecting..." ? VxTheme.warning : VxTheme.text-muted;
-                                                font-size: 11px; font-weight: 500;
-                                                animate color { duration: 200ms; }
-                                            }
-                                        }
-                                    }
+                                }
+                                // Accent top edge overlay
+                                AccentBar {
+                                    y: 0px;
+                                    width: parent.width;
                                 }
                             }
 
@@ -541,12 +571,7 @@ export component MainWindow inherits Window {
                                     padding: 16px;
                                     spacing: 12px;
 
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F310}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "CONNECTION"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "CONNECTION"; }
 
                                     VerticalLayout {
                                         spacing: 4px;
@@ -602,8 +627,8 @@ export component MainWindow inherits Window {
                                 SectionLabel { text: "YOUR SPACES"; }
 
                                 for space in root.spaces : Rectangle {
-                                    height: 52px;
-                                    border-radius: 8px;
+                                    height: 50px;
+                                    border-radius: 7px;
                                     background: space-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-card;
                                     border-color: space-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
                                     border-width: 1px;
@@ -622,7 +647,7 @@ export component MainWindow inherits Window {
                                         VerticalLayout {
                                             alignment: center;
                                             Rectangle {
-                                                width: 32px; height: 32px; border-radius: 16px;
+                                                width: 30px; height: 30px; border-radius: 7px;
                                                 background: VxTheme.avatar-color(space.color-index);
                                                 Text {
                                                     text: space.initial;
@@ -644,7 +669,7 @@ export component MainWindow inherits Window {
                                                 overflow: elide;
                                             }
                                             Text {
-                                                text: space.member-count + " members \u{2022} " + space.channel-count + " channels";
+                                                text: space.member-count + " members \u{00B7} " + space.channel-count + " channels";
                                                 color: VxTheme.text-muted;
                                                 font-size: 9px;
                                             }
@@ -668,12 +693,7 @@ export component MainWindow inherits Window {
                                     padding: 16px;
                                     spacing: 12px;
 
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F680}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "SPACE"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "SPACE"; }
 
                                     VerticalLayout {
                                         spacing: 4px;
@@ -701,14 +721,7 @@ export component MainWindow inherits Window {
                                         spacing: 12px;
                                         alignment: center;
                                         Divider { horizontal-stretch: 1; }
-                                        Rectangle {
-                                            height: 18px; border-radius: 9px;
-                                            background: VxTheme.bg-elevated;
-                                            HorizontalLayout {
-                                                padding-left: 10px; padding-right: 10px;
-                                                Text { text: "or join existing"; color: VxTheme.text-muted; font-size: 8px; font-weight: 500; vertical-alignment: center; }
-                                            }
-                                        }
+                                        Text { text: "or join existing"; color: VxTheme.text-muted; font-size: 9px; font-weight: 500; vertical-alignment: center; }
                                         Divider { horizontal-stretch: 1; }
                                     }
 
@@ -736,10 +749,10 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // ── Quick Call (collapsible) ──
+                            // ── Quick Call ──
                             Rectangle {
-                                height: 34px;
-                                border-radius: 8px;
+                                height: 32px;
+                                border-radius: 7px;
                                 background: qc-toggle.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-card;
                                 border-color: VxTheme.border-subtle;
                                 border-width: 1px;
@@ -751,19 +764,18 @@ export component MainWindow inherits Window {
                                 }
 
                                 HorizontalLayout {
-                                    padding-left: 16px;
-                                    padding-right: 16px;
+                                    padding-left: 14px;
+                                    padding-right: 14px;
                                     alignment: space-between;
 
                                     HorizontalLayout {
                                         spacing: 6px;
                                         alignment: center;
-                                        Text { text: "\u{1F4DE}"; font-size: 11px; vertical-alignment: center; }
                                         SectionLabel { text: "QUICK CALL"; vertical-alignment: center; }
                                         Text {
                                             text: "join by code";
                                             color: VxTheme.text-muted;
-                                            font-size: 8px;
+                                            font-size: 9px;
                                             vertical-alignment: center;
                                         }
                                     }
@@ -794,14 +806,7 @@ export component MainWindow inherits Window {
                                         spacing: 12px;
                                         alignment: center;
                                         Divider { horizontal-stretch: 1; }
-                                        Rectangle {
-                                            height: 18px; border-radius: 9px;
-                                            background: VxTheme.bg-elevated;
-                                            HorizontalLayout {
-                                                padding-left: 10px; padding-right: 10px;
-                                                Text { text: "or join"; color: VxTheme.text-muted; font-size: 8px; font-weight: 500; vertical-alignment: center; }
-                                            }
-                                        }
+                                        Text { text: "or join"; color: VxTheme.text-muted; font-size: 9px; font-weight: 500; vertical-alignment: center; }
                                         Divider { horizontal-stretch: 1; }
                                     }
 
@@ -848,7 +853,7 @@ export component MainWindow inherits Window {
 
                     // Room header
                     Rectangle {
-                        height: 50px;
+                        height: 48px;
                         background: VxTheme.bg-surface;
                         Divider { y: parent.height - 1px; }
 
@@ -859,35 +864,34 @@ export component MainWindow inherits Window {
 
                             VerticalLayout {
                                 alignment: center;
-                                spacing: 2px;
+                                spacing: 3px;
 
                                 HorizontalLayout {
                                     spacing: 8px;
                                     alignment: start;
 
-                                    // Stylized room code badge
+                                    // Room code badge
                                     Rectangle {
-                                        height: 26px;
-                                        border-radius: 6px;
+                                        height: 24px;
+                                        border-radius: 5px;
                                         background: VxTheme.accent-subtle;
                                         border-color: VxTheme.accent-glow;
                                         border-width: 1px;
                                         HorizontalLayout {
                                             padding-left: 10px;
                                             padding-right: 10px;
-                                            spacing: 6px;
-                                            alignment: center;
                                             Text {
                                                 text: root.room-code;
                                                 color: VxTheme.accent;
-                                                font-size: 14px; font-weight: 800; letter-spacing: 3px;
+                                                font-size: 13px; font-weight: 800; letter-spacing: 3px;
                                                 vertical-alignment: center;
                                             }
                                         }
                                     }
 
+                                    // Participant count
                                     Rectangle {
-                                        width: 28px; height: 20px; border-radius: 10px;
+                                        width: 26px; height: 20px; border-radius: 5px;
                                         background: VxTheme.bg-elevated;
                                         border-color: VxTheme.border-subtle;
                                         border-width: 1px;
@@ -899,8 +903,9 @@ export component MainWindow inherits Window {
                                         }
                                     }
 
+                                    // Copy code button
                                     Rectangle {
-                                        height: 24px; border-radius: 6px;
+                                        height: 22px; border-radius: 5px;
                                         background: copy-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                         border-color: root.show-copied ? VxTheme.success : VxTheme.border-subtle;
                                         border-width: 1px;
@@ -912,10 +917,10 @@ export component MainWindow inherits Window {
                                             clicked => { root.copy-room-code(); root.show-copied = true; }
                                         }
                                         HorizontalLayout {
-                                            padding-left: 10px;
-                                            padding-right: 10px;
+                                            padding-left: 8px;
+                                            padding-right: 8px;
                                             Text {
-                                                text: root.show-copied ? "\u{2713} Copied" : "Copy Code";
+                                                text: root.show-copied ? "\u{2713} Copied" : "Copy";
                                                 color: root.show-copied ? VxTheme.success : VxTheme.text-secondary;
                                                 font-size: 10px; font-weight: 600;
                                                 vertical-alignment: center;
@@ -941,20 +946,10 @@ export component MainWindow inherits Window {
 
                             HorizontalLayout {
                                 alignment: center;
-                                if root.in-space-channel : Rectangle {
-                                    width: 90px; height: 32px; border-radius: 8px;
-                                    background: back-ch-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                    border-color: VxTheme.border-subtle; border-width: 1px;
-                                    animate background { duration: 80ms; }
-                                    back-ch-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.leave-channel(); }
-                                    }
-                                    HorizontalLayout {
-                                        alignment: center; spacing: 4px;
-                                        Text { text: "\u{2190}"; color: VxTheme.text-secondary; font-size: 13px; vertical-alignment: center; }
-                                        Text { text: "Leave"; color: VxTheme.text-secondary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
+                                if root.in-space-channel : VxButton {
+                                    label: "\u{2190} Leave";
+                                    small: true;
+                                    clicked => { root.leave-channel(); }
                                 }
                                 if !root.in-space-channel : VxButton {
                                     label: "Leave Call";
@@ -965,28 +960,30 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Connection lost banner
+                    // Connection lost banner with pulsing indicator
                     if !root.is-connected : Rectangle {
-                        height: 30px;
+                        height: 28px;
                         background: VxTheme.connection-lost-bg;
-                        border-color: VxTheme.danger;
-                        border-width: 0px;
-                        // Bottom accent line
                         Rectangle {
                             y: parent.height - 1px;
                             height: 1px;
                             background: VxTheme.danger;
-                            opacity: 0.5;
+                            opacity: 0.4;
                         }
                         HorizontalLayout {
                             padding-left: 14px; padding-right: 14px;
                             alignment: center; spacing: 8px;
-                            // Pulsing dot
                             Rectangle {
-                                width: 8px; height: 8px; border-radius: 4px;
+                                width: 6px; height: 6px; border-radius: 3px;
                                 background: VxTheme.danger;
                                 border-color: VxTheme.mic-glow-red;
                                 border-width: 3px;
+                                property <float> pulse-opacity: 1.0;
+                                opacity: self.pulse-opacity;
+                                animate pulse-opacity { duration: 800ms; }
+                                init => {
+                                    self.pulse-opacity = 0.3;
+                                }
                             }
                             Text {
                                 text: root.status-text;
@@ -1004,43 +1001,37 @@ export component MainWindow inherits Window {
                         spacing: 2px;
                         vertical-stretch: 1;
 
-                        HorizontalLayout {
-                            spacing: 6px;
-                            alignment: start;
-                            Text { text: "\u{1F465}"; font-size: 11px; vertical-alignment: center; }
-                            SectionLabel { text: "PARTICIPANTS"; vertical-alignment: center; }
-                        }
+                        SectionLabel { text: "PARTICIPANTS"; }
 
                         if root.participants.length <= 1 : VerticalLayout {
                             alignment: center;
                             vertical-stretch: 1;
-                            spacing: 10px;
+                            spacing: 8px;
 
-                            // Visual empty state
                             HorizontalLayout {
                                 alignment: center;
-                                spacing: 8px;
+                                spacing: 6px;
                                 Rectangle {
-                                    width: 28px; height: 28px; border-radius: 14px;
+                                    width: 24px; height: 24px; border-radius: 6px;
                                     background: VxTheme.bg-card;
                                     border-color: VxTheme.border-subtle; border-width: 1px;
                                     opacity: 0.5;
-                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 11px;
+                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 10px;
                                            horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 Rectangle {
-                                    width: 40px; height: 40px; border-radius: 20px;
+                                    width: 36px; height: 36px; border-radius: 8px;
                                     background: VxTheme.accent-subtle;
                                     border-color: VxTheme.accent-glow; border-width: 2px;
-                                    Text { text: "\u{1F3A4}"; font-size: 16px;
+                                    Text { text: "\u{1F3A4}"; font-size: 14px;
                                            horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 Rectangle {
-                                    width: 28px; height: 28px; border-radius: 14px;
+                                    width: 24px; height: 24px; border-radius: 6px;
                                     background: VxTheme.bg-card;
                                     border-color: VxTheme.border-subtle; border-width: 1px;
                                     opacity: 0.5;
-                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 11px;
+                                    Text { text: "?"; color: VxTheme.text-muted; font-size: 10px;
                                            horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
@@ -1053,7 +1044,7 @@ export component MainWindow inherits Window {
                             }
                             Text {
                                 text: root.in-space-channel ? "Invite others to join this channel" :
-                                      "Share code " + root.room-code + " to invite friends";
+                                      "Share code " + root.room-code + " to invite";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 horizontal-alignment: center;
@@ -1064,15 +1055,15 @@ export component MainWindow inherits Window {
                             vertical-stretch: 1;
 
                             for p[idx] in root.participants : Rectangle {
-                                height: 52px;
+                                height: 50px;
                                 background: p.is-speaking ? VxTheme.speaking-glow :
                                             row-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                                border-radius: 10px;
-                                border-width: p.is-speaking ? 1.5px : 0px;
+                                border-radius: 8px;
+                                border-width: p.is-speaking ? 1px : 0px;
                                 border-color: p.is-speaking ? VxTheme.speaking-border : transparent;
-                                animate background { duration: 120ms; }
-                                animate border-color { duration: 120ms; }
-                                animate border-width { duration: 120ms; }
+                                animate background { duration: 100ms; }
+                                animate border-color { duration: 100ms; }
+                                animate border-width { duration: 100ms; }
 
                                 row-touch := TouchArea { mouse-cursor: p.id != "self" ? pointer : default; }
 
@@ -1082,12 +1073,12 @@ export component MainWindow inherits Window {
                                     VerticalLayout {
                                         alignment: center;
                                         Rectangle {
-                                            width: 30px; height: 30px; border-radius: 15px;
+                                            width: 28px; height: 28px; border-radius: 7px;
                                             background: p.is-speaking ? VxTheme.accent : VxTheme.avatar-color(p.color-index);
-                                            animate background { duration: 80ms; }
+                                            animate background { duration: 100ms; }
                                             Text {
                                                 text: p.initial; color: #f0f0f8;
-                                                font-size: 11px; font-weight: 700;
+                                                font-size: 10px; font-weight: 700;
                                                 horizontal-alignment: center; vertical-alignment: center;
                                             }
                                         }
@@ -1096,7 +1087,7 @@ export component MainWindow inherits Window {
                                     VerticalLayout {
                                         horizontal-stretch: 1;
                                         alignment: center;
-                                        spacing: 2px;
+                                        spacing: 3px;
 
                                         Text {
                                             text: p.id == "self" ? p.name + " (You)" : p.name;
@@ -1117,7 +1108,7 @@ export component MainWindow inherits Window {
                                         }
 
                                         if p.id != "self" : VxSlider {
-                                            value: p.volume; height: 12px;
+                                            value: p.volume; height: 14px;
                                             changed(val) => { root.volume-changed(p.id, val); }
                                         }
                                     }
@@ -1126,28 +1117,20 @@ export component MainWindow inherits Window {
                                         alignment: center;
                                         spacing: 3px;
                                         if (p.id == "self" && root.is-deafened) || (p.id != "self" && p.is-deafened) : Rectangle {
-                                            width: 38px; height: 18px; border-radius: 9px;
+                                            width: 36px; height: 16px; border-radius: 4px;
                                             background: VxTheme.deafen-badge-bg;
                                             border-color: VxTheme.warning;
                                             border-width: 1px;
-                                            HorizontalLayout {
-                                                alignment: center; spacing: 3px;
-                                                Text { text: "\u{1F515}"; font-size: 8px; vertical-alignment: center; }
-                                                Text { text: "DEAF"; color: VxTheme.warning; font-size: 7px; font-weight: 700;
-                                                       vertical-alignment: center; }
-                                            }
+                                            Text { text: "DEAF"; color: VxTheme.warning; font-size: 7px; font-weight: 700;
+                                                   horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
                                         }
                                         if p.is-muted : Rectangle {
-                                            width: 38px; height: 18px; border-radius: 9px;
+                                            width: 36px; height: 16px; border-radius: 4px;
                                             background: VxTheme.mute-badge-bg;
                                             border-color: VxTheme.danger;
                                             border-width: 1px;
-                                            HorizontalLayout {
-                                                alignment: center; spacing: 3px;
-                                                Text { text: "\u{1F507}"; font-size: 8px; vertical-alignment: center; }
-                                                Text { text: "MUTE"; color: VxTheme.danger; font-size: 7px; font-weight: 700;
-                                                       vertical-alignment: center; }
-                                            }
+                                            Text { text: "MUTE"; color: VxTheme.danger; font-size: 7px; font-weight: 700;
+                                                   horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
                                         }
                                         if p.is-speaking && !p.is-muted : Rectangle {
                                             width: 8px; height: 8px; border-radius: 4px;
@@ -1161,31 +1144,28 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Mic level bar with glow
+                    // Mic level bar
                     Rectangle {
-                        height: 4px;
+                        height: 3px;
                         background: VxTheme.bg-surface;
 
-                        // Glow layer (behind the bar)
                         Rectangle {
                             x: 0px;
                             width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                            height: 8px;
-                            y: -2px;
+                            height: 6px;
+                            y: -1.5px;
                             background: root.is-muted ? VxTheme.mic-glow-red :
                                         root.mic-level > 0.15 ? VxTheme.mic-glow-yellow :
                                         root.mic-level > 0.03 ? VxTheme.mic-glow-green : transparent;
-                            border-radius: 4px;
+                            border-radius: 3px;
                             animate width { duration: 50ms; }
-                            animate background { duration: 100ms; }
                         }
 
-                        // Solid bar
                         Rectangle {
                             x: 0px;
                             width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
                             height: parent.height;
-                            border-radius: 2px;
+                            border-radius: 1.5px;
                             background: root.is-muted ? VxTheme.danger :
                                         root.is-deafened ? VxTheme.text-muted :
                                         root.mic-level > 0.15 ? VxTheme.warning :
@@ -1194,30 +1174,30 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Control bar
+                    // Control bar — refined, icon-focused
                     Rectangle {
-                        height: 60px;
+                        height: 56px;
                         background: VxTheme.bg-surface;
                         Divider { y: 0px; }
 
                         HorizontalLayout {
-                            padding-left: 12px; padding-right: 12px;
-                            spacing: 8px;
+                            padding-left: 10px; padding-right: 10px;
+                            spacing: 6px;
                             alignment: center;
 
-                            // Mute button
+                            // Mute
                             Rectangle {
                                 horizontal-stretch: 1;
-                                height: 42px;
-                                border-radius: 10px;
+                                height: 40px;
+                                border-radius: 8px;
                                 background: root.is-muted ? VxTheme.danger :
                                             mute-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                 border-color: root.is-muted ? VxTheme.danger : VxTheme.border-subtle;
                                 border-width: 1px;
-                                animate background { duration: 80ms; easing: ease-out; }
+                                animate background { duration: 100ms; easing: ease-out; }
                                 mute-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-mute(); } }
                                 VerticalLayout {
-                                    alignment: center; spacing: 1px;
+                                    alignment: center; spacing: 2px;
                                     Text {
                                         text: root.is-muted ? "\u{1F507}" : "\u{1F3A4}";
                                         font-size: 14px;
@@ -1232,19 +1212,19 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Deafen button
+                            // Deafen
                             Rectangle {
                                 horizontal-stretch: 1;
-                                height: 42px;
-                                border-radius: 10px;
+                                height: 40px;
+                                border-radius: 8px;
                                 background: root.is-deafened ? VxTheme.danger :
                                             deafen-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                 border-color: root.is-deafened ? VxTheme.danger : VxTheme.border-subtle;
                                 border-width: 1px;
-                                animate background { duration: 80ms; easing: ease-out; }
+                                animate background { duration: 100ms; easing: ease-out; }
                                 deafen-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-deafen(); } }
                                 VerticalLayout {
-                                    alignment: center; spacing: 1px;
+                                    alignment: center; spacing: 2px;
                                     Text {
                                         text: root.is-deafened ? "\u{1F515}" : "\u{1F50A}";
                                         font-size: 14px;
@@ -1259,25 +1239,25 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Mic mode button
+                            // Mic mode
                             Rectangle {
                                 horizontal-stretch: 1;
-                                height: 42px;
-                                border-radius: 10px;
+                                height: 40px;
+                                border-radius: 8px;
                                 background: mic-mode-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                 border-color: root.is-open-mic ? VxTheme.success : VxTheme.accent;
                                 border-width: 1px;
-                                animate background { duration: 80ms; easing: ease-out; }
+                                animate background { duration: 100ms; easing: ease-out; }
                                 mic-mode-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-mic-mode(); } }
                                 VerticalLayout {
-                                    alignment: center; spacing: 1px;
+                                    alignment: center; spacing: 2px;
                                     Text {
                                         text: root.is-open-mic ? "\u{1F399}" : "\u{270B}";
                                         font-size: 14px;
                                         horizontal-alignment: center;
                                     }
                                     Text {
-                                        text: root.is-open-mic ? "Open Mic" : "PTT";
+                                        text: root.is-open-mic ? "Open" : "PTT";
                                         color: root.is-open-mic ? VxTheme.success : VxTheme.accent;
                                         font-size: 9px; font-weight: 600;
                                         horizontal-alignment: center;
@@ -1285,20 +1265,20 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Settings button
+                            // Settings
                             Rectangle {
-                                width: 42px;
-                                height: 42px;
-                                border-radius: 10px;
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 8px;
                                 background: settings-ctrl.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                 border-color: VxTheme.border-subtle;
                                 border-width: 1px;
-                                animate background { duration: 80ms; easing: ease-out; }
+                                animate background { duration: 100ms; easing: ease-out; }
                                 settings-ctrl := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(2); } }
                                 Text {
                                     text: "\u{2699}";
                                     color: VxTheme.text-secondary;
-                                    font-size: 16px;
+                                    font-size: 15px;
                                     horizontal-alignment: center; vertical-alignment: center;
                                 }
                             }
@@ -1315,37 +1295,22 @@ export component MainWindow inherits Window {
                         vertical-stretch: 1;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 20px;
                             spacing: 12px;
                             alignment: start;
 
                             HorizontalLayout {
                                 alignment: space-between;
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-                                    Text { text: "\u{2699}"; font-size: 18px; vertical-alignment: center; }
-                                    Text {
-                                        text: "Settings";
-                                        color: VxTheme.text-primary;
-                                        font-size: 18px; font-weight: 700;
-                                        vertical-alignment: center;
-                                    }
+                                Text {
+                                    text: "Settings";
+                                    color: VxTheme.text-primary;
+                                    font-size: 18px; font-weight: 700;
+                                    vertical-alignment: center;
                                 }
-                                if root.previous-view == 1 : Rectangle {
-                                    width: 110px; height: 34px; border-radius: 8px;
-                                    background: back-call-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                    border-color: VxTheme.accent; border-width: 1px;
-                                    animate background { duration: 80ms; }
-                                    back-call-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.navigate(root.previous-view); }
-                                    }
-                                    HorizontalLayout {
-                                        alignment: center; spacing: 5px;
-                                        Text { text: "\u{2190}"; color: VxTheme.accent; font-size: 13px; vertical-alignment: center; }
-                                        Text { text: "Back to call"; color: VxTheme.accent; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
+                                if root.previous-view == 1 : VxButton {
+                                    label: "\u{2190} Back to call";
+                                    small: true;
+                                    clicked => { root.navigate(root.previous-view); }
                                 }
                             }
 
@@ -1357,47 +1322,10 @@ export component MainWindow inherits Window {
                                     SectionLabel { text: "APPEARANCE"; }
                                     HorizontalLayout {
                                         spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            horizontal-stretch: 1;
-                                            alignment: start;
-                                            Text {
-                                                text: VxTheme.dark-mode ? "\u{1F319}" : "\u{2600}";
-                                                font-size: 14px;
-                                                vertical-alignment: center;
-                                            }
-                                            FieldLabel { text: "Theme"; vertical-alignment: center; }
-                                        }
-                                        // Toggle pill
-                                        Rectangle {
-                                            width: 58px; height: 28px;
-                                            border-radius: 14px;
-                                            background: VxTheme.dark-mode ? VxTheme.accent : VxTheme.bg-elevated;
-                                            border-color: VxTheme.dark-mode ? VxTheme.accent : VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            animate background { duration: 150ms; easing: ease-out; }
-                                            theme-toggle := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => { root.toggle-dark-mode(); }
-                                            }
-                                            // Slider knob
-                                            Rectangle {
-                                                x: VxTheme.dark-mode ? parent.width - self.width - 3px : 3px;
-                                                y: 3px;
-                                                width: 22px; height: 22px;
-                                                border-radius: 11px;
-                                                background: #f0f0f8;
-                                                animate x { duration: 150ms; easing: ease-out; }
-                                            }
-                                            // Label inside
-                                            Text {
-                                                x: VxTheme.dark-mode ? 8px : parent.width - self.width - 8px;
-                                                text: VxTheme.dark-mode ? "ON" : "OFF";
-                                                color: VxTheme.dark-mode ? #f0f0f8 : VxTheme.text-muted;
-                                                font-size: 8px; font-weight: 700;
-                                                vertical-alignment: center;
-                                                animate x { duration: 150ms; easing: ease-out; }
-                                            }
+                                        FieldLabel { text: VxTheme.dark-mode ? "Dark theme" : "Light theme"; vertical-alignment: center; horizontal-stretch: 1; }
+                                        VxToggle {
+                                            checked: VxTheme.dark-mode;
+                                            toggled => { root.toggle-dark-mode(); }
                                         }
                                     }
                                 }
@@ -1411,12 +1339,7 @@ export component MainWindow inherits Window {
 
                                     HorizontalLayout {
                                         alignment: space-between;
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            alignment: start;
-                                            Text { text: "\u{1F3A7}"; font-size: 11px; vertical-alignment: center; }
-                                            SectionLabel { text: "AUDIO DEVICES"; vertical-alignment: center; }
-                                        }
+                                        SectionLabel { text: "AUDIO DEVICES"; vertical-alignment: center; }
                                         VxButton { label: "Refresh"; small: true; ghost: true; clicked => { root.refresh-devices(); } }
                                     }
 
@@ -1442,22 +1365,76 @@ export component MainWindow inherits Window {
                                 }
                             }
 
+                            // ── Volume Controls ──
+                            VxCard {
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+                                    SectionLabel { text: "VOLUME"; }
+
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        FieldLabel { text: "Input (Mic)"; }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: center;
+                                            VxSlider {
+                                                horizontal-stretch: 1;
+                                                value: root.input-volume / 2.0;
+                                                changed(val) => {
+                                                    root.input-volume = val * 2.0;
+                                                    root.input-volume-changed(root.input-volume);
+                                                }
+                                            }
+                                            Text {
+                                                text: Math.round(root.input-volume * 100) + "%";
+                                                color: VxTheme.text-secondary;
+                                                font-size: 10px; font-weight: 600;
+                                                min-width: 36px;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        FieldLabel { text: "Output (Speaker)"; }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: center;
+                                            VxSlider {
+                                                horizontal-stretch: 1;
+                                                value: root.output-volume;
+                                                changed(val) => {
+                                                    root.output-volume = val;
+                                                    root.output-volume-changed(val);
+                                                }
+                                            }
+                                            Text {
+                                                text: Math.round(root.output-volume * 100) + "%";
+                                                color: VxTheme.text-secondary;
+                                                font-size: 10px; font-weight: 600;
+                                                min-width: 36px;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // ── Voice Mode ──
                             VxCard {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 10px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F3A4}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "VOICE MODE"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "VOICE MODE"; }
 
                                     HorizontalLayout {
                                         spacing: 8px;
                                         Rectangle {
-                                            height: 28px; border-radius: 6px;
+                                            height: 28px; border-radius: 5px;
                                             background: VxTheme.bg-elevated;
                                             border-color: VxTheme.accent; border-width: 1px;
                                             horizontal-stretch: 1;
@@ -1478,14 +1455,9 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 10px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F50A}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "NOISE SUPPRESSION"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "NOISE SUPPRESSION"; }
                                     Text {
-                                        text: "Filters background noise when using open mic";
+                                        text: "Filters background noise in open mic mode";
                                         color: VxTheme.text-muted; font-size: 9px;
                                     }
                                     HorizontalLayout {
@@ -1502,7 +1474,6 @@ export component MainWindow inherits Window {
                                         }
                                         Text { text: "More"; color: VxTheme.text-muted; font-size: 9px; vertical-alignment: center; }
                                     }
-                                    // Level indicator
                                     HorizontalLayout {
                                         alignment: center;
                                         Rectangle {
@@ -1531,53 +1502,31 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 10px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F514}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "KEYBIND FEEDBACK"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "NOTIFICATION SOUNDS"; }
                                     HorizontalLayout {
                                         spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 6px;
-                                            horizontal-stretch: 1;
-                                            alignment: start;
-                                            FieldLabel { text: "Play sound on mute/deafen"; vertical-alignment: center; }
-                                        }
-                                        // Toggle pill (same style as dark mode toggle)
-                                        Rectangle {
-                                            width: 58px; height: 28px;
-                                            border-radius: 14px;
-                                            background: root.feedback-sound ? VxTheme.accent : VxTheme.bg-elevated;
-                                            border-color: root.feedback-sound ? VxTheme.accent : VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            animate background { duration: 150ms; easing: ease-out; }
-                                            feedback-toggle := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => { root.toggle-feedback-sound(); }
-                                            }
-                                            Rectangle {
-                                                x: root.feedback-sound ? parent.width - self.width - 3px : 3px;
-                                                y: 3px;
-                                                width: 22px; height: 22px;
-                                                border-radius: 11px;
-                                                background: #f0f0f8;
-                                                animate x { duration: 150ms; easing: ease-out; }
-                                            }
-                                            Text {
-                                                x: root.feedback-sound ? 8px : parent.width - self.width - 8px;
-                                                text: root.feedback-sound ? "ON" : "OFF";
-                                                color: root.feedback-sound ? #f0f0f8 : VxTheme.text-muted;
-                                                font-size: 8px; font-weight: 700;
-                                                vertical-alignment: center;
-                                                animate x { duration: 150ms; easing: ease-out; }
-                                            }
+                                        FieldLabel { text: "Mute/deafen/join/leave tones"; vertical-alignment: center; horizontal-stretch: 1; }
+                                        VxToggle {
+                                            checked: root.feedback-sound;
+                                            toggled => { root.toggle-feedback-sound(); }
                                         }
                                     }
-                                    Text {
-                                        text: "Plays a distinct tone when you mute, unmute, deafen, or undeafen";
-                                        color: VxTheme.text-muted; font-size: 9px;
+                                }
+                            }
+
+                            // ── Desktop Notifications ──
+                            VxCard {
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+                                    SectionLabel { text: "DESKTOP NOTIFICATIONS"; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        FieldLabel { text: "Show notifications for joins/messages"; vertical-alignment: center; horizontal-stretch: 1; }
+                                        VxToggle {
+                                            checked: root.notifications-enabled;
+                                            toggled => { root.toggle-notifications(); }
+                                        }
                                     }
                                 }
                             }
@@ -1588,12 +1537,7 @@ export component MainWindow inherits Window {
                                     padding: 14px;
                                     spacing: 8px;
 
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{2328}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "KEYBINDS"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "KEYBINDS"; }
                                     Text { text: "Hold modifier + press key for combos"; color: VxTheme.text-muted; font-size: 9px; }
 
                                     // PTT
@@ -1645,7 +1589,7 @@ export component MainWindow inherits Window {
 
                             HorizontalLayout {
                                 alignment: center;
-                                Text { text: "Settings save automatically"; color: VxTheme.text-muted; font-size: 8px; }
+                                Text { text: "Settings save automatically"; color: VxTheme.text-muted; font-size: 9px; }
                             }
                         }
                     }
@@ -1657,9 +1601,8 @@ export component MainWindow inherits Window {
                 if current-view == 4 : VerticalLayout {
                     spacing: 0px;
 
-                    // Space header
                     Rectangle {
-                        height: 50px;
+                        height: 48px;
                         background: VxTheme.bg-surface;
                         Divider { y: parent.height - 1px; }
 
@@ -1672,20 +1615,10 @@ export component MainWindow inherits Window {
                                 spacing: 6px;
                                 alignment: center;
 
-                                Rectangle {
-                                    width: 64px; height: 32px; border-radius: 8px;
-                                    background: back-sp-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                    border-color: VxTheme.border-subtle; border-width: 1px;
-                                    animate background { duration: 80ms; }
-                                    back-sp-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.navigate(0); }
-                                    }
-                                    HorizontalLayout {
-                                        alignment: center; spacing: 4px;
-                                        Text { text: "\u{2190}"; color: VxTheme.text-secondary; font-size: 13px; vertical-alignment: center; }
-                                        Text { text: "Back"; color: VxTheme.text-secondary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
+                                VxButton {
+                                    label: "\u{2190} Back";
+                                    small: true;
+                                    clicked => { root.navigate(0); }
                                 }
 
                                 Text {
@@ -1702,7 +1635,7 @@ export component MainWindow inherits Window {
                                 alignment: center;
 
                                 Rectangle {
-                                    height: 28px; border-radius: 6px;
+                                    height: 26px; border-radius: 5px;
                                     background: invite-copy-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
                                     border-color: VxTheme.border-subtle;
                                     border-width: 1px;
@@ -1713,9 +1646,9 @@ export component MainWindow inherits Window {
                                         clicked => { root.copy-invite-code(); }
                                     }
                                     HorizontalLayout {
-                                        padding-left: 10px;
-                                        padding-right: 10px;
-                                        spacing: 6px;
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 5px;
                                         alignment: center;
                                         Text {
                                             text: root.current-space-invite;
@@ -1735,7 +1668,6 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Space content
                     ScrollView {
                         vertical-stretch: 1;
 
@@ -1748,9 +1680,9 @@ export component MainWindow inherits Window {
                             SectionLabel { text: "TEXT CHANNELS"; }
 
                             for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 0px : 36px;
+                                height: channel.is-voice ? 0px : 34px;
                                 visible: !channel.is-voice;
-                                border-radius: 6px;
+                                border-radius: 5px;
                                 background: txt-ch-touch.has-hover ? VxTheme.row-hover-bg : transparent;
                                 animate background { duration: 80ms; }
 
@@ -1790,9 +1722,9 @@ export component MainWindow inherits Window {
                             SectionLabel { text: "VOICE CHANNELS"; }
 
                             for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 40px : 0px;
+                                height: channel.is-voice ? 38px : 0px;
                                 visible: channel.is-voice;
-                                border-radius: 6px;
+                                border-radius: 5px;
                                 background: channel.peer-count > 0 ? VxTheme.speaking-row-bg :
                                             vc-touch.has-hover ? VxTheme.row-hover-bg : transparent;
                                 animate background { duration: 80ms; }
@@ -1809,10 +1741,9 @@ export component MainWindow inherits Window {
 
                                     VerticalLayout {
                                         alignment: center;
-                                        Text {
-                                            text: "\u{1F50A}";
-                                            color: channel.peer-count > 0 ? VxTheme.accent : VxTheme.text-muted;
-                                            font-size: 12px;
+                                        Rectangle {
+                                            width: 6px; height: 6px; border-radius: 3px;
+                                            background: channel.peer-count > 0 ? VxTheme.accent : VxTheme.text-muted;
                                         }
                                     }
 
@@ -1830,7 +1761,7 @@ export component MainWindow inherits Window {
                                     if channel.peer-count > 0 : VerticalLayout {
                                         alignment: center;
                                         Rectangle {
-                                            width: 20px; height: 16px; border-radius: 8px;
+                                            width: 20px; height: 16px; border-radius: 4px;
                                             background: VxTheme.bg-elevated;
                                             Text {
                                                 text: channel.peer-count + "";
@@ -1853,7 +1784,7 @@ export component MainWindow inherits Window {
                                         spacing: 6px;
                                         FieldLabel { text: "New Channel"; vertical-alignment: center; horizontal-stretch: 1; }
                                         Rectangle {
-                                            width: 60px; height: 24px; border-radius: 4px;
+                                            width: 54px; height: 22px; border-radius: 4px;
                                             background: VxTheme.bg-elevated;
                                             border-color: VxTheme.border-subtle; border-width: 1px;
                                             type-toggle := TouchArea {
@@ -1896,8 +1827,8 @@ export component MainWindow inherits Window {
                             SectionLabel { text: "ONLINE"; }
 
                             for member in root.members : Rectangle {
-                                height: 36px;
-                                border-radius: 6px;
+                                height: 34px;
+                                border-radius: 5px;
 
                                 HorizontalLayout {
                                     padding-left: 8px;
@@ -1907,7 +1838,7 @@ export component MainWindow inherits Window {
                                     VerticalLayout {
                                         alignment: center;
                                         Rectangle {
-                                            width: 24px; height: 24px; border-radius: 12px;
+                                            width: 22px; height: 22px; border-radius: 6px;
                                             background: VxTheme.avatar-color(member.color-index);
                                             Text {
                                                 text: member.initial;
@@ -1940,14 +1871,13 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Spacer
                             Rectangle { height: 8px; }
                         }
                     }
 
-                    // Bottom: Leave / Delete Space
+                    // Bottom: Leave / Delete
                     Rectangle {
-                        height: root.confirm-delete-visible ? 96px : 56px;
+                        height: root.confirm-delete-visible ? 90px : 52px;
                         background: VxTheme.bg-surface;
                         animate height { duration: 120ms; easing: ease-out; }
                         Divider { y: 0px; }
@@ -1956,8 +1886,8 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 padding-left: 14px;
                                 padding-right: 14px;
-                                padding-top: 10px;
-                                padding-bottom: root.confirm-delete-visible ? 4px : 10px;
+                                padding-top: 8px;
+                                padding-bottom: root.confirm-delete-visible ? 4px : 8px;
                                 spacing: 10px;
                                 alignment: center;
                                 VxButton {
@@ -1974,7 +1904,7 @@ export component MainWindow inherits Window {
                             if root.confirm-delete-visible : HorizontalLayout {
                                 padding-left: 14px;
                                 padding-right: 14px;
-                                padding-bottom: 10px;
+                                padding-bottom: 8px;
                                 spacing: 8px;
                                 alignment: center;
                                 Text {
@@ -2007,9 +1937,8 @@ export component MainWindow inherits Window {
                 //  TEXT CHAT VIEW
                 // ═══════════════════════════════
                 if current-view == 5 : VerticalLayout {
-                    // Header
                     Rectangle {
-                        height: 44px;
+                        height: 42px;
                         background: VxTheme.bg-surface;
                         Divider { y: self.height - 1px; }
                         HorizontalLayout {
@@ -2020,20 +1949,10 @@ export component MainWindow inherits Window {
 
                             VerticalLayout {
                                 alignment: center;
-                                Rectangle {
-                                    width: 64px; height: 32px; border-radius: 8px;
-                                    background: back-chat-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-elevated;
-                                    border-color: VxTheme.border-subtle; border-width: 1px;
-                                    animate background { duration: 80ms; }
-                                    back-chat-touch := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.current-view = 4; }
-                                    }
-                                    HorizontalLayout {
-                                        alignment: center; spacing: 4px;
-                                        Text { text: "\u{2190}"; color: VxTheme.text-secondary; font-size: 13px; vertical-alignment: center; }
-                                        Text { text: "Back"; color: VxTheme.text-secondary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
+                                VxButton {
+                                    label: "\u{2190} Back";
+                                    small: true;
+                                    clicked => { root.current-view = 4; }
                                 }
                             }
 
@@ -2049,7 +1968,6 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Messages
                     ScrollView {
                         vertical-stretch: 1;
                         VerticalLayout {
@@ -2058,7 +1976,7 @@ export component MainWindow inherits Window {
                             alignment: end;
 
                             for msg in root.chat-messages : Rectangle {
-                                border-radius: 10px;
+                                border-radius: 8px;
                                 background: msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
 
                                 VerticalLayout {
@@ -2079,6 +1997,12 @@ export component MainWindow inherits Window {
                                             font-size: 9px;
                                             vertical-alignment: center;
                                         }
+                                        if msg.edited : Text {
+                                            text: "(edited)";
+                                            color: VxTheme.text-muted;
+                                            font-size: 8px;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                     Text {
                                         text: msg.content;
@@ -2086,14 +2010,33 @@ export component MainWindow inherits Window {
                                         font-size: 12px;
                                         wrap: word-wrap;
                                     }
+                                    if msg.reactions != "" : HorizontalLayout {
+                                        spacing: 4px;
+                                        Rectangle {
+                                            height: 20px;
+                                            border-radius: 10px;
+                                            background: VxTheme.bg-elevated;
+                                            border-color: VxTheme.border-subtle;
+                                            border-width: 1px;
+                                            HorizontalLayout {
+                                                padding-left: 6px;
+                                                padding-right: 6px;
+                                                Text {
+                                                    text: msg.reactions;
+                                                    color: VxTheme.text-secondary;
+                                                    font-size: 10px;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Input bar
                     Rectangle {
-                        height: 54px;
+                        height: 50px;
                         background: VxTheme.bg-surface;
                         Divider { y: 0px; }
                         HorizontalLayout {
@@ -2130,32 +2073,21 @@ export component MainWindow inherits Window {
                         vertical-stretch: 1;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 20px;
                             spacing: 12px;
                             alignment: start;
 
-                            HorizontalLayout {
-                                spacing: 8px;
-                                alignment: start;
-                                Text { text: "\u{1F4CA}"; font-size: 18px; vertical-alignment: center; }
-                                Text {
-                                    text: "System";
-                                    color: VxTheme.text-primary;
-                                    font-size: 18px; font-weight: 700;
-                                    vertical-alignment: center;
-                                }
+                            Text {
+                                text: "System";
+                                color: VxTheme.text-primary;
+                                font-size: 18px; font-weight: 700;
                             }
 
                             VxCard {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 3px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F4BB}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "RESOURCES"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "RESOURCES"; }
                                     Rectangle { height: 3px; }
                                     MetricRow { metric-label: "CPU"; metric-value: round(root.perf.cpu-percent) + "%";
                                         indicator-color: root.perf.cpu-percent < 50 ? VxTheme.success : root.perf.cpu-percent < 80 ? VxTheme.warning : VxTheme.danger; }
@@ -2169,12 +2101,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 3px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        alignment: start;
-                                        Text { text: "\u{1F6A6}"; font-size: 11px; vertical-alignment: center; }
-                                        SectionLabel { text: "STATUS"; vertical-alignment: center; }
-                                    }
+                                    SectionLabel { text: "STATUS"; }
                                     Rectangle { height: 3px; }
                                     MetricRow { metric-label: "Audio"; metric-value: root.perf.audio-active ? "Active" : "Idle";
                                         indicator-color: root.perf.audio-active ? VxTheme.success : VxTheme.text-muted; }
@@ -2193,22 +2120,21 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     padding: 14px;
                                     spacing: 8px;
-                                    SectionLabel { text: "ABOUT VOXLINK"; }
+                                    SectionLabel { text: "ABOUT"; }
 
-                                    // Brand header inside About
                                     HorizontalLayout {
                                         spacing: 12px;
                                         VerticalLayout {
                                             alignment: center;
                                             Rectangle {
-                                                width: 36px; height: 36px; border-radius: 10px;
+                                                width: 32px; height: 32px; border-radius: 8px;
                                                 background: VxTheme.accent;
                                                 border-color: VxTheme.accent-glow;
                                                 border-width: 2px;
                                                 Text {
-                                                    text: "VX";
+                                                    text: "V";
                                                     color: #f0f0f8;
-                                                    font-size: 12px; font-weight: 800; letter-spacing: 0.3px;
+                                                    font-size: 14px; font-weight: 800;
                                                     horizontal-alignment: center; vertical-alignment: center;
                                                 }
                                             }
@@ -2217,23 +2143,19 @@ export component MainWindow inherits Window {
                                             alignment: center;
                                             spacing: 2px;
                                             horizontal-stretch: 1;
-                                            HorizontalLayout {
-                                                spacing: 0px;
-                                                Text { text: "Vox"; color: VxTheme.accent; font-size: 15px; font-weight: 800; vertical-alignment: center; }
-                                                Text { text: "link"; color: VxTheme.text-primary; font-size: 15px; font-weight: 600; vertical-alignment: center; }
-                                            }
-                                            Text { text: "Voice without limits"; color: VxTheme.text-muted; font-size: 9px; font-weight: 500; }
+                                            Text { text: "Voxlink"; color: VxTheme.text-primary; font-size: 15px; font-weight: 700; }
+                                            Text { text: "Voice without limits"; color: VxTheme.text-muted; font-size: 9px; }
                                         }
                                         VerticalLayout {
                                             alignment: center;
                                             Rectangle {
-                                                height: 22px; border-radius: 11px;
+                                                height: 20px; border-radius: 4px;
                                                 background: VxTheme.accent-subtle;
                                                 border-color: VxTheme.accent-glow;
                                                 border-width: 1px;
                                                 HorizontalLayout {
-                                                    padding-left: 10px;
-                                                    padding-right: 10px;
+                                                    padding-left: 8px;
+                                                    padding-right: 8px;
                                                     Text { text: "v" + root.version-text; color: VxTheme.accent; font-size: 10px; font-weight: 700;
                                                            vertical-alignment: center; }
                                                 }
@@ -2243,49 +2165,45 @@ export component MainWindow inherits Window {
 
                                     Divider {}
 
-                                    // Specs grid
                                     HorizontalLayout {
-                                        spacing: 8px;
-                                        // Engine
+                                        spacing: 6px;
                                         Rectangle {
                                             horizontal-stretch: 1;
-                                            height: 48px;
-                                            border-radius: 8px;
+                                            height: 42px;
+                                            border-radius: 6px;
                                             background: VxTheme.bg-surface;
                                             border-color: VxTheme.border-subtle;
                                             border-width: 1px;
                                             VerticalLayout {
                                                 alignment: center; spacing: 2px;
-                                                Text { text: "\u{2699}"; font-size: 14px; horizontal-alignment: center; }
                                                 Text { text: "Rust + Slint"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
+                                                Text { text: "Engine"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
                                             }
                                         }
-                                        // Audio
                                         Rectangle {
                                             horizontal-stretch: 1;
-                                            height: 48px;
-                                            border-radius: 8px;
+                                            height: 42px;
+                                            border-radius: 6px;
                                             background: VxTheme.bg-surface;
                                             border-color: VxTheme.border-subtle;
                                             border-width: 1px;
                                             VerticalLayout {
                                                 alignment: center; spacing: 2px;
-                                                Text { text: "\u{1F3B5}"; font-size: 14px; horizontal-alignment: center; }
                                                 Text { text: "48kHz / 20ms"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
+                                                Text { text: "Audio"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
                                             }
                                         }
-                                        // Codec
                                         Rectangle {
                                             horizontal-stretch: 1;
-                                            height: 48px;
-                                            border-radius: 8px;
+                                            height: 42px;
+                                            border-radius: 6px;
                                             background: VxTheme.bg-surface;
                                             border-color: VxTheme.border-subtle;
                                             border-width: 1px;
                                             VerticalLayout {
                                                 alignment: center; spacing: 2px;
-                                                Text { text: "\u{1F4E1}"; font-size: 14px; horizontal-alignment: center; }
-                                                Text { text: "Opus"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
+                                                Text { text: "Opus 64kbps"; color: VxTheme.text-primary; font-size: 9px; font-weight: 600; horizontal-alignment: center; }
+                                                Text { text: "Codec"; color: VxTheme.text-muted; font-size: 8px; horizontal-alignment: center; }
                                             }
                                         }
                                     }
@@ -2299,10 +2217,9 @@ export component MainWindow inherits Window {
 
         // ─── Bottom Tab Bar ───
         if current-view != 1 && current-view != 4 && current-view != 5 : Rectangle {
-            height: 54px;
+            height: 50px;
             background: VxTheme.bg-surface;
-            // Top accent line
-            AccentBar { y: 0px; opacity: 0.3; }
+            AccentBar { y: 0px; opacity: 0.25; }
 
             HorizontalLayout {
                 padding-left: 8px;
@@ -2313,24 +2230,24 @@ export component MainWindow inherits Window {
                 Rectangle {
                     horizontal-stretch: 1;
                     background: current-view == 0 ? VxTheme.tab-active-bg : tab-home.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 8px;
+                    border-radius: 6px;
                     animate background { duration: 80ms; }
                     tab-home := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(0); } }
                     VerticalLayout {
                         alignment: center; spacing: 2px;
                         Text { text: "\u{2302}"; color: current-view == 0 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         Text { text: "Home"; color: current-view == 0 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 9px; font-weight: current-view == 0 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: current-view == 0 ? 16px : 0px; height: 2px;
+                                width: current-view == 0 ? 14px : 0px; height: 2px;
                                 border-radius: 1px;
                                 background: VxTheme.accent;
-                                animate width { duration: 150ms; easing: ease-out; }
+                                animate width { duration: 120ms; easing: ease-out; }
                             }
                         }
                     }
@@ -2339,24 +2256,24 @@ export component MainWindow inherits Window {
                 Rectangle {
                     horizontal-stretch: 1;
                     background: current-view == 2 ? VxTheme.tab-active-bg : tab-settings.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 8px;
+                    border-radius: 6px;
                     animate background { duration: 80ms; }
                     tab-settings := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(2); } }
                     VerticalLayout {
                         alignment: center; spacing: 2px;
                         Text { text: "\u{2699}"; color: current-view == 2 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         Text { text: "Settings"; color: current-view == 2 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 9px; font-weight: current-view == 2 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: current-view == 2 ? 16px : 0px; height: 2px;
+                                width: current-view == 2 ? 14px : 0px; height: 2px;
                                 border-radius: 1px;
                                 background: VxTheme.accent;
-                                animate width { duration: 150ms; easing: ease-out; }
+                                animate width { duration: 120ms; easing: ease-out; }
                             }
                         }
                     }
@@ -2365,24 +2282,24 @@ export component MainWindow inherits Window {
                 Rectangle {
                     horizontal-stretch: 1;
                     background: current-view == 3 ? VxTheme.tab-active-bg : tab-perf.has-hover ? VxTheme.row-hover-bg : transparent;
-                    border-radius: 8px;
+                    border-radius: 6px;
                     animate background { duration: 80ms; }
                     tab-perf := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(3); } }
                     VerticalLayout {
                         alignment: center; spacing: 2px;
                         Text { text: "\u{2261}"; color: current-view == 3 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 16px; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         Text { text: "System"; color: current-view == 3 ? VxTheme.accent : VxTheme.text-muted;
                             font-size: 9px; font-weight: current-view == 3 ? 700 : 500; horizontal-alignment: center;
-                            animate color { duration: 150ms; } }
+                            animate color { duration: 120ms; } }
                         HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: current-view == 3 ? 16px : 0px; height: 2px;
+                                width: current-view == 3 ? 14px : 0px; height: 2px;
                                 border-radius: 1px;
                                 background: VxTheme.accent;
-                                animate width { duration: 150ms; easing: ease-out; }
+                                animate width { duration: 120ms; easing: ease-out; }
                             }
                         }
                     }

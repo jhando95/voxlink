@@ -1,5 +1,5 @@
 use crate::{send_error, send_to, validate_name};
-use crate::{ChannelMeta, Peer, Room, State};
+use crate::{ChannelMeta, Db, Peer, Room, State};
 use shared_types::{ChannelInfo, ChannelType, ParticipantInfo, SignalMessage};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::time::Instant;
 use super::room::collect_room_others;
 use super::space::broadcast_to_space;
 
-pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: String, channel_type: ChannelType) {
+pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: String, channel_type: ChannelType, db: &Db) {
     if let Err(e) = validate_name(&channel_name) {
         send_error(state, peer_id, &e).await;
         return;
@@ -62,6 +62,34 @@ pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: S
     };
 
     log::info!("Channel {} created in space {space_id} by {peer_id}", channel_info.id);
+
+    // Persist channel to DB
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let cid = channel_info.id.clone();
+        let sid = space_id.clone();
+        let cname = channel_info.name.clone();
+        // Retrieve room_key from state
+        let rk = {
+            let s = state.read().await;
+            s.spaces.get(&space_id)
+                .and_then(|sp| sp.channels.iter().find(|c| c.id == cid))
+                .map(|c| c.room_key.clone())
+                .unwrap_or_default()
+        };
+        let ct = if channel_type == ChannelType::Text { "text" } else { "voice" };
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.save_channel(&crate::persistence::ChannelRow {
+                id: cid,
+                space_id: sid,
+                name: cname,
+                room_key: rk,
+                channel_type: ct.into(),
+            }) {
+                log::error!("Failed to persist channel: {e}");
+            }
+        });
+    }
 
     let notify = SignalMessage::ChannelCreated { channel: channel_info };
     // Broadcast to all space members including the creator

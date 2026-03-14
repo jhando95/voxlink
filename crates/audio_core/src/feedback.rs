@@ -34,7 +34,7 @@ pub(crate) enum FeedbackAction {
 fn generate_tone(freq: f32) -> Vec<f32> {
     let mut buf = vec![0.0f32; TONE_SAMPLES];
     let tau = std::f32::consts::TAU;
-    for i in 0..TONE_SAMPLES {
+    for (i, sample) in buf.iter_mut().enumerate() {
         let t = i as f32 / SAMPLE_RATE as f32;
         let envelope = if i < FADE_SAMPLES {
             i as f32 / FADE_SAMPLES as f32
@@ -43,7 +43,7 @@ fn generate_tone(freq: f32) -> Vec<f32> {
         } else {
             1.0
         };
-        buf[i] = (tau * freq * t).sin() * TONE_VOLUME * envelope;
+        *sample = (tau * freq * t).sin() * TONE_VOLUME * envelope;
     }
     buf
 }

@@ -152,6 +152,11 @@ pub fn start(
                     check_audio_recovery(&audio, &rt_handle, &w);
                 }
             }
+
+            // --- Ping every ~3s ---
+            if tick.is_multiple_of(120) {
+                update_ping(&network, &rt_handle, &w);
+            }
         },
     );
 
@@ -519,6 +524,27 @@ fn auto_hide_copied(
         }
     } else {
         *copied_at_tick.borrow_mut() = None;
+    }
+}
+
+// ─── Ping ───
+
+fn update_ping(
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+    w: &MainWindow,
+) {
+    if let Ok(net) = network.try_lock() {
+        // Read last ping result
+        let ms = net.ping_ms();
+        if ms >= 0 {
+            w.set_ping_ms(ms);
+        }
+        // Send next ping
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            network.lock().await.send_ping().await;
+        });
     }
 }
 

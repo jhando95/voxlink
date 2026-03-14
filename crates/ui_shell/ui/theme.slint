@@ -35,6 +35,9 @@ export struct ChatMessage {
     timestamp: string,
     is-self: bool,
     color-index: int,
+    message-id: string,
+    edited: bool,
+    reactions: string,
 }
 
 export struct ChannelData {
@@ -54,94 +57,95 @@ export struct MemberData {
 }
 
 // ─── Design Tokens — Voxlink ───
+// Refined engineering aesthetic: precision, depth, warmth
 
 export global VxTheme {
     in-out property <bool> dark-mode: true;
 
-    // Backgrounds — deep charcoal with subtle violet warmth
-    out property <color> bg-deep: dark-mode ? #0a0a10 : #f0f1f5;
-    out property <color> bg-surface: dark-mode ? #111118 : #f7f8fa;
-    out property <color> bg-card: dark-mode ? #18181f : #ffffff;
-    out property <color> bg-elevated: dark-mode ? #202028 : #e8e9ee;
-    out property <color> bg-input: dark-mode ? #0e0e14 : #f2f3f7;
+    // Backgrounds — deep layered surfaces with blue-steel undertone
+    out property <color> bg-deep:     dark-mode ? #07070c : #eef0f4;
+    out property <color> bg-surface:  dark-mode ? #0e0e15 : #f5f6f9;
+    out property <color> bg-card:     dark-mode ? #15151e : #ffffff;
+    out property <color> bg-elevated: dark-mode ? #1c1c28 : #e6e8ee;
+    out property <color> bg-input:    dark-mode ? #0b0b12 : #f0f1f6;
 
-    // Sidebar
-    out property <color> sidebar-bg: dark-mode ? #0c0c12 : #eef0f4;
-    out property <color> sidebar-item-hover: dark-mode ? #1a1a24 : #e2e4ec;
-    out property <color> sidebar-item-active: dark-mode ? #222230 : #d8dce8;
-    out property <color> sidebar-divider: dark-mode ? #1a1a22 : #d4d6de;
-    out property <color> sidebar-user-bg: dark-mode ? #0e0e16 : #e8eaf0;
+    // Sidebar — slightly offset from main bg for depth
+    out property <color> sidebar-bg:          dark-mode ? #0a0a11 : #eaecf1;
+    out property <color> sidebar-item-hover:  dark-mode ? #161620 : #dfe2ea;
+    out property <color> sidebar-item-active: dark-mode ? #1e1e2c : #d4d8e4;
+    out property <color> sidebar-divider:     dark-mode ? #181820 : #d0d4dc;
+    out property <color> sidebar-user-bg:     dark-mode ? #0c0c14 : #e4e6ee;
 
-    // Borders — subtle warm gray in dark, neutral in light
-    out property <color> border-subtle: dark-mode ? #262630 : #d8dae2;
-    out property <color> border-focus: #7c5bf5;
+    // Borders — precise, subtle
+    out property <color> border-subtle: dark-mode ? #22222e : #d2d4de;
+    out property <color> border-focus:  #6366f1;
 
-    // Text — high contrast, warm tones
-    out property <color> text-primary: dark-mode ? #ededf0 : #111118;
-    out property <color> text-secondary: dark-mode ? #8e8ea0 : #50505e;
-    out property <color> text-muted: dark-mode ? #505060 : #9898a8;
+    // Text — clean hierarchy
+    out property <color> text-primary:   dark-mode ? #e8e8ee : #0e0e15;
+    out property <color> text-secondary: dark-mode ? #8888a0 : #4e4e60;
+    out property <color> text-muted:     dark-mode ? #484858 : #9898ac;
 
-    // Accent — violet-indigo, distinctive and modern
-    out property <color> accent: dark-mode ? #7c5bf5 : #6841ea;
-    out property <color> accent-hover: dark-mode ? #9478ff : #7c5bf5;
-    out property <color> accent-pressed: dark-mode ? #6841ea : #5430d0;
-    out property <color> accent-glow: dark-mode ? #7c5bf540 : #6841ea20;
-    out property <color> accent-subtle: dark-mode ? #7c5bf518 : #6841ea10;
+    // Accent — indigo, saturated, intentional
+    out property <color> accent:         dark-mode ? #6366f1 : #4f46e5;
+    out property <color> accent-hover:   dark-mode ? #818cf8 : #6366f1;
+    out property <color> accent-pressed: dark-mode ? #4f46e5 : #4338ca;
+    out property <color> accent-glow:    dark-mode ? #6366f138 : #4f46e518;
+    out property <color> accent-subtle:  dark-mode ? #6366f114 : #4f46e50c;
 
-    // States
-    out property <color> success: #34d399;
-    out property <color> success-dim: #34d39928;
-    out property <color> danger: #f06060;
-    out property <color> danger-hover: #f88080;
-    out property <color> danger-pressed: #c03030;
-    out property <color> warning: #f0b040;
+    // States — refined palette
+    out property <color> success:       #10b981;
+    out property <color> success-dim:   #10b98124;
+    out property <color> danger:        #ef4444;
+    out property <color> danger-hover:  #f87171;
+    out property <color> danger-pressed:#dc2626;
+    out property <color> warning:       #f59e0b;
 
     // Shadows / Depth
-    out property <color> card-shadow: dark-mode ? #00000060 : #0000000c;
-    out property <color> elevation-shadow: dark-mode ? #00000080 : #00000014;
+    out property <color> card-shadow:      dark-mode ? #00000050 : #0000000a;
+    out property <color> elevation-shadow: dark-mode ? #00000070 : #00000010;
 
     // Interactive states
-    out property <color> card-hover-bg: dark-mode ? #1e1e28 : #f4f5f8;
-    out property <color> card-hover-border: dark-mode ? #303040 : #c8cad4;
-    out property <color> btn-hover-bg: dark-mode ? #282832 : #dfe1e8;
-    out property <color> row-hover-bg: dark-mode ? #141420 : #f0f1f5;
-    out property <color> speaking-row-bg: dark-mode ? #181828 : #ece8ff;
+    out property <color> card-hover-bg:     dark-mode ? #1a1a26 : #f2f3f7;
+    out property <color> card-hover-border: dark-mode ? #2a2a3a : #c4c8d4;
+    out property <color> btn-hover-bg:      dark-mode ? #242430 : #dde0e8;
+    out property <color> row-hover-bg:      dark-mode ? #12121c : #eff0f5;
+    out property <color> speaking-row-bg:   dark-mode ? #14142a : #eae8ff;
 
     // Status badge backgrounds
-    out property <color> mute-badge-bg: dark-mode ? #301818 : #fde8e8;
-    out property <color> deafen-badge-bg: dark-mode ? #181830 : #e8e8fd;
-    out property <color> connection-lost-bg: dark-mode ? #301818 : #fde8e8;
+    out property <color> mute-badge-bg:       dark-mode ? #2a1414 : #fde8e8;
+    out property <color> deafen-badge-bg:     dark-mode ? #14142a : #e8e8fd;
+    out property <color> connection-lost-bg:  dark-mode ? #2a1414 : #fde8e8;
 
-    // Header accent — violet to blue gradient
-    out property <color> header-accent-left: dark-mode ? #7c5bf5 : #6841ea;
-    out property <color> header-accent-mid: dark-mode ? #a855f7 : #9333ea;
-    out property <color> header-accent-right: dark-mode ? #38bdf8 : #0ea5e9;
+    // Header accent — indigo to violet to cyan
+    out property <color> header-accent-left:  dark-mode ? #6366f1 : #4f46e5;
+    out property <color> header-accent-mid:   dark-mode ? #8b5cf6 : #7c3aed;
+    out property <color> header-accent-right: dark-mode ? #06b6d4 : #0891b2;
 
     // Speaking glow
-    out property <color> speaking-glow: dark-mode ? #7c5bf530 : #6841ea20;
-    out property <color> speaking-border: dark-mode ? #7c5bf580 : #6841ea60;
+    out property <color> speaking-glow:   dark-mode ? #6366f128 : #4f46e518;
+    out property <color> speaking-border: dark-mode ? #6366f170 : #4f46e550;
 
     // Mic level glow
-    out property <color> mic-glow-green: dark-mode ? #34d39940 : #34d39930;
-    out property <color> mic-glow-yellow: dark-mode ? #f0b04040 : #f0b04030;
-    out property <color> mic-glow-red: dark-mode ? #f0606040 : #f0606030;
+    out property <color> mic-glow-green:  dark-mode ? #10b98138 : #10b98128;
+    out property <color> mic-glow-yellow: dark-mode ? #f59e0b38 : #f59e0b28;
+    out property <color> mic-glow-red:    dark-mode ? #ef444438 : #ef444428;
 
     // Message bubbles
-    out property <color> msg-self-bg: dark-mode ? #1c1830 : #ece8ff;
-    out property <color> msg-other-bg: dark-mode ? #141420 : #f2f3f7;
+    out property <color> msg-self-bg:  dark-mode ? #18162e : #eae8ff;
+    out property <color> msg-other-bg: dark-mode ? #12121c : #f0f1f6;
 
     // Tab bar
-    out property <color> tab-active-bg: dark-mode ? #222230 : #e0e4f0;
+    out property <color> tab-active-bg: dark-mode ? #1e1e2c : #dce0f0;
 
-    // Avatar color palette — vibrant and modern
+    // Avatar color palette — saturated, modern, distinct
     public pure function avatar-color(idx: int) -> color {
-        if idx == 0 { return #7c5bf5; }       // violet (brand)
-        if idx == 1 { return #f06292; }       // rose
-        if idx == 2 { return #34d399; }       // emerald
-        if idx == 3 { return #fb923c; }       // amber
-        if idx == 4 { return #a855f7; }       // purple
-        if idx == 5 { return #38bdf8; }       // sky
-        if idx == 6 { return #facc15; }       // gold
-        return #f06060;                        // coral
+        if idx == 0 { return #6366f1; }       // indigo (brand)
+        if idx == 1 { return #ec4899; }       // pink
+        if idx == 2 { return #10b981; }       // emerald
+        if idx == 3 { return #f97316; }       // orange
+        if idx == 4 { return #8b5cf6; }       // violet
+        if idx == 5 { return #06b6d4; }       // cyan
+        if idx == 6 { return #eab308; }       // yellow
+        return #ef4444;                        // red
     }
 }

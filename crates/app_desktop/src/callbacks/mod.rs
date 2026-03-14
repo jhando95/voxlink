@@ -69,6 +69,7 @@ pub fn setup(
     ui::setup_clear_keybind(window, ptt_key, mute_key, deafen_key);
     ui::setup_toggle_dark_mode(window);
     ui::setup_toggle_feedback_sound(window);
+    ui::setup_toggle_notifications(window);
     ui::setup_noise_suppression(window, audio, rt_handle);
 
     // Chat

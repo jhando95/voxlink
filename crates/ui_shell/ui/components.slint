@@ -12,9 +12,9 @@ export component VxButton inherits Rectangle {
     in property <bool> ghost: false;
     callback clicked();
 
-    height: root.small ? 30px : 38px;
-    min-width: root.small ? 48px : 68px;
-    border-radius: root.small ? 7px : 9px;
+    height: root.small ? 28px : 36px;
+    min-width: root.small ? 44px : 64px;
+    border-radius: root.small ? 5px : 7px;
     background: root.ghost ? transparent :
                 !root.enabled ? VxTheme.bg-elevated :
                 touch.pressed ? (root.accent ? VxTheme.accent-pressed : (root.danger ? VxTheme.danger-pressed : VxTheme.bg-card)) :
@@ -26,7 +26,7 @@ export component VxButton inherits Rectangle {
                   root.danger ? VxTheme.danger : VxTheme.border-subtle;
     border-width: root.ghost ? 0px : 1px;
 
-    animate background { duration: 80ms; easing: ease-out; }
+    animate background { duration: 100ms; easing: ease-out; }
 
     touch := TouchArea {
         mouse-cursor: root.enabled ? pointer : default;
@@ -37,15 +37,16 @@ export component VxButton inherits Rectangle {
 
     HorizontalLayout {
         alignment: center;
-        padding-left: root.small ? 7px : 12px;
-        padding-right: root.small ? 7px : 12px;
+        padding-left: root.small ? 8px : 14px;
+        padding-right: root.small ? 8px : 14px;
         Text {
             text: root.label;
             color: root.ghost ? VxTheme.text-muted :
                    !root.enabled ? VxTheme.text-muted :
                    root.accent || root.danger ? #f0f0f8 : VxTheme.text-secondary;
-            font-size: root.small ? 11px : 13px;
+            font-size: root.small ? 11px : 12px;
             font-weight: root.accent || root.danger ? 600 : 500;
+            letter-spacing: root.accent || root.danger ? 0.2px : 0px;
             vertical-alignment: center;
             horizontal-alignment: center;
         }
@@ -56,7 +57,7 @@ export component VxButton inherits Rectangle {
 
 export component VxCard inherits Rectangle {
     background: VxTheme.bg-card;
-    border-radius: 12px;
+    border-radius: 8px;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
 }
@@ -68,14 +69,14 @@ export component VxInput inherits Rectangle {
     in property <string> placeholder: "";
     callback accepted();
 
-    height: 38px;
+    height: 36px;
     background: VxTheme.bg-input;
-    border-radius: 10px;
+    border-radius: 7px;
     border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
-    border-width: inner.has-focus ? 1.5px : 1px;
+    border-width: inner.has-focus ? 2px : 1px;
 
-    animate border-color { duration: 120ms; easing: ease-out; }
-    animate border-width { duration: 120ms; easing: ease-out; }
+    animate border-color { duration: 100ms; easing: ease-out; }
+    animate border-width { duration: 100ms; easing: ease-out; }
 
     inner := LineEdit {
         placeholder-text: root.placeholder;
@@ -89,7 +90,7 @@ export component SectionLabel inherits Text {
     color: VxTheme.text-muted;
     font-size: 9px;
     font-weight: 700;
-    letter-spacing: 1.2px;
+    letter-spacing: 1.4px;
 }
 
 // ─── Field Label (above inputs) ───
@@ -104,15 +105,15 @@ export component FieldLabel inherits Text {
 
 export component KeyPill inherits Rectangle {
     in property <string> key-text: "";
-    min-width: 24px;
+    min-width: 26px;
     height: 22px;
     background: VxTheme.bg-elevated;
-    border-radius: 5px;
+    border-radius: 4px;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
     HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
+        padding-left: 7px;
+        padding-right: 7px;
         Text {
             text: root.key-text;
             color: VxTheme.text-muted;
@@ -124,40 +125,38 @@ export component KeyPill inherits Rectangle {
     }
 }
 
-// ─── Status Dot ───
+// ─── Status Dot (LED-style) ───
 
 export component StatusDot inherits Rectangle {
     in property <bool> active: false;
-    width: 7px;
-    height: 7px;
-    border-radius: 3.5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
     background: root.active ? VxTheme.success : VxTheme.text-muted;
     border-color: root.active ? VxTheme.success-dim : transparent;
-    border-width: root.active ? 2px : 0px;
+    border-width: root.active ? 3px : 0px;
     animate background { duration: 200ms; }
     animate border-color { duration: 200ms; }
+    animate border-width { duration: 200ms; }
 }
 
-// ─── Accent Bar (header gradient simulation) ───
+// ─── Accent Bar (header underline) ───
 
 export component AccentBar inherits Rectangle {
     height: 2px;
 
-    // Left segment
     Rectangle {
         x: 0px;
         width: parent.width * 0.33;
         height: parent.height;
         background: VxTheme.header-accent-left;
     }
-    // Center segment
     Rectangle {
         x: parent.width * 0.33;
         width: parent.width * 0.34;
         height: parent.height;
         background: VxTheme.header-accent-mid;
     }
-    // Right segment
     Rectangle {
         x: parent.width * 0.67;
         width: parent.width * 0.33;
@@ -173,9 +172,9 @@ export component MetricRow inherits Rectangle {
     in property <string> metric-value: "";
     in property <color> indicator-color: VxTheme.success;
 
-    height: 36px;
+    height: 34px;
     background: VxTheme.bg-surface;
-    border-radius: 8px;
+    border-radius: 6px;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
 
@@ -188,9 +187,9 @@ export component MetricRow inherits Rectangle {
             spacing: 8px;
             alignment: center;
             Rectangle {
-                width: 5px;
-                height: 5px;
-                border-radius: 2.5px;
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
                 background: root.indicator-color;
             }
             Text {
@@ -216,9 +215,10 @@ export component VxSlider inherits Rectangle {
     in-out property <float> value: 1.0;
     callback changed(float);
 
-    height: 18px;
+    height: 20px;
     background: transparent;
 
+    // Track
     Rectangle {
         x: 0px;
         y: (parent.height - 4px) / 2;
@@ -227,22 +227,24 @@ export component VxSlider inherits Rectangle {
         border-radius: 2px;
         background: VxTheme.border-subtle;
 
+        // Fill
         Rectangle {
             width: parent.width * root.value;
             height: parent.height;
             border-radius: 2px;
             background: VxTheme.accent;
-            animate width { duration: 60ms; easing: ease-out; }
+            animate width { duration: 50ms; easing: ease-out; }
         }
     }
 
+    // Thumb
     Rectangle {
-        x: (parent.width - 12px) * root.value;
-        y: (parent.height - 12px) / 2;
-        width: 12px;
-        height: 12px;
-        border-radius: 6px;
-        background: touch.has-hover || touch.pressed ? VxTheme.text-primary : VxTheme.text-secondary;
+        x: (parent.width - 14px) * root.value;
+        y: (parent.height - 14px) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: touch.pressed ? VxTheme.accent : touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary;
         border-color: VxTheme.accent;
         border-width: touch.pressed ? 2px : 0px;
 
@@ -270,4 +272,35 @@ export component VxSlider inherits Rectangle {
 export component Divider inherits Rectangle {
     height: 1px;
     background: VxTheme.border-subtle;
+}
+
+// ─── Toggle Switch ───
+
+export component VxToggle inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled();
+
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    background: root.checked ? VxTheme.accent : VxTheme.bg-elevated;
+    border-color: root.checked ? VxTheme.accent : VxTheme.border-subtle;
+    border-width: 1px;
+    animate background { duration: 120ms; easing: ease-out; }
+
+    toggle-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+
+    // Knob
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 2px : 2px;
+        y: 2px;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        background: #f0f0f6;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
 }

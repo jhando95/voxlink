@@ -34,23 +34,113 @@ pub fn handle_text_message(
     // Only append if we're viewing this channel
     let current_channel = w.get_chat_channel_id().to_string();
     if current_channel != channel_id {
+        // Send notification for messages in other channels
+        if w.get_notifications_enabled() {
+            let sender = message.sender_name.clone();
+            let content = if message.content.len() > 50 {
+                format!("{}...", &message.content[..50])
+            } else {
+                message.content.clone()
+            };
+            crate::helpers::send_notification(&sender, &content);
+        }
         return;
     }
 
-    // Append to model
-    let color_index = message.sender_name.bytes()
-        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
     let my_name = w.get_user_name().to_string();
-    let chat_msg = ui_shell::ChatMessage {
-        sender_name: message.sender_name.clone().into(),
-        content: message.content.clone().into(),
-        timestamp: ui_shell::format_timestamp(message.timestamp).into(),
-        is_self: message.sender_name == my_name,
-        color_index: color_index as i32,
-    };
+    let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
 
     let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
     if let Some(model) = messages.as_any().downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>() {
         model.push(chat_msg);
+    }
+}
+
+pub fn handle_text_message_edited(
+    w: &MainWindow,
+    channel_id: &str,
+    message_id: &str,
+    new_content: &str,
+) {
+    let current_channel = w.get_chat_channel_id().to_string();
+    if current_channel != channel_id {
+        return;
+    }
+
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages.as_any().downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>() {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if msg.message_id.as_str() == message_id {
+                    let mut updated = msg;
+                    updated.content = new_content.into();
+                    updated.edited = true;
+                    model.set_row_data(i, updated);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+pub fn handle_text_message_deleted(
+    w: &MainWindow,
+    channel_id: &str,
+    message_id: &str,
+) {
+    let current_channel = w.get_chat_channel_id().to_string();
+    if current_channel != channel_id {
+        return;
+    }
+
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages.as_any().downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>() {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if msg.message_id.as_str() == message_id {
+                    model.remove(i);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+pub fn handle_message_reaction(
+    w: &MainWindow,
+    channel_id: &str,
+    message_id: &str,
+    emoji: &str,
+    user_name: &str,
+) {
+    let current_channel = w.get_chat_channel_id().to_string();
+    if current_channel != channel_id {
+        return;
+    }
+
+    // For simplicity, just append the reaction indicator to the existing reactions string.
+    // A full implementation would track individual reaction state, but this is sufficient
+    // for the display since the server sends the full reaction state on TextChannelSelected.
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages.as_any().downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>() {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if msg.message_id.as_str() == message_id {
+                    let mut updated = msg;
+                    // Simple toggle: if user's reaction emoji already in string, it was toggled
+                    let current = updated.reactions.to_string();
+                    if current.contains(emoji) {
+                        // Re-render will happen on next channel select; for now just mark it
+                        updated.reactions = format!("{current} (+{user_name})").into();
+                    } else if current.is_empty() {
+                        updated.reactions = format!("{emoji} 1").into();
+                    } else {
+                        updated.reactions = format!("{current}  {emoji} 1").into();
+                    }
+                    model.set_row_data(i, updated);
+                    break;
+                }
+            }
+        }
     }
 }

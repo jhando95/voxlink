@@ -41,7 +41,11 @@ pub fn process_signals(
                 room::handle_room_entered(w, state, room_code, participants, ctx);
             }
             SignalMessage::PeerJoined { peer } => {
-                room::handle_peer_joined(w, state, peer);
+                room::handle_peer_joined(w, state, peer, &ctx.audio);
+                // Desktop notification for peer join
+                if w.get_notifications_enabled() {
+                    crate::helpers::send_notification("Voxlink", &format!("{} joined", peer.name));
+                }
             }
             SignalMessage::PeerLeft { peer_id } => {
                 room::handle_peer_left(w, state, peer_id, &ctx.audio);
@@ -88,6 +92,35 @@ pub fn process_signals(
             }
             SignalMessage::TextMessage { channel_id, message } => {
                 chat::handle_text_message(w, state, channel_id, message);
+            }
+            // Auth (Milestone 4)
+            SignalMessage::Authenticated { token, user_id } => {
+                log::info!("Authenticated as {user_id}");
+                if !token.is_empty() {
+                    crate::helpers::save_auth_token_async(token.clone());
+                }
+            }
+            // Chat improvements (Milestone 5)
+            SignalMessage::TextMessageEdited { channel_id, message_id, new_content } => {
+                chat::handle_text_message_edited(w, channel_id, message_id, new_content);
+            }
+            SignalMessage::TextMessageDeleted { channel_id, message_id } => {
+                chat::handle_text_message_deleted(w, channel_id, message_id);
+            }
+            SignalMessage::MessageReaction { channel_id, message_id, emoji, user_name } => {
+                chat::handle_message_reaction(w, channel_id, message_id, emoji, user_name);
+            }
+            // Moderation (Milestone 6)
+            SignalMessage::Kicked { reason } => {
+                log::warn!("Kicked: {reason}");
+                w.set_status_text(reason.clone().into());
+                w.set_current_view(0); // Go to home
+                if w.get_notifications_enabled() {
+                    crate::helpers::send_notification("Voxlink", reason);
+                }
+            }
+            SignalMessage::MemberMuted { member_id, muted } => {
+                room::handle_peer_mute_changed(w, state, member_id, *muted);
             }
             _ => {}
         }

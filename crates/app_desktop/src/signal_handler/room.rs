@@ -75,6 +75,7 @@ pub fn handle_peer_joined(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
     peer: &shared_types::ParticipantInfo,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
 ) {
     log::info!("Peer joined: {} ({})", peer.name, peer.id);
     let mut s = state.borrow_mut();
@@ -90,6 +91,13 @@ pub fn handle_peer_joined(
     let count = s.room.participants.len();
     let code = &s.room.room_code;
     w.set_window_title(format!("Voxlink — {code} ({count})").into());
+
+    // Play join notification sound
+    if w.get_feedback_sound() {
+        if let Ok(aud) = audio.try_lock() {
+            aud.play_notification(true);
+        }
+    }
 }
 
 pub fn handle_peer_left(
@@ -106,6 +114,10 @@ pub fn handle_peer_left(
     let code = &s.room.room_code;
     w.set_window_title(format!("Voxlink — {code} ({count})").into());
     if let Ok(aud) = audio.try_lock() {
+        // Play leave notification sound
+        if w.get_feedback_sound() {
+            aud.play_notification(false);
+        }
         aud.remove_peer(peer_id);
     }
 }
