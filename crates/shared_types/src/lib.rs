@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +93,8 @@ pub struct SpaceState {
     pub channels: Vec<ChannelInfo>,
     pub members: Vec<MemberInfo>,
     pub active_channel_id: Option<String>,
+    pub selected_text_channel_id: Option<String>,
+    pub unread_text_channels: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -126,8 +130,12 @@ pub enum SignalMessage {
         password: Option<String>,
     },
     LeaveRoom,
-    MuteChanged { is_muted: bool },
-    DeafenChanged { is_deafened: bool },
+    MuteChanged {
+        is_muted: bool,
+    },
+    DeafenChanged {
+        is_deafened: bool,
+    },
 
     // Server -> Client
     RoomCreated {
@@ -156,47 +164,133 @@ pub enum SignalMessage {
     },
 
     // Client -> Server (Space)
-    CreateSpace { name: String, user_name: String },
-    JoinSpace { invite_code: String, user_name: String },
+    CreateSpace {
+        name: String,
+        user_name: String,
+    },
+    JoinSpace {
+        invite_code: String,
+        user_name: String,
+    },
     LeaveSpace,
     DeleteSpace,
-    CreateChannel { channel_name: String, #[serde(default)] channel_type: ChannelType },
-    JoinChannel { channel_id: String },
+    CreateChannel {
+        channel_name: String,
+        #[serde(default)]
+        channel_type: ChannelType,
+    },
+    JoinChannel {
+        channel_id: String,
+    },
     LeaveChannel,
-    SelectTextChannel { channel_id: String },
-    SendTextMessage { channel_id: String, content: String },
+    SelectTextChannel {
+        channel_id: String,
+    },
+    SendTextMessage {
+        channel_id: String,
+        content: String,
+    },
 
     // Server -> Client (Space)
-    SpaceCreated { space: SpaceInfo, channels: Vec<ChannelInfo> },
-    SpaceJoined { space: SpaceInfo, channels: Vec<ChannelInfo>, members: Vec<MemberInfo> },
+    SpaceCreated {
+        space: SpaceInfo,
+        channels: Vec<ChannelInfo>,
+    },
+    SpaceJoined {
+        space: SpaceInfo,
+        channels: Vec<ChannelInfo>,
+        members: Vec<MemberInfo>,
+    },
     SpaceDeleted,
-    ChannelCreated { channel: ChannelInfo },
-    ChannelJoined { channel_id: String, channel_name: String, participants: Vec<ParticipantInfo> },
+    ChannelCreated {
+        channel: ChannelInfo,
+    },
+    ChannelJoined {
+        channel_id: String,
+        channel_name: String,
+        participants: Vec<ParticipantInfo>,
+    },
     ChannelLeft,
-    TextChannelSelected { channel_id: String, channel_name: String, history: Vec<TextMessageData> },
-    TextMessage { channel_id: String, message: TextMessageData },
-    MemberOnline { member: MemberInfo },
-    MemberOffline { member_id: String },
-    MemberChannelChanged { member_id: String, channel_id: Option<String>, channel_name: Option<String> },
+    TextChannelSelected {
+        channel_id: String,
+        channel_name: String,
+        history: Vec<TextMessageData>,
+    },
+    TextMessage {
+        channel_id: String,
+        message: TextMessageData,
+    },
+    MemberOnline {
+        member: MemberInfo,
+    },
+    MemberOffline {
+        member_id: String,
+    },
+    MemberChannelChanged {
+        member_id: String,
+        channel_id: Option<String>,
+        channel_name: Option<String>,
+    },
 
     // Auth (Milestone 4)
-    Authenticate { token: Option<String>, user_name: String },
-    Authenticated { token: String, user_id: String },
+    Authenticate {
+        token: Option<String>,
+        user_name: String,
+    },
+    Authenticated {
+        token: String,
+        user_id: String,
+    },
 
     // Chat improvements (Milestone 5)
-    EditTextMessage { channel_id: String, message_id: String, new_content: String },
-    DeleteTextMessage { channel_id: String, message_id: String },
-    ReactToMessage { channel_id: String, message_id: String, emoji: String },
-    TextMessageEdited { channel_id: String, message_id: String, new_content: String },
-    TextMessageDeleted { channel_id: String, message_id: String },
-    MessageReaction { channel_id: String, message_id: String, emoji: String, user_name: String },
+    EditTextMessage {
+        channel_id: String,
+        message_id: String,
+        new_content: String,
+    },
+    DeleteTextMessage {
+        channel_id: String,
+        message_id: String,
+    },
+    ReactToMessage {
+        channel_id: String,
+        message_id: String,
+        emoji: String,
+    },
+    TextMessageEdited {
+        channel_id: String,
+        message_id: String,
+        new_content: String,
+    },
+    TextMessageDeleted {
+        channel_id: String,
+        message_id: String,
+    },
+    MessageReaction {
+        channel_id: String,
+        message_id: String,
+        emoji: String,
+        user_name: String,
+    },
 
     // Moderation (Milestone 6)
-    KickMember { member_id: String },
-    MuteMember { member_id: String, muted: bool },
-    BanMember { member_id: String },
-    Kicked { reason: String },
-    MemberMuted { member_id: String, muted: bool },
+    KickMember {
+        member_id: String,
+    },
+    MuteMember {
+        member_id: String,
+        muted: bool,
+    },
+    BanMember {
+        member_id: String,
+    },
+    Kicked {
+        reason: String,
+    },
+    MemberMuted {
+        member_id: String,
+        muted: bool,
+    },
 }
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
@@ -248,7 +342,10 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::CreateRoom { user_name, password } => {
+            SignalMessage::CreateRoom {
+                user_name,
+                password,
+            } => {
                 assert_eq!(user_name, "Alice");
                 assert_eq!(password.as_deref(), Some("secret"));
             }
@@ -266,7 +363,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::JoinRoom { room_code, user_name, password } => {
+            SignalMessage::JoinRoom {
+                room_code,
+                user_name,
+                password,
+            } => {
                 assert_eq!(room_code, "123456");
                 assert_eq!(user_name, "Bob");
                 assert!(password.is_none());
@@ -307,7 +408,9 @@ mod tests {
 
     #[test]
     fn signal_message_round_trip_room_created() {
-        let msg = SignalMessage::RoomCreated { room_code: "654321".into() };
+        let msg = SignalMessage::RoomCreated {
+            room_code: "654321".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
@@ -320,14 +423,20 @@ mod tests {
     fn signal_message_round_trip_room_joined() {
         let msg = SignalMessage::RoomJoined {
             room_code: "111111".into(),
-            participants: vec![
-                ParticipantInfo { id: "p1".into(), name: "Alice".into(), is_muted: false, is_deafened: true },
-            ],
+            participants: vec![ParticipantInfo {
+                id: "p1".into(),
+                name: "Alice".into(),
+                is_muted: false,
+                is_deafened: true,
+            }],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::RoomJoined { room_code, participants } => {
+            SignalMessage::RoomJoined {
+                room_code,
+                participants,
+            } => {
                 assert_eq!(room_code, "111111");
                 assert_eq!(participants.len(), 1);
                 assert_eq!(participants[0].name, "Alice");
@@ -340,7 +449,12 @@ mod tests {
     #[test]
     fn signal_message_round_trip_peer_joined() {
         let msg = SignalMessage::PeerJoined {
-            peer: ParticipantInfo { id: "p2".into(), name: "Bob".into(), is_muted: true, is_deafened: false },
+            peer: ParticipantInfo {
+                id: "p2".into(),
+                name: "Bob".into(),
+                is_muted: true,
+                is_deafened: false,
+            },
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
@@ -356,7 +470,9 @@ mod tests {
 
     #[test]
     fn signal_message_round_trip_peer_left() {
-        let msg = SignalMessage::PeerLeft { peer_id: "p3".into() };
+        let msg = SignalMessage::PeerLeft {
+            peer_id: "p3".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
@@ -367,7 +483,10 @@ mod tests {
 
     #[test]
     fn signal_message_round_trip_peer_mute_changed() {
-        let msg = SignalMessage::PeerMuteChanged { peer_id: "p4".into(), is_muted: false };
+        let msg = SignalMessage::PeerMuteChanged {
+            peer_id: "p4".into(),
+            is_muted: false,
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
@@ -381,11 +500,17 @@ mod tests {
 
     #[test]
     fn signal_message_round_trip_peer_deafen_changed() {
-        let msg = SignalMessage::PeerDeafenChanged { peer_id: "p5".into(), is_deafened: true };
+        let msg = SignalMessage::PeerDeafenChanged {
+            peer_id: "p5".into(),
+            is_deafened: true,
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::PeerDeafenChanged { peer_id, is_deafened } => {
+            SignalMessage::PeerDeafenChanged {
+                peer_id,
+                is_deafened,
+            } => {
                 assert_eq!(peer_id, "p5");
                 assert!(is_deafened);
             }
@@ -395,7 +520,9 @@ mod tests {
 
     #[test]
     fn signal_message_round_trip_error() {
-        let msg = SignalMessage::Error { message: "something went wrong".into() };
+        let msg = SignalMessage::Error {
+            message: "something went wrong".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
@@ -441,7 +568,10 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::JoinSpace { invite_code, user_name } => {
+            SignalMessage::JoinSpace {
+                invite_code,
+                user_name,
+            } => {
                 assert_eq!(invite_code, "AbCd1234");
                 assert_eq!(user_name, "Bob");
             }
@@ -460,7 +590,12 @@ mod tests {
                 channel_count: 1,
                 is_owner: true,
             },
-            channels: vec![ChannelInfo { id: "c1".into(), name: "General".into(), peer_count: 0, channel_type: ChannelType::Voice }],
+            channels: vec![ChannelInfo {
+                id: "c1".into(),
+                name: "General".into(),
+                peer_count: 0,
+                channel_type: ChannelType::Voice,
+            }],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
@@ -487,7 +622,12 @@ mod tests {
                 channel_count: 1,
                 is_owner: false,
             },
-            channels: vec![ChannelInfo { id: "c1".into(), name: "General".into(), peer_count: 1, channel_type: ChannelType::Voice }],
+            channels: vec![ChannelInfo {
+                id: "c1".into(),
+                name: "General".into(),
+                peer_count: 1,
+                channel_type: ChannelType::Voice,
+            }],
             members: vec![MemberInfo {
                 id: "p1".into(),
                 name: "Alice".into(),
@@ -498,7 +638,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::SpaceJoined { space, channels, members } => {
+            SignalMessage::SpaceJoined {
+                space,
+                channels,
+                members,
+            } => {
                 assert_eq!(space.id, "s2");
                 assert_eq!(space.member_count, 2);
                 assert_eq!(channels.len(), 1);
@@ -524,7 +668,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::ChannelJoined { channel_id, channel_name, participants } => {
+            SignalMessage::ChannelJoined {
+                channel_id,
+                channel_name,
+                participants,
+            } => {
                 assert_eq!(channel_id, "c1");
                 assert_eq!(channel_name, "General");
                 assert_eq!(participants.len(), 1);
@@ -543,7 +691,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::MemberChannelChanged { member_id, channel_id, channel_name } => {
+            SignalMessage::MemberChannelChanged {
+                member_id,
+                channel_id,
+                channel_name,
+            } => {
                 assert_eq!(member_id, "p1");
                 assert_eq!(channel_id.as_deref(), Some("c2"));
                 assert_eq!(channel_name.as_deref(), Some("Gaming"));

@@ -21,6 +21,8 @@ pub fn handle_space_created(
         channels: channels.to_vec(),
         members: Vec::new(),
         active_channel_id: None,
+        selected_text_channel_id: remembered_text_channel(space, channels),
+        unread_text_channels: Default::default(),
     };
 
     {
@@ -32,9 +34,19 @@ pub fn handle_space_created(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_space_search_query(slint::SharedString::default());
+    w.set_chat_channel_id(slint::SharedString::default());
+    w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_input(slint::SharedString::default());
+    w.set_editing_message_id(slint::SharedString::default());
+    w.set_editing_original_content(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
-    ui_shell::set_channels(w, channels);
-    ui_shell::set_members(w, &[]);
+    {
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            ui_shell::render_space(w, space, "");
+        }
+    }
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
     w.set_space_name(slint::SharedString::default());
     w.set_status_text("Space created".into());
@@ -58,6 +70,8 @@ pub fn handle_space_joined(
         channels: channels.to_vec(),
         members: members.to_vec(),
         active_channel_id: None,
+        selected_text_channel_id: remembered_text_channel(space, channels),
+        unread_text_channels: Default::default(),
     };
 
     {
@@ -69,9 +83,19 @@ pub fn handle_space_joined(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_space_search_query(slint::SharedString::default());
+    w.set_chat_channel_id(slint::SharedString::default());
+    w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_input(slint::SharedString::default());
+    w.set_editing_message_id(slint::SharedString::default());
+    w.set_editing_original_content(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
-    ui_shell::set_channels(w, channels);
-    ui_shell::set_members(w, members);
+    {
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            ui_shell::render_space(w, space, "");
+        }
+    }
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
     w.set_space_invite_code(slint::SharedString::default());
     w.set_status_text("Joined space".into());
@@ -95,6 +119,18 @@ pub fn handle_space_deleted(
 
     w.set_current_view(ui_shell::view_to_index(AppView::Home));
     w.set_room_code(slint::SharedString::default());
+    w.set_current_space_id(slint::SharedString::default());
+    w.set_current_space_name(slint::SharedString::default());
+    w.set_current_space_invite(slint::SharedString::default());
+    w.set_space_search_query(slint::SharedString::default());
+    w.set_visible_text_channels(0);
+    w.set_visible_voice_channels(0);
+    w.set_visible_members(0);
+    w.set_chat_channel_id(slint::SharedString::default());
+    w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_input(slint::SharedString::default());
+    w.set_editing_message_id(slint::SharedString::default());
+    w.set_editing_original_content(slint::SharedString::default());
     w.set_is_muted(false);
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
@@ -102,6 +138,8 @@ pub fn handle_space_deleted(
     w.set_mic_level(0.0);
     w.set_window_title("Voxlink".into());
     w.set_status_text("Space was deleted".into());
+    ui_shell::set_channels(w, &[]);
+    ui_shell::set_members(w, &[]);
 
     let audio = ctx.audio.clone();
     let flag = ctx.audio_active_flag.clone();
@@ -111,6 +149,22 @@ pub fn handle_space_deleted(
         aud.stop_playback();
         flag.store(false, std::sync::atomic::Ordering::Relaxed);
     });
+}
+
+fn remembered_text_channel(
+    space: &shared_types::SpaceInfo,
+    channels: &[shared_types::ChannelInfo],
+) -> Option<String> {
+    let cfg = config_store::load_config();
+    if cfg.last_space_id.as_deref() != Some(space.id.as_str()) {
+        return None;
+    }
+
+    cfg.last_channel_id.filter(|channel_id| {
+        channels.iter().any(|channel| {
+            channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
+        })
+    })
 }
 
 fn save_space_async(space: &shared_types::SpaceInfo) {

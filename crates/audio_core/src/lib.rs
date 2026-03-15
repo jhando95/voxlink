@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use buffers::{CaptureRing, PeerPlayback};
-use codec::{Agc, ComfortNoise, DeEsser, HighPassFilter, MuteRamp, NoiseGate, SendEncoder, frame_energy, soft_clip};
+use codec::{
+    frame_energy, soft_clip, Agc, ComfortNoise, DeEsser, HighPassFilter, MuteRamp, NoiseGate,
+    SendEncoder,
+};
 use feedback::{FeedbackAction, FeedbackTone};
 
 const MAX_PEER_BUFFER_SAMPLES: usize = FRAME_SIZE * 10; // ~200ms per peer
@@ -22,9 +25,9 @@ const OPUS_MAX_PACKET: usize = 512; // headroom for complex frames at 32kbps
 const OPUS_BITRATE: i32 = 64000; // 64 kbps — high quality voice, still very bandwidth efficient
 
 // Adaptive jitter buffer constants
-const JITTER_MIN_FRAMES: u16 = 1;  // 20ms minimum playout delay
-const JITTER_MAX_FRAMES: u16 = 5;  // 100ms maximum playout delay
-const JITTER_INITIAL: u16 = 2;     // 40ms default — good for LAN + decent internet
+const JITTER_MIN_FRAMES: u16 = 1; // 20ms minimum playout delay
+const JITTER_MAX_FRAMES: u16 = 5; // 100ms maximum playout delay
+const JITTER_INITIAL: u16 = 2; // 40ms default — good for LAN + decent internet
 const JITTER_STABLE_THRESHOLD: u16 = 500; // ~10s stable before reducing
 
 /// Get or create an entry in a HashMap by key. Avoids double key allocation.
@@ -68,48 +71,74 @@ impl DeviceType {
     fn from_name(name: &str, is_input: bool) -> Self {
         let lower = name.to_lowercase();
         // Virtual/software devices
-        if lower.contains("virtual") || lower.contains("soundflower")
-            || lower.contains("blackhole") || lower.contains("loopback")
-            || lower.contains("cable") || lower.contains("voicemeeter")
+        if lower.contains("virtual")
+            || lower.contains("soundflower")
+            || lower.contains("blackhole")
+            || lower.contains("loopback")
+            || lower.contains("cable")
+            || lower.contains("voicemeeter")
         {
             return DeviceType::VirtualDevice;
         }
         // Webcam mics
-        if is_input && (lower.contains("webcam") || lower.contains("camera")
-            || lower.contains("facetime") || lower.contains("c920")
-            || lower.contains("c922") || lower.contains("brio"))
+        if is_input
+            && (lower.contains("webcam")
+                || lower.contains("camera")
+                || lower.contains("facetime")
+                || lower.contains("c920")
+                || lower.contains("c922")
+                || lower.contains("brio"))
         {
             return DeviceType::Webcam;
         }
         // Headsets (have both mic and speakers — look for gaming/headset keywords)
-        if lower.contains("headset") || lower.contains("arctis")
-            || lower.contains("hyperx") || lower.contains("steelseries")
-            || lower.contains("corsair") || lower.contains("razer")
-            || lower.contains("astro") || lower.contains("jabra")
-            || lower.contains("plantronics") || lower.contains("poly")
+        if lower.contains("headset")
+            || lower.contains("arctis")
+            || lower.contains("hyperx")
+            || lower.contains("steelseries")
+            || lower.contains("corsair")
+            || lower.contains("razer")
+            || lower.contains("astro")
+            || lower.contains("jabra")
+            || lower.contains("plantronics")
+            || lower.contains("poly")
         {
             return DeviceType::Headset;
         }
         // Headphones (output only, no mic implied)
-        if !is_input && (lower.contains("headphone") || lower.contains("airpod")
-            || lower.contains("earphone") || lower.contains("buds")
-            || lower.contains("wh-1000") || lower.contains("wf-1000")
-            || lower.contains("qc35") || lower.contains("qc45"))
+        if !is_input
+            && (lower.contains("headphone")
+                || lower.contains("airpod")
+                || lower.contains("earphone")
+                || lower.contains("buds")
+                || lower.contains("wh-1000")
+                || lower.contains("wf-1000")
+                || lower.contains("qc35")
+                || lower.contains("qc45"))
         {
             return DeviceType::Headphones;
         }
         // Speakers
-        if !is_input && (lower.contains("speaker") || lower.contains("monitor")
-            || lower.contains("soundbar") || lower.contains("macbook pro speaker")
-            || lower.contains("built-in output") || lower.contains("realtek"))
+        if !is_input
+            && (lower.contains("speaker")
+                || lower.contains("monitor")
+                || lower.contains("soundbar")
+                || lower.contains("macbook pro speaker")
+                || lower.contains("built-in output")
+                || lower.contains("realtek"))
         {
             return DeviceType::Speakers;
         }
         // Microphone
-        if is_input && (lower.contains("microphone") || lower.contains("mic")
-            || lower.contains("built-in") || lower.contains("internal")
-            || lower.contains("blue yeti") || lower.contains("rode")
-            || lower.contains("at2020") || lower.contains("samson"))
+        if is_input
+            && (lower.contains("microphone")
+                || lower.contains("mic")
+                || lower.contains("built-in")
+                || lower.contains("internal")
+                || lower.contains("blue yeti")
+                || lower.contains("rode")
+                || lower.contains("at2020")
+                || lower.contains("samson"))
         {
             return DeviceType::Microphone;
         }
@@ -171,8 +200,8 @@ impl AudioEngine {
             opus_decoders: Mutex::new(HashMap::new()),
             mic_level_raw: Arc::new(AtomicU32::new(0)),
             noise_gate_sensitivity: Arc::new(AtomicU32::new(500)), // 0.5 default
-            input_gain: Arc::new(AtomicU32::new(1000)), // 1.0 default (unity gain)
-            output_volume: Arc::new(AtomicU32::new(1000)), // 1.0 default
+            input_gain: Arc::new(AtomicU32::new(1000)),            // 1.0 default (unity gain)
+            output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
             feedback_tone: FeedbackTone::new(),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
@@ -193,13 +222,11 @@ impl AudioEngine {
     }
 
     pub fn list_input_devices(&self) -> Vec<AudioDevice> {
-        let default_name = self
-            .host
-            .default_input_device()
-            .and_then(|d| d.name().ok());
+        let default_name = self.host.default_input_device().and_then(|d| d.name().ok());
         log::info!("Default input device: {:?}", default_name);
 
-        let devices: Vec<AudioDevice> = self.host
+        let devices: Vec<AudioDevice> = self
+            .host
             .input_devices()
             .map(|devices| {
                 devices
@@ -207,13 +234,23 @@ impl AudioEngine {
                         let name = d.name().ok()?;
                         let is_default = default_name.as_deref() == Some(&name);
                         let device_type = DeviceType::from_name(&name, true);
-                        Some(AudioDevice { name, is_default, device_type })
+                        Some(AudioDevice {
+                            name,
+                            is_default,
+                            device_type,
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
-        log::info!("Found {} input devices: {:?}", devices.len(),
-            devices.iter().map(|d| format!("{}{}", d.name, d.device_type.label())).collect::<Vec<_>>());
+        log::info!(
+            "Found {} input devices: {:?}",
+            devices.len(),
+            devices
+                .iter()
+                .map(|d| format!("{}{}", d.name, d.device_type.label()))
+                .collect::<Vec<_>>()
+        );
         devices
     }
 
@@ -224,7 +261,8 @@ impl AudioEngine {
             .and_then(|d| d.name().ok());
         log::info!("Default output device: {:?}", default_name);
 
-        let devices: Vec<AudioDevice> = self.host
+        let devices: Vec<AudioDevice> = self
+            .host
             .output_devices()
             .map(|devices| {
                 devices
@@ -232,13 +270,23 @@ impl AudioEngine {
                         let name = d.name().ok()?;
                         let is_default = default_name.as_deref() == Some(&name);
                         let device_type = DeviceType::from_name(&name, false);
-                        Some(AudioDevice { name, is_default, device_type })
+                        Some(AudioDevice {
+                            name,
+                            is_default,
+                            device_type,
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
-        log::info!("Found {} output devices: {:?}", devices.len(),
-            devices.iter().map(|d| format!("{}{}", d.name, d.device_type.label())).collect::<Vec<_>>());
+        log::info!(
+            "Found {} output devices: {:?}",
+            devices.len(),
+            devices
+                .iter()
+                .map(|d| format!("{}{}", d.name, d.device_type.label()))
+                .collect::<Vec<_>>()
+        );
         devices
     }
 
@@ -252,10 +300,16 @@ impl AudioEngine {
             }
             // Partial match fallback (Windows headsets may change suffixes)
             if let Some(d) = all.iter().find(|d| {
-                d.name().ok().map(|n| n.contains(name) || name.contains(&n)).unwrap_or(false)
+                d.name()
+                    .ok()
+                    .map(|n| n.contains(name) || name.contains(&n))
+                    .unwrap_or(false)
             }) {
-                log::info!("Input device '{}' not found exactly, using partial match '{}'",
-                    name, d.name().unwrap_or_default());
+                log::info!(
+                    "Input device '{}' not found exactly, using partial match '{}'",
+                    name,
+                    d.name().unwrap_or_default()
+                );
                 return Some(d.clone());
             }
             log::warn!("Input device '{}' not found, falling back to default", name);
@@ -273,13 +327,22 @@ impl AudioEngine {
                 return Some(d.clone());
             }
             if let Some(d) = all.iter().find(|d| {
-                d.name().ok().map(|n| n.contains(name) || name.contains(&n)).unwrap_or(false)
+                d.name()
+                    .ok()
+                    .map(|n| n.contains(name) || name.contains(&n))
+                    .unwrap_or(false)
             }) {
-                log::info!("Output device '{}' not found exactly, using partial match '{}'",
-                    name, d.name().unwrap_or_default());
+                log::info!(
+                    "Output device '{}' not found exactly, using partial match '{}'",
+                    name,
+                    d.name().unwrap_or_default()
+                );
                 return Some(d.clone());
             }
-            log::warn!("Output device '{}' not found, falling back to default", name);
+            log::warn!(
+                "Output device '{}' not found, falling back to default",
+                name
+            );
             self.host.default_output_device()
         } else {
             self.host.default_output_device()
@@ -352,7 +415,9 @@ impl AudioEngine {
         // Max encoding complexity for best quality (CPU is negligible at mono 48kHz)
         opus_encoder.set_complexity(10).ok();
         // Explicit fullband (20kHz) — Opus defaults to this at 48kHz but be explicit
-        opus_encoder.set_bandwidth(audiopus::Bandwidth::Fullband).ok();
+        opus_encoder
+            .set_bandwidth(audiopus::Bandwidth::Fullband)
+            .ok();
 
         let on_frame = self.on_encoded_frame.clone();
         let is_capturing = self.is_capturing.clone();
@@ -394,7 +459,11 @@ impl AudioEngine {
                     // Show mic level even when muted (UI feedback)
                     let is_active = is_capturing.load(Ordering::Relaxed);
                     mic_level.store(
-                        if is_active { (energy.min(1.0) * 1000.0) as u32 } else { 0 },
+                        if is_active {
+                            (energy.min(1.0) * 1000.0) as u32
+                        } else {
+                            0
+                        },
                         Ordering::Relaxed,
                     );
 
@@ -590,7 +659,9 @@ impl AudioEngine {
                 log::warn!("Opus decode error from {sender_id}: {e}, attempting PLC");
                 // Packet Loss Concealment: ask Opus to interpolate from previous state
                 let plc_output = MutSignals::try_from(&mut out[..]).ok()?;
-                decoder.decode(None::<OpusPacket<'_>>, plc_output, false).ok()
+                decoder
+                    .decode(None::<OpusPacket<'_>>, plc_output, false)
+                    .ok()
             }
         }
     }
@@ -652,17 +723,34 @@ impl AudioEngine {
 
     /// Play a feedback tone for mute on/off.
     pub fn play_feedback_mute(&self, muted: bool) {
-        self.feedback_tone.trigger(if muted { FeedbackAction::MuteOn } else { FeedbackAction::MuteOff });
+        self.feedback_tone.trigger(if muted {
+            FeedbackAction::MuteOn
+        } else {
+            FeedbackAction::MuteOff
+        });
     }
 
     /// Play a feedback tone for deafen on/off.
     pub fn play_feedback_deafen(&self, deafened: bool) {
-        self.feedback_tone.trigger(if deafened { FeedbackAction::DeafenOn } else { FeedbackAction::DeafenOff });
+        self.feedback_tone.trigger(if deafened {
+            FeedbackAction::DeafenOn
+        } else {
+            FeedbackAction::DeafenOff
+        });
     }
 
     /// Play a notification sound for peer join/leave.
     pub fn play_notification(&self, joined: bool) {
         // Use higher tone for join, lower for leave
-        self.feedback_tone.trigger(if joined { FeedbackAction::MuteOff } else { FeedbackAction::DeafenOn });
+        self.feedback_tone.trigger(if joined {
+            FeedbackAction::MuteOff
+        } else {
+            FeedbackAction::DeafenOn
+        });
+    }
+
+    /// Play a local speaker preview tone for device/output testing.
+    pub fn play_output_preview(&self) {
+        self.feedback_tone.trigger(FeedbackAction::OutputPreview);
     }
 }

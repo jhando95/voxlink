@@ -52,6 +52,9 @@ pub fn handle_room_entered(
     s.current_view = AppView::Room;
 
     w.set_room_code(room_code.into());
+    w.set_reconnect_attempts(0);
+    w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+    w.set_dropped_frames(0);
     w.set_current_view(ui_shell::view_to_index(AppView::Room));
     let count = s.room.participants.len();
     w.set_window_title(format!("Voxlink — {room_code} ({count})").into());
@@ -63,8 +66,11 @@ pub fn handle_room_entered(
     ui_shell::set_participants(w, &s.room.participants);
 
     crate::helpers::start_audio_if_needed(
-        &ctx.audio_started, &ctx.audio, &ctx.media,
-        &ctx.audio_active_flag, &ctx.rt_handle,
+        &ctx.audio_started,
+        &ctx.audio,
+        &ctx.media,
+        &ctx.audio_active_flag,
+        &ctx.rt_handle,
         ctx.saved_input_device.borrow().clone(),
         ctx.saved_output_device.borrow().clone(),
         Some(w.as_weak()),

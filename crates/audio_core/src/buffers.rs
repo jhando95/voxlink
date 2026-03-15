@@ -134,7 +134,10 @@ impl RingBuf {
 //   - On underrun: increases target depth (+20ms), re-primes
 //   - After 10s stable: decreases target depth (-20ms)
 
-use super::{MAX_PEER_BUFFER_SAMPLES, JITTER_INITIAL, JITTER_MIN_FRAMES, JITTER_MAX_FRAMES, JITTER_STABLE_THRESHOLD};
+use super::{
+    JITTER_INITIAL, JITTER_MAX_FRAMES, JITTER_MIN_FRAMES, JITTER_STABLE_THRESHOLD,
+    MAX_PEER_BUFFER_SAMPLES,
+};
 
 pub(crate) struct PeerPlayback {
     pub buffer: RingBuf,
@@ -167,17 +170,22 @@ impl PeerPlayback {
                 self.target_frames += 1;
                 self.primed = false;
                 self.underrun_ticks = 0;
-                log::debug!("Jitter buffer expanded to {}ms", self.target_frames as u32 * 20);
+                log::debug!(
+                    "Jitter buffer expanded to {}ms",
+                    self.target_frames as u32 * 20
+                );
             }
         } else {
             self.underrun_ticks = 0;
             self.stable_ticks += 1;
-            if self.stable_ticks > JITTER_STABLE_THRESHOLD
-                && self.target_frames > JITTER_MIN_FRAMES
+            if self.stable_ticks > JITTER_STABLE_THRESHOLD && self.target_frames > JITTER_MIN_FRAMES
             {
                 self.target_frames -= 1;
                 self.stable_ticks = 0;
-                log::debug!("Jitter buffer reduced to {}ms", self.target_frames as u32 * 20);
+                log::debug!(
+                    "Jitter buffer reduced to {}ms",
+                    self.target_frames as u32 * 20
+                );
             }
         }
     }
@@ -245,8 +253,12 @@ mod tests {
         ring.push_slice(&data);
         ring.push_slice(&data);
         let len = ring.len();
-        assert_eq!(len, FRAME_SIZE * 3, "len() wrong after wraparound: got {len}, expected {}",
-                   FRAME_SIZE * 3);
+        assert_eq!(
+            len,
+            FRAME_SIZE * 3,
+            "len() wrong after wraparound: got {len}, expected {}",
+            FRAME_SIZE * 3
+        );
 
         // Should be able to read all 3 frames
         assert!(ring.read_frame(&mut out));

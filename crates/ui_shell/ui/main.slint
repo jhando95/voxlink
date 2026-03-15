@@ -59,6 +59,12 @@ export component MainWindow inherits Window {
     in-out property <float> input-volume: 1.0;
     in-out property <float> output-volume: 1.0;
     in-out property <int> ping-ms: -1;
+    in-out property <bool> mic-preview-active: false;
+    in-out property <bool> speaker-test-active: false;
+    in-out property <int> reconnect-attempts: 0;
+    in-out property <int> dropped-frames: 0;
+    in-out property <int> dropped-frames-total: 0;
+    in-out property <int> dropped-frames-baseline: 0;
 
     // Space state
     in-out property <[SpaceData]> spaces: [];
@@ -74,6 +80,10 @@ export component MainWindow inherits Window {
     in-out property <bool> in-space-channel: false;
     in-out property <bool> show-quick-call: false;
     in-out property <bool> new-channel-is-voice: true;
+    in-out property <string> space-search-query: "";
+    in-out property <int> visible-text-channels: 0;
+    in-out property <int> visible-voice-channels: 0;
+    in-out property <int> visible-members: 0;
 
     // Text chat
     in-out property <[ChatMessage]> chat-messages: [];
@@ -146,11 +156,15 @@ export component MainWindow inherits Window {
     callback join-channel(string);
     callback leave-channel();
     callback copy-invite-code();
+    callback copy-share-message();
+    callback space-search-changed(string);
     callback delete-space();
     callback toggle-feedback-sound();
     callback noise-suppression-changed(float);
     callback input-volume-changed(float);
     callback output-volume-changed(float);
+    callback toggle-mic-preview();
+    callback play-speaker-test();
     callback select-text-channel(string);
     callback send-text-message();
     callback edit-text-message(string, string);
@@ -254,6 +268,9 @@ export component MainWindow inherits Window {
                             is-open-mic: root.is-open-mic;
                             mic-level: root.mic-level;
                             ptt-key-display: root.ptt-key-display;
+                            ping-ms: root.ping-ms;
+                            reconnect-attempts: root.reconnect-attempts;
+                            dropped-frames: root.dropped-frames;
                             in-space-channel: root.in-space-channel;
                             current-space-name: root.current-space-name;
                             show-copied <=> root.show-copied;
@@ -278,6 +295,9 @@ export component MainWindow inherits Window {
                             input-volume <=> root.input-volume;
                             output-volume <=> root.output-volume;
                             is-open-mic: root.is-open-mic;
+                            mic-level: root.mic-level;
+                            mic-preview-active <=> root.mic-preview-active;
+                            speaker-test-active <=> root.speaker-test-active;
                             noise-suppression <=> root.noise-suppression;
                             feedback-sound: root.feedback-sound;
                             notifications-enabled: root.notifications-enabled;
@@ -290,6 +310,8 @@ export component MainWindow inherits Window {
                             refresh-devices => { root.refresh-devices(); }
                             input-volume-changed(level) => { root.input-volume-changed(level); }
                             output-volume-changed(level) => { root.output-volume-changed(level); }
+                            toggle-mic-preview => { root.toggle-mic-preview(); }
+                            play-speaker-test => { root.play-speaker-test(); }
                             toggle-mic-mode => { root.toggle-mic-mode(); }
                             noise-suppression-changed(level) => { root.noise-suppression-changed(level); }
                             toggle-feedback-sound => { root.toggle-feedback-sound(); }
@@ -304,11 +326,17 @@ export component MainWindow inherits Window {
                             is-space-owner: root.is-space-owner;
                             channels: root.channels;
                             members: root.members;
+                            search-query <=> root.space-search-query;
+                            visible-text-channels: root.visible-text-channels;
+                            visible-voice-channels: root.visible-voice-channels;
+                            visible-members: root.visible-members;
                             new-channel-name <=> root.new-channel-name;
                             new-channel-is-voice <=> root.new-channel-is-voice;
                             confirm-delete-visible <=> root.confirm-delete-visible;
                             navigate(view-index) => { root.navigate(view-index); }
                             copy-invite-code => { root.copy-invite-code(); }
+                            copy-share-message => { root.copy-share-message(); }
+                            search-changed(query) => { root.space-search-changed(query); }
                             select-text-channel(channel-id) => { root.select-text-channel(channel-id); }
                             join-channel(channel-id) => { root.join-channel(channel-id); }
                             create-channel => { root.create-channel(); }

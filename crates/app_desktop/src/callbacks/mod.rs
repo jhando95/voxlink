@@ -40,7 +40,17 @@ pub fn setup(
     // Room
     room::setup_create_room(window, network, rt_handle);
     room::setup_join_room(window, network, rt_handle);
-    room::setup_leave_room(window, state, voice, network, audio, audio_started, audio_active_flag, speaking_ticks, rt_handle);
+    room::setup_leave_room(
+        window,
+        state,
+        voice,
+        network,
+        audio,
+        audio_started,
+        audio_active_flag,
+        speaking_ticks,
+        rt_handle,
+    );
 
     // Controls
     controls::setup_toggle_mute(window, state, voice, audio, network, rt_handle);
@@ -52,8 +62,20 @@ pub fn setup(
     space::setup_create_space(window, network, rt_handle);
     space::setup_join_space(window, network, rt_handle);
     space::setup_select_space(window, state, network, rt_handle);
-    space::setup_leave_space(window, state, voice, network, audio, audio_started, audio_active_flag, speaking_ticks, rt_handle);
+    space::setup_filter_space(window, state);
+    space::setup_leave_space(
+        window,
+        state,
+        voice,
+        network,
+        audio,
+        audio_started,
+        audio_active_flag,
+        speaking_ticks,
+        rt_handle,
+    );
     space::setup_copy_invite_code(window);
+    space::setup_copy_share_message(window);
     space::setup_delete_space(window, network, rt_handle);
     space::setup_kick_member(window, network, rt_handle);
     space::setup_ban_member(window, network, rt_handle);
@@ -62,13 +84,25 @@ pub fn setup(
     // Channel
     channel::setup_create_channel(window, network, rt_handle);
     channel::setup_join_channel(window, network, rt_handle);
-    channel::setup_leave_channel(window, state, voice, network, audio, audio_started, audio_active_flag, speaking_ticks, rt_handle);
+    channel::setup_leave_channel(
+        window,
+        state,
+        voice,
+        network,
+        audio,
+        audio_started,
+        audio_active_flag,
+        speaking_ticks,
+        rt_handle,
+    );
 
     // UI / Config
     ui::setup_navigate(window, state, perf, audio, audio_started, rt_handle);
     ui::setup_save_settings(window, audio, audio_started, rt_handle);
     ui::setup_copy_room_code(window);
     ui::setup_refresh_devices(window, audio, rt_handle);
+    ui::setup_toggle_mic_preview(window, audio, audio_started, rt_handle);
+    ui::setup_play_speaker_test(window, audio, audio_started, rt_handle);
     ui::setup_clear_keybind(window, ptt_key, mute_key, deafen_key);
     ui::setup_toggle_dark_mode(window);
     ui::setup_toggle_feedback_sound(window);

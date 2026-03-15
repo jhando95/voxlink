@@ -14,6 +14,9 @@ export component RoomView inherits Rectangle {
     in property <bool> is-open-mic: true;
     in property <float> mic-level: 0.0;
     in property <string> ptt-key-display: "";
+    in property <int> ping-ms: -1;
+    in property <int> reconnect-attempts: 0;
+    in property <int> dropped-frames: 0;
     in property <bool> in-space-channel: false;
     in property <string> current-space-name: "";
     in-out property <bool> show-copied: false;
@@ -362,6 +365,50 @@ export component RoomView inherits Rectangle {
                 VerticalLayout {
                     width: 320px;
                     spacing: 18px;
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "NETWORK HEALTH"; }
+
+                            VxStatBlock {
+                                label: "Ping";
+                                value: root.ping-ms >= 0 ? root.ping-ms + " ms" : "Waiting";
+                                detail: root.ping-ms < 0 ? "Sampling the route." :
+                                        root.ping-ms < 60 ? "Fast enough to feel instant." :
+                                        root.ping-ms < 150 ? "Usable with mild network drag." :
+                                        "Latency is elevated right now.";
+                                tone: root.ping-ms < 0 ? VxTheme.text-secondary :
+                                      root.ping-ms < 60 ? VxTheme.success :
+                                      root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                            }
+
+                            VxStatBlock {
+                                label: "Recovery";
+                                value: root.reconnect-attempts + "";
+                                detail: root.reconnect-attempts == 0
+                                    ? "No reconnect attempts in this session."
+                                    : root.reconnect-attempts == 1
+                                        ? "The client recovered once."
+                                        : "The client has recovered multiple times.";
+                                tone: root.reconnect-attempts == 0 ? VxTheme.success :
+                                      root.reconnect-attempts < 3 ? VxTheme.warning : VxTheme.danger;
+                            }
+
+                            VxStatBlock {
+                                label: "Dropped audio";
+                                value: root.dropped-frames + "";
+                                detail: root.dropped-frames == 0
+                                    ? "Clean playback so far."
+                                    : root.dropped-frames < 10
+                                        ? "A few frames were dropped under load."
+                                        : "Audio contention is showing up in the mix.";
+                                tone: root.dropped-frames == 0 ? VxTheme.success :
+                                      root.dropped-frames < 10 ? VxTheme.warning : VxTheme.danger;
+                            }
+                        }
+                    }
 
                     VxCard {
                         VerticalLayout {

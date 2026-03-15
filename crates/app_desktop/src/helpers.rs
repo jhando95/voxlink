@@ -160,23 +160,30 @@ pub fn save_auth_token_async(token: String) {
     });
 }
 
+pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.last_space_id = Some(space_id);
+        cfg.last_channel_id = Some(channel_id);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
 /// Check GitHub Releases for a newer version. Runs in a background thread.
 /// Sets `update-available` and `update-version` on the window if a newer release exists.
 pub fn check_for_updates(window: &MainWindow) {
     let window_weak = window.as_weak();
     let current = env!("CARGO_PKG_VERSION").to_string();
-    std::thread::spawn(move || {
-        match fetch_latest_version() {
-            Some(latest) if latest != current && is_newer(&latest, &current) => {
-                log::info!("Update available: v{latest} (current: v{current})");
-                if let Some(w) = window_weak.upgrade() {
-                    w.set_update_available(true);
-                    w.set_update_version(latest.into());
-                }
+    std::thread::spawn(move || match fetch_latest_version() {
+        Some(latest) if latest != current && is_newer(&latest, &current) => {
+            log::info!("Update available: v{latest} (current: v{current})");
+            if let Some(w) = window_weak.upgrade() {
+                w.set_update_available(true);
+                w.set_update_version(latest.into());
             }
-            Some(_) => log::debug!("Running latest version"),
-            None => log::debug!("Update check failed or skipped"),
         }
+        Some(_) => log::debug!("Running latest version"),
+        None => log::debug!("Update check failed or skipped"),
     });
 }
 

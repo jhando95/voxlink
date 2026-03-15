@@ -69,7 +69,8 @@ pub fn start(
     let error_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let notification_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let signal_buf: Rc<RefCell<Vec<SignalMessage>>> = Rc::new(RefCell::new(Vec::with_capacity(8)));
-    let signal_process: Rc<RefCell<Vec<SignalMessage>>> = Rc::new(RefCell::new(Vec::with_capacity(8)));
+    let signal_process: Rc<RefCell<Vec<SignalMessage>>> =
+        Rc::new(RefCell::new(Vec::with_capacity(8)));
     let device_state = DeviceState::new();
     let ptt_was_held = Rc::new(RefCell::new(false));
     let prev_m_held = Rc::new(RefCell::new(false));
@@ -96,8 +97,18 @@ pub fn start(
 
             // --- Drain and process signal messages ---
             drain_signals(&network, &signal_buf);
-            std::mem::swap(&mut *signal_buf.borrow_mut(), &mut *signal_process.borrow_mut());
-            process_signals(&signal_process, &w, &state, &audio_ctx, &notification_at_tick, tick);
+            std::mem::swap(
+                &mut *signal_buf.borrow_mut(),
+                &mut *signal_process.borrow_mut(),
+            );
+            process_signals(
+                &signal_process,
+                &w,
+                &state,
+                &audio_ctx,
+                &notification_at_tick,
+                tick,
+            );
 
             // --- Keyboard input ---
             let current_view = w.get_current_view();
@@ -107,8 +118,13 @@ pub fn start(
             let listening = w.get_listening_keybind().to_string();
             if !listening.is_empty() {
                 handle_keybind_listening(
-                    &listening, &keys, &listen_state, &w,
-                    &ptt_key, &mute_key, &deafen_key,
+                    &listening,
+                    &keys,
+                    &listen_state,
+                    &w,
+                    &ptt_key,
+                    &mute_key,
+                    &deafen_key,
                 );
             } else {
                 *listen_state.borrow_mut() = None;
@@ -121,18 +137,36 @@ pub fn start(
 
                 if in_room {
                     handle_room_hotkeys(
-                        &keys, &voice, &state, &audio, &network, &rt_handle, &w,
-                        &ptt_was_held, &prev_m_held, &prev_d_held,
-                        &mute_cooldown, &deafen_cooldown,
-                        &ptt_key, &mute_key, &deafen_key,
+                        &keys,
+                        &voice,
+                        &state,
+                        &audio,
+                        &network,
+                        &rt_handle,
+                        &w,
+                        &ptt_was_held,
+                        &prev_m_held,
+                        &prev_d_held,
+                        &mute_cooldown,
+                        &deafen_cooldown,
+                        &ptt_key,
+                        &mute_key,
+                        &deafen_key,
                         w.get_feedback_sound(),
                     );
 
                     signal_handler::connection::drain_audio_and_update_speaking(
-                        &network, &audio, &state, &speaking_ticks, tick, &w,
+                        &network,
+                        &audio,
+                        &state,
+                        &speaking_ticks,
+                        tick,
+                        &w,
                     );
 
                     update_mic_level(tick, &audio, &state, &w);
+                } else if current_view == 2 && w.get_mic_preview_active() {
+                    update_preview_mic_level(tick, &audio, &w);
                 }
             }
 
@@ -143,9 +177,24 @@ pub fn start(
 
             // --- Slow updates every ~1s ---
             if tick.is_multiple_of(40) {
+                let total_dropped_frames =
+                    perf.borrow()
+                        .dropped_frames
+                        .load(std::sync::atomic::Ordering::Relaxed) as i32;
+                w.set_dropped_frames_total(total_dropped_frames);
+                w.set_dropped_frames(
+                    (total_dropped_frames - w.get_dropped_frames_baseline()).max(0),
+                );
+
                 signal_handler::connection::check_connection(
-                    &network, &w, &was_connected, &reconnect_cooldown,
-                    &reconnect_interval, &network_flag, &rt_handle, &perf,
+                    &network,
+                    &w,
+                    &was_connected,
+                    &reconnect_cooldown,
+                    &reconnect_interval,
+                    &network_flag,
+                    &rt_handle,
+                    &perf,
                 );
 
                 if in_room {
@@ -307,8 +356,11 @@ fn process_signals(
                 *notification_at_tick.borrow_mut() = Some(tick);
             }
             SignalMessage::PeerLeft { peer_id } => {
-                let name = state.borrow()
-                    .room.participants.iter()
+                let name = state
+                    .borrow()
+                    .room
+                    .participants
+                    .iter()
                     .find(|p| p.id == *peer_id)
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|| "Someone".into());
@@ -401,9 +453,13 @@ fn handle_room_hotkeys(
 
     {
         let mut m_cd = mute_cooldown.borrow_mut();
-        if *m_cd > 0 { *m_cd -= 1; }
+        if *m_cd > 0 {
+            *m_cd -= 1;
+        }
         let mut d_cd = deafen_cooldown.borrow_mut();
-        if *d_cd > 0 { *d_cd -= 1; }
+        if *d_cd > 0 {
+            *d_cd -= 1;
+        }
 
         let mute_combo = mute_key_cell.borrow();
         if !mute_combo.is_empty() {
@@ -414,7 +470,9 @@ fn handle_room_hotkeys(
                 *m_cd = 4;
                 if feedback_sound {
                     let will_be_muted = w.get_is_muted();
-                    if let Ok(aud) = audio.try_lock() { aud.play_feedback_mute(will_be_muted); }
+                    if let Ok(aud) = audio.try_lock() {
+                        aud.play_feedback_mute(will_be_muted);
+                    }
                 }
             }
             *prev_m_held.borrow_mut() = m_held;
@@ -429,7 +487,9 @@ fn handle_room_hotkeys(
                 *d_cd = 4;
                 if feedback_sound {
                     let will_be_deafened = w.get_is_deafened();
-                    if let Ok(aud) = audio.try_lock() { aud.play_feedback_deafen(will_be_deafened); }
+                    if let Ok(aud) = audio.try_lock() {
+                        aud.play_feedback_deafen(will_be_deafened);
+                    }
                 }
             }
             *prev_d_held.borrow_mut() = d_held;
@@ -463,6 +523,19 @@ fn update_mic_level(
     }
 }
 
+fn update_preview_mic_level(
+    tick: u64,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    w: &MainWindow,
+) {
+    if !tick.is_multiple_of(2) {
+        return;
+    }
+    if let Ok(aud) = audio.try_lock() {
+        w.set_mic_level(aud.mic_level());
+    }
+}
+
 // ─── Timed Auto-Hides ───
 
 fn auto_hide_notification(
@@ -478,11 +551,7 @@ fn auto_hide_notification(
     }
 }
 
-fn auto_clear_errors(
-    error_at_tick: &Rc<RefCell<Option<u64>>>,
-    tick: u64,
-    w: &MainWindow,
-) {
+fn auto_clear_errors(error_at_tick: &Rc<RefCell<Option<u64>>>, tick: u64, w: &MainWindow) {
     let status = w.get_status_text();
     let is_error = status.starts_with("Failed:")
         || status.starts_with("Error:")
@@ -496,7 +565,11 @@ fn auto_clear_errors(
         }
         if let Some(t) = *eat {
             if tick.saturating_sub(t) >= 320 {
-                let fallback = if w.get_is_connected() { "Connected" } else { "Tap Connect" };
+                let fallback = if w.get_is_connected() {
+                    "Connected"
+                } else {
+                    "Tap Connect"
+                };
                 w.set_status_text(fallback.into());
                 *eat = None;
             }
@@ -506,11 +579,7 @@ fn auto_clear_errors(
     }
 }
 
-fn auto_hide_copied(
-    copied_at_tick: &Rc<RefCell<Option<u64>>>,
-    tick: u64,
-    w: &MainWindow,
-) {
+fn auto_hide_copied(copied_at_tick: &Rc<RefCell<Option<u64>>>, tick: u64, w: &MainWindow) {
     if w.get_show_copied() {
         let mut cat = copied_at_tick.borrow_mut();
         if cat.is_none() {
@@ -557,7 +626,9 @@ fn check_audio_recovery(
 ) {
     if let Ok(aud) = audio.try_lock() {
         let capture_err = aud.capture_error.load(std::sync::atomic::Ordering::Relaxed);
-        let playback_err = aud.playback_error.load(std::sync::atomic::Ordering::Relaxed);
+        let playback_err = aud
+            .playback_error
+            .load(std::sync::atomic::Ordering::Relaxed);
         if !capture_err && !playback_err {
             return;
         }
@@ -574,15 +645,20 @@ fn check_audio_recovery(
                 if let Err(e) = aud.restart_capture(None) {
                     log::error!("Capture recovery failed: {e}");
                 } else {
-                    aud.capture_error.store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.capture_error
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            if aud.playback_error.load(std::sync::atomic::Ordering::Relaxed) {
+            if aud
+                .playback_error
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 log::info!("Restarting playback on default device");
                 if let Err(e) = aud.restart_playback(None) {
                     log::error!("Playback recovery failed: {e}");
                 } else {
-                    aud.playback_error.store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.playback_error
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             if let Some(w) = window_weak.upgrade() {

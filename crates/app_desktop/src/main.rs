@@ -73,7 +73,9 @@ fn main() {
     // #13: Restore saved window size
     if let (Some(w), Some(h)) = (config.window_width, config.window_height) {
         if w > 100 && h > 100 {
-            window.window().set_size(slint::LogicalSize::new(w as f32, h as f32));
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(w as f32, h as f32));
         }
     }
 
@@ -89,11 +91,13 @@ fn main() {
     let saved_output_device: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(config.output_device.clone()));
     let audio_started = Rc::new(RefCell::new(false));
-    let speaking_ticks: Rc<RefCell<HashMap<String, u64>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    let speaking_ticks: Rc<RefCell<HashMap<String, u64>>> = Rc::new(RefCell::new(HashMap::new()));
 
     // Configurable keybinds (combo support) — shared between callbacks and tick_loop
-    let ptt_key = Rc::new(RefCell::new(resolve_combo(&config.push_to_talk_key, "space")));
+    let ptt_key = Rc::new(RefCell::new(resolve_combo(
+        &config.push_to_talk_key,
+        "space",
+    )));
     let mute_key = Rc::new(RefCell::new(resolve_combo(&config.mute_key, "m")));
     let deafen_key = Rc::new(RefCell::new(resolve_combo(&config.deafen_key, "d")));
 
@@ -113,9 +117,19 @@ fn main() {
 
     // Wire all UI callbacks
     callbacks::setup(
-        &window, &network, &audio, &state, &voice, &perf,
-        &audio_started, &audio_active_flag, &speaking_ticks, &rt_handle,
-        &ptt_key, &mute_key, &deafen_key,
+        &window,
+        &network,
+        &audio,
+        &state,
+        &voice,
+        &perf,
+        &audio_started,
+        &audio_active_flag,
+        &speaking_ticks,
+        &rt_handle,
+        &ptt_key,
+        &mute_key,
+        &deafen_key,
     );
 
     // Auto-connect on startup + auto-rejoin last room
@@ -123,10 +137,23 @@ fn main() {
 
     // Start the event loop timer
     tick_loop::start(
-        &window, &state, &voice, &network, &audio, &media, &perf,
-        &audio_started, &audio_active_flag, &network_flag, &speaking_ticks,
-        saved_input_device, saved_output_device, &rt_handle,
-        ptt_key, mute_key, deafen_key,
+        &window,
+        &state,
+        &voice,
+        &network,
+        &audio,
+        &media,
+        &perf,
+        &audio_started,
+        &audio_active_flag,
+        &network_flag,
+        &speaking_ticks,
+        saved_input_device,
+        saved_output_device,
+        &rt_handle,
+        ptt_key,
+        mute_key,
+        deafen_key,
     );
 
     // M7B: Check for updates in background
@@ -246,7 +273,13 @@ impl log::Log for DualLogger {
             // Also write to file
             if let Ok(mut f) = self.file.lock() {
                 use std::io::Write;
-                let _ = writeln!(f, "[{}] {} - {}", record.level(), record.target(), record.args());
+                let _ = writeln!(
+                    f,
+                    "[{}] {} - {}",
+                    record.level(),
+                    record.target(),
+                    record.args()
+                );
             }
         }
     }
@@ -261,18 +294,16 @@ impl log::Log for DualLogger {
 }
 
 fn setup_logging() {
-    let log_path = directories::ProjectDirs::from("com", "voxlink", "Voxlink")
-        .map(|dirs| {
-            let log_dir = dirs.data_dir();
-            let _ = std::fs::create_dir_all(log_dir);
-            log_dir.join("voxlink.log")
-        });
+    let log_path = directories::ProjectDirs::from("com", "voxlink", "Voxlink").map(|dirs| {
+        let log_dir = dirs.data_dir();
+        let _ = std::fs::create_dir_all(log_dir);
+        log_dir.join("voxlink.log")
+    });
 
-    let env_logger = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .format_timestamp_millis()
-    .build();
+    let env_logger =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .format_timestamp_millis()
+            .build();
 
     let max_level = env_logger.filter();
 
@@ -322,7 +353,15 @@ fn auto_connect(
 ) {
     let server_addr = config.server_address.clone();
     let last_room = config.last_room_code.clone();
+    let last_space_invite = config.last_space_id.as_ref().and_then(|space_id| {
+        config
+            .saved_spaces
+            .iter()
+            .find(|space| &space.id == space_id)
+            .map(|space| space.invite_code.clone())
+    });
     let user_name = config.user_name.clone();
+    let auth_token = config.auth_token.clone();
 
     if server_addr.is_empty() {
         return;
@@ -342,6 +381,13 @@ fn auto_connect(
                     w.set_status_text("Connected".into());
                 }
 
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::Authenticate {
+                        token: auth_token,
+                        user_name: user_name.clone(),
+                    })
+                    .await;
+
                 if let Some(room_code) = last_room {
                     if !room_code.is_empty() {
                         log::info!("Auto-rejoining last room: {room_code}");
@@ -355,6 +401,17 @@ fn auto_connect(
                         {
                             log::warn!("Auto-rejoin failed: {e}");
                         }
+                    }
+                } else if let Some(invite_code) = last_space_invite {
+                    log::info!("Auto-rejoining last space");
+                    if let Err(e) = net
+                        .send_signal(&shared_types::SignalMessage::JoinSpace {
+                            invite_code,
+                            user_name,
+                        })
+                        .await
+                    {
+                        log::warn!("Auto-space join failed: {e}");
                     }
                 }
             }

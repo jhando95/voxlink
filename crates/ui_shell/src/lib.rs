@@ -64,9 +64,19 @@ pub fn set_participants(window: &MainWindow, participants: &[shared_types::Parti
     let model: Vec<ParticipantData> = sorted
         .iter()
         .map(|p| {
-            let initial = p.name.chars().next().unwrap_or('?').to_uppercase().to_string();
+            let initial = p
+                .name
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_uppercase()
+                .to_string();
             // Stable color from name hash — same person always gets same color
-            let color_index = p.name.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
+            let color_index = p
+                .name
+                .bytes()
+                .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32))
+                % 8;
             ParticipantData {
                 id: p.id.clone().into(),
                 name: p.name.clone().into(),
@@ -121,10 +131,89 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             name: c.name.clone().into(),
             peer_count: c.peer_count as i32,
             is_voice: c.channel_type == shared_types::ChannelType::Voice,
+            is_active: false,
+            unread_count: 0,
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_channels(rc.into());
+}
+
+pub fn render_space(window: &MainWindow, space: &shared_types::SpaceState, search_query: &str) {
+    let query = search_query.trim().to_lowercase();
+    let mut visible_text_channels = 0i32;
+    let mut visible_voice_channels = 0i32;
+
+    let channels: Vec<ChannelData> = space
+        .channels
+        .iter()
+        .filter(|channel| query.is_empty() || channel.name.to_lowercase().contains(&query))
+        .map(|channel| {
+            if channel.channel_type == shared_types::ChannelType::Voice {
+                visible_voice_channels += 1;
+            } else {
+                visible_text_channels += 1;
+            }
+
+            ChannelData {
+                id: channel.id.clone().into(),
+                name: channel.name.clone().into(),
+                peer_count: channel.peer_count as i32,
+                is_voice: channel.channel_type == shared_types::ChannelType::Voice,
+                is_active: space.active_channel_id.as_deref() == Some(channel.id.as_str())
+                    || space.selected_text_channel_id.as_deref() == Some(channel.id.as_str()),
+                unread_count: space
+                    .unread_text_channels
+                    .get(&channel.id)
+                    .copied()
+                    .unwrap_or(0) as i32,
+            }
+        })
+        .collect();
+
+    let members: Vec<MemberData> = space
+        .members
+        .iter()
+        .filter(|member| {
+            query.is_empty()
+                || member.name.to_lowercase().contains(&query)
+                || member
+                    .channel_name
+                    .as_deref()
+                    .map(|channel_name| channel_name.to_lowercase().contains(&query))
+                    .unwrap_or(false)
+        })
+        .map(|member| {
+            let initial = member
+                .name
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_uppercase()
+                .to_string();
+            let color_index = member
+                .name
+                .bytes()
+                .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32))
+                % 8;
+            MemberData {
+                id: member.id.clone().into(),
+                name: member.name.clone().into(),
+                initial: initial.into(),
+                channel_name: member.channel_name.clone().unwrap_or_default().into(),
+                is_in_voice: member.channel_id.is_some(),
+                color_index: color_index as i32,
+                is_server_muted: false,
+            }
+        })
+        .collect();
+
+    let visible_member_count = members.len() as i32;
+    window.set_channels(std::rc::Rc::new(slint::VecModel::from(channels)).into());
+    window.set_members(std::rc::Rc::new(slint::VecModel::from(members)).into());
+    window.set_visible_text_channels(visible_text_channels);
+    window.set_visible_voice_channels(visible_voice_channels);
+    window.set_visible_members(visible_member_count);
 }
 
 pub fn set_members(window: &MainWindow, members: &[shared_types::MemberInfo]) {
@@ -158,7 +247,11 @@ pub fn set_members(window: &MainWindow, members: &[shared_types::MemberInfo]) {
     window.set_members(rc.into());
 }
 
-pub fn set_chat_messages(window: &MainWindow, messages: &[shared_types::TextMessageData], self_name: &str) {
+pub fn set_chat_messages(
+    window: &MainWindow,
+    messages: &[shared_types::TextMessageData],
+    self_name: &str,
+) {
     let model: Vec<ChatMessage> = messages
         .iter()
         .map(|m| text_msg_to_chat_msg(m, self_name))
@@ -168,10 +261,19 @@ pub fn set_chat_messages(window: &MainWindow, messages: &[shared_types::TextMess
 }
 
 pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) -> ChatMessage {
-    let color_index = m.sender_name.bytes()
-        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32)) % 8;
+    let color_index = m
+        .sender_name
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32))
+        % 8;
     let reactions_str = format_reactions(&m.reactions);
-    let sender_initial = m.sender_name.chars().next().unwrap_or('?').to_uppercase().to_string();
+    let sender_initial = m
+        .sender_name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
     ChatMessage {
         sender_name: m.sender_name.clone().into(),
         sender_initial: sender_initial.into(),
@@ -189,7 +291,8 @@ pub fn format_reactions(reactions: &[shared_types::ReactionData]) -> String {
     if reactions.is_empty() {
         return String::new();
     }
-    reactions.iter()
+    reactions
+        .iter()
         .map(|r| format!("{} {}", r.emoji, r.users.len()))
         .collect::<Vec<_>>()
         .join("  ")

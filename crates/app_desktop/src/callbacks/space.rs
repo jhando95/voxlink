@@ -19,7 +19,9 @@ pub fn setup_create_space(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_create_space(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let name = w.get_space_name().to_string().trim().to_string();
         let user_name = w.get_user_name().to_string().trim().to_string();
         if name.is_empty() {
@@ -57,7 +59,9 @@ pub fn setup_join_space(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_join_space(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let invite_code = w.get_space_invite_code().to_string().trim().to_string();
         let user_name = w.get_user_name().to_string().trim().to_string();
         if invite_code.is_empty() {
@@ -74,7 +78,10 @@ pub fn setup_join_space(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             if let Err(e) = net
-                .send_signal(&SignalMessage::JoinSpace { invite_code, user_name })
+                .send_signal(&SignalMessage::JoinSpace {
+                    invite_code,
+                    user_name,
+                })
                 .await
             {
                 log::error!("Failed to join space: {e}");
@@ -97,9 +104,12 @@ pub fn setup_select_space(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_select_space(move |space_id| {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let space_id_str = space_id.to_string();
         w.set_current_space_id(space_id.clone());
+        w.set_space_search_query(slint::SharedString::default());
 
         // Show cached space data immediately for responsiveness
         let invite_code = {
@@ -109,8 +119,7 @@ pub fn setup_select_space(
                 if space.id == space_id_str {
                     w.set_current_space_name(space.name.clone().into());
                     w.set_current_space_invite(space.invite_code.clone().into());
-                    ui_shell::set_channels(&w, &space.channels);
-                    ui_shell::set_members(&w, &space.members);
+                    ui_shell::render_space(&w, space, "");
                     invite = Some(space.invite_code.clone());
                 }
             }
@@ -123,7 +132,8 @@ pub fn setup_select_space(
         // Re-join the space on the server so the peer is registered
         let invite_code = invite_code.or_else(|| {
             let cfg = config_store::load_config();
-            cfg.saved_spaces.iter()
+            cfg.saved_spaces
+                .iter()
                 .find(|s| s.id == space_id_str)
                 .map(|s| s.invite_code.clone())
         });
@@ -132,11 +142,29 @@ pub fn setup_select_space(
             let network = network.clone();
             rt_handle.spawn(async move {
                 let net = network.lock().await;
-                let _ = net.send_signal(&SignalMessage::JoinSpace {
-                    invite_code: code,
-                    user_name,
-                }).await;
+                let _ = net
+                    .send_signal(&SignalMessage::JoinSpace {
+                        invite_code: code,
+                        user_name,
+                    })
+                    .await;
             });
+        }
+    });
+}
+
+pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::AppState>>) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    window.on_space_search_changed(move |query| {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            if space.id == w.get_current_space_id().to_string() {
+                ui_shell::render_space(&w, space, query.as_str());
+            }
         }
     });
 }
@@ -179,23 +207,38 @@ pub fn setup_leave_space(
             s.current_view = AppView::Home;
         }
 
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_current_view(ui_shell::view_to_index(AppView::Home));
         w.set_current_space_id(slint::SharedString::default());
         w.set_current_space_name(slint::SharedString::default());
         w.set_current_space_invite(slint::SharedString::default());
+        w.set_space_search_query(slint::SharedString::default());
+        w.set_visible_text_channels(0);
+        w.set_visible_voice_channels(0);
+        w.set_visible_members(0);
         w.set_is_space_owner(false);
         w.set_in_space_channel(false);
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);
+        w.set_chat_channel_id(slint::SharedString::default());
+        w.set_chat_channel_name(slint::SharedString::default());
+        w.set_chat_input(slint::SharedString::default());
+        w.set_editing_message_id(slint::SharedString::default());
+        w.set_editing_original_content(slint::SharedString::default());
         w.set_status_text("Connected".into());
         w.set_window_title("Voxlink".into());
+        ui_shell::set_channels(&w, &[]);
+        ui_shell::set_members(&w, &[]);
 
         // Repopulate saved spaces list so the space still shows on Home view
         let cfg = config_store::load_config();
         if !cfg.saved_spaces.is_empty() {
-            let space_infos: Vec<shared_types::SpaceInfo> = cfg.saved_spaces.iter()
+            let space_infos: Vec<shared_types::SpaceInfo> = cfg
+                .saved_spaces
+                .iter()
                 .map(|s| shared_types::SpaceInfo {
                     id: s.id.clone(),
                     name: s.name.clone(),
@@ -227,7 +270,9 @@ pub fn setup_leave_space(
 pub fn setup_copy_invite_code(window: &MainWindow) {
     let window_weak = window.as_weak();
     window.on_copy_invite_code(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let code = w.get_current_space_invite().to_string();
         if !code.is_empty() {
             if helpers::copy_to_clipboard(&code) {
@@ -235,6 +280,36 @@ pub fn setup_copy_invite_code(window: &MainWindow) {
             } else {
                 w.set_status_text("Failed to copy to clipboard".into());
             }
+        }
+    });
+}
+
+pub fn setup_copy_share_message(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_copy_share_message(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let invite = w.get_current_space_invite().to_string();
+        if invite.is_empty() {
+            return;
+        }
+
+        let name = w.get_current_space_name().to_string();
+        let share_message = if name.is_empty() {
+            format!(
+                "Join me on Voxlink.\nInvite code: {invite}\nOpen Voxlink and paste the invite code to jump in."
+            )
+        } else {
+            format!(
+                "Join {name} on Voxlink.\nInvite code: {invite}\nOpen Voxlink and paste the invite code to jump in."
+            )
+        };
+
+        if helpers::copy_to_clipboard(&share_message) {
+            w.set_status_text("Share message copied".into());
+        } else {
+            w.set_status_text("Failed to copy to clipboard".into());
         }
     });
 }
@@ -248,7 +323,9 @@ pub fn setup_delete_space(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_delete_space(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_status_text("Deleting space...".into());
         let network = network.clone();
         let window_weak = window_weak.clone();
@@ -276,7 +353,9 @@ pub fn setup_kick_member(
         let network = network.clone();
         rt_handle.spawn(async move {
             let net = network.lock().await;
-            let _ = net.send_signal(&SignalMessage::KickMember { member_id }).await;
+            let _ = net
+                .send_signal(&SignalMessage::KickMember { member_id })
+                .await;
         });
     });
 }
@@ -293,7 +372,9 @@ pub fn setup_ban_member(
         let network = network.clone();
         rt_handle.spawn(async move {
             let net = network.lock().await;
-            let _ = net.send_signal(&SignalMessage::BanMember { member_id }).await;
+            let _ = net
+                .send_signal(&SignalMessage::BanMember { member_id })
+                .await;
         });
     });
 }
@@ -311,10 +392,7 @@ pub fn setup_server_mute_member(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::MuteMember {
-                    member_id,
-                    muted,
-                })
+                .send_signal(&SignalMessage::MuteMember { member_id, muted })
                 .await;
         });
     });

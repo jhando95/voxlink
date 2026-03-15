@@ -140,10 +140,14 @@ pub fn check_connection(
                     })
                     .await;
                 if is_muted {
-                    let _ = net.send_signal(&SignalMessage::MuteChanged { is_muted }).await;
+                    let _ = net
+                        .send_signal(&SignalMessage::MuteChanged { is_muted })
+                        .await;
                 }
                 if is_deafened {
-                    let _ = net.send_signal(&SignalMessage::DeafenChanged { is_deafened }).await;
+                    let _ = net
+                        .send_signal(&SignalMessage::DeafenChanged { is_deafened })
+                        .await;
                 }
             }
         });
@@ -156,6 +160,7 @@ pub fn check_connection(
             *cooldown -= 1;
             if *cooldown == 0 {
                 w.set_status_text("Reconnecting...".into());
+                w.set_reconnect_attempts(w.get_reconnect_attempts() + 1);
 
                 let network = network.clone();
                 let window_weak = w.as_weak();

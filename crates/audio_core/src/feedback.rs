@@ -1,6 +1,6 @@
 //! Keybind feedback tones — distinct sounds for mute/unmute/deafen/undeafen.
 //! Zero-allocation at runtime: tone samples are pre-computed once.
-//! Two-tone design: lower pitch = action on (muted/deafened), higher = action off.
+//! Lower pitch = action on (muted/deafened), higher = action off.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -17,10 +17,12 @@ const FADE_SAMPLES: usize = 96;
 const TONE_SAMPLES: usize = (SAMPLE_RATE * TONE_MS / 1000) as usize;
 
 // Frequencies for each action:
-const FREQ_MUTE_ON: f32 = 440.0;    // A4 — lower = muted
-const FREQ_MUTE_OFF: f32 = 880.0;   // A5 — higher = unmuted
-const FREQ_DEAFEN_ON: f32 = 330.0;  // E4 — even lower = deafened
+const FREQ_MUTE_ON: f32 = 440.0; // A4 — lower = muted
+const FREQ_MUTE_OFF: f32 = 880.0; // A5 — higher = unmuted
+const FREQ_DEAFEN_ON: f32 = 330.0; // E4 — even lower = deafened
 const FREQ_DEAFEN_OFF: f32 = 660.0; // E5 — mid = undeafened
+const FREQ_PREVIEW_ON: f32 = 523.25; // C5
+const FREQ_PREVIEW_OFF: f32 = 659.25; // E5
 
 /// Feedback action types
 #[derive(Clone, Copy)]
@@ -29,6 +31,7 @@ pub(crate) enum FeedbackAction {
     MuteOff,
     DeafenOn,
     DeafenOff,
+    OutputPreview,
 }
 
 fn generate_tone(freq: f32) -> Vec<f32> {
@@ -48,9 +51,32 @@ fn generate_tone(freq: f32) -> Vec<f32> {
     buf
 }
 
+fn generate_preview_tone() -> Vec<f32> {
+    let mut buf = vec![0.0f32; TONE_SAMPLES];
+    let tau = std::f32::consts::TAU;
+    let split = TONE_SAMPLES / 2;
+    for (i, sample) in buf.iter_mut().enumerate() {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let freq = if i < split {
+            FREQ_PREVIEW_ON
+        } else {
+            FREQ_PREVIEW_OFF
+        };
+        let envelope = if i < FADE_SAMPLES {
+            i as f32 / FADE_SAMPLES as f32
+        } else if i > TONE_SAMPLES - FADE_SAMPLES {
+            (TONE_SAMPLES - i) as f32 / FADE_SAMPLES as f32
+        } else {
+            1.0
+        };
+        *sample = (tau * freq * t).sin() * TONE_VOLUME * envelope;
+    }
+    buf
+}
+
 /// Pre-computed feedback tone buffers for all actions.
 pub(crate) struct FeedbackTone {
-    tones: [Arc<[f32]>; 4], // MuteOn, MuteOff, DeafenOn, DeafenOff
+    tones: [Arc<[f32]>; 5], // MuteOn, MuteOff, DeafenOn, DeafenOff, OutputPreview
     /// Which tone to play (index*TONE_SAMPLES + position, 0 = idle)
     cursor: Arc<AtomicU32>,
     /// Which tone index is active
@@ -65,6 +91,7 @@ impl FeedbackTone {
                 Arc::from(generate_tone(FREQ_MUTE_OFF)),
                 Arc::from(generate_tone(FREQ_DEAFEN_ON)),
                 Arc::from(generate_tone(FREQ_DEAFEN_OFF)),
+                Arc::from(generate_preview_tone()),
             ],
             cursor: Arc::new(AtomicU32::new(0)),
             active_tone: Arc::new(AtomicU32::new(0)),
@@ -90,7 +117,7 @@ impl FeedbackTone {
 
 /// Cloneable state for use in the playback callback.
 pub(crate) struct FeedbackPlayback {
-    tones: [Arc<[f32]>; 4],
+    tones: [Arc<[f32]>; 5],
     cursor: Arc<AtomicU32>,
     active_tone: Arc<AtomicU32>,
 }
@@ -139,7 +166,9 @@ mod tests {
             // Verify non-silent in middle region (single sample may hit a zero crossing)
             let mid = TONE_SAMPLES / 2;
             let peak = t[mid.saturating_sub(25)..=(mid + 25).min(t.len() - 1)]
-                .iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                .iter()
+                .map(|s| s.abs())
+                .fold(0.0f32, f32::max);
             assert!(peak > 0.01, "Tone {i} silent in middle region");
             // Verify fade-in/out
             assert!(t[0].abs() < 0.01, "Tone {i} no fade-in");
@@ -154,10 +183,14 @@ mod tests {
         let on_energy: f32 = tone.tones[0].iter().map(|s| s * s).sum();
         let off_energy: f32 = tone.tones[1].iter().map(|s| s * s).sum();
         // Both should have similar total energy but different waveforms
-        assert!((on_energy - off_energy).abs() / on_energy < 0.3,
-            "Similar energy expected");
+        assert!(
+            (on_energy - off_energy).abs() / on_energy < 0.3,
+            "Similar energy expected"
+        );
         // But waveforms should differ (different frequencies)
-        let diff: f32 = tone.tones[0].iter().zip(tone.tones[1].iter())
+        let diff: f32 = tone.tones[0]
+            .iter()
+            .zip(tone.tones[1].iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
         assert!(diff > 0.1, "Tones should be distinct");
@@ -195,9 +228,14 @@ mod tests {
         playback.mix_into(&mut buf2);
 
         // Should produce different waveforms
-        let diff: f32 = buf1.iter().zip(buf2.iter())
+        let diff: f32 = buf1
+            .iter()
+            .zip(buf2.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 0.1, "Different actions should produce different tones");
+        assert!(
+            diff > 0.1,
+            "Different actions should produce different tones"
+        );
     }
 }

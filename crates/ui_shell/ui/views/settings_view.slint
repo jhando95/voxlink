@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxToggle } from "../components.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
 export component SettingsView inherits Rectangle {
     in property <bool> wide: false;
@@ -13,6 +13,9 @@ export component SettingsView inherits Rectangle {
     in-out property <float> input-volume: 1.0;
     in-out property <float> output-volume: 1.0;
     in property <bool> is-open-mic: true;
+    in property <float> mic-level: 0.0;
+    in-out property <bool> mic-preview-active: false;
+    in-out property <bool> speaker-test-active: false;
     in-out property <float> noise-suppression: 0.5;
     in property <bool> feedback-sound: true;
     in property <bool> notifications-enabled: true;
@@ -25,6 +28,8 @@ export component SettingsView inherits Rectangle {
     callback refresh-devices();
     callback input-volume-changed(float);
     callback output-volume-changed(float);
+    callback toggle-mic-preview();
+    callback play-speaker-test();
     callback toggle-mic-mode();
     callback noise-suppression-changed(float);
     callback toggle-feedback-sound();
@@ -271,6 +276,137 @@ export component SettingsView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 14px;
+                            SectionLabel { text: "OUTPUT CHECK"; }
+
+                            Text {
+                                text: root.speaker-test-active
+                                    ? "Playing a short tone on " + (root.output-devices.length > 0 ? root.output-devices[root.selected-output] : "your selected output")
+                                    : "Play a local speaker test";
+                                color: VxTheme.text-primary;
+                                font-size: 15px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.speaker-test-active
+                                    ? "Use the sample to confirm your selected route and output level before joining a room."
+                                    : "This opens playback only long enough to hear a short preview tone. It does not join a call.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: root.speaker-test-active ? "Playing sample" : "Ready";
+                                    tone: root.speaker-test-active ? VxTheme.success : VxTheme.accent;
+                                    fill: root.speaker-test-active ? VxTheme.success-dim : VxTheme.accent-subtle;
+                                }
+                                VxStatusPill {
+                                    label: root.output-devices.length > 0 ? "Output selected" : "No output";
+                                    tone: root.output-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
+
+                            VxButton {
+                                label: root.speaker-test-active ? "Playing sample..." : "Play sample tone";
+                                accent: !root.speaker-test-active;
+                                soft: root.speaker-test-active;
+                                enabled: root.output-devices.length > 0 && !root.speaker-test-active;
+                                horizontal-stretch: 1;
+                                clicked => { root.play-speaker-test(); }
+                            }
+
+                            if root.output-devices.length == 0 : Text {
+                                text: "No speaker route is currently available.";
+                                color: VxTheme.danger;
+                                font-size: 10px;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+                            SectionLabel { text: "MIC CHECK"; }
+
+                            Text {
+                                text: root.mic-preview-active
+                                    ? "Listening on " + (root.input-devices.length > 0 ? root.input-devices[root.selected-input] : "your selected input")
+                                    : "Start a local mic check";
+                                color: VxTheme.text-primary;
+                                font-size: 15px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: !root.mic-preview-active
+                                    ? "This only opens capture while the settings panel is active. No call join, no background media session."
+                                    : root.mic-level > 0.20 ? "Signal is running hot. Back off a little or lower mic gain." :
+                                      root.mic-level > 0.06 ? "Signal looks healthy for normal speaking." :
+                                      "Speak at your normal distance to verify the meter responds.";
+                                color: root.mic-preview-active && root.mic-level > 0.20 ? VxTheme.warning : VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+
+                            Rectangle {
+                                height: 10px;
+                                border-radius: 5px;
+                                background: VxTheme.bg-soft;
+
+                                Rectangle {
+                                    width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
+                                    height: parent.height;
+                                    border-radius: 5px;
+                                    background: !root.mic-preview-active ? VxTheme.text-muted :
+                                                root.mic-level > 0.20 ? VxTheme.warning :
+                                                root.mic-level > 0.06 ? VxTheme.success : VxTheme.accent;
+                                    animate width { duration: 40ms; }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: root.mic-preview-active ? "Live preview" : "Idle";
+                                    tone: root.mic-preview-active ? VxTheme.success : VxTheme.text-secondary;
+                                    fill: root.mic-preview-active ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: Math.round(clamp(root.mic-level * 500.0, 0.0, 100.0)) + "%";
+                                    tone: root.mic-level > 0.20 ? VxTheme.warning :
+                                          root.mic-level > 0.06 ? VxTheme.success : VxTheme.accent;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
+
+                            VxButton {
+                                label: root.mic-preview-active ? "Stop mic check" : "Start mic check";
+                                accent: !root.mic-preview-active;
+                                soft: root.mic-preview-active;
+                                enabled: root.input-devices.length > 0;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-mic-preview(); }
+                            }
+
+                            if root.input-devices.length == 0 : Text {
+                                text: "No microphone route is currently available.";
+                                color: VxTheme.danger;
+                                font-size: 10px;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
                             SectionLabel { text: "VOICE MODE"; }
                             Text {
                                 text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
@@ -493,6 +629,73 @@ export component SettingsView inherits Rectangle {
                                 selected: idx == root.selected-output;
                                 clicked => { root.selected-output = idx; }
                             }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "OUTPUT CHECK"; }
+                        Text {
+                            text: root.speaker-test-active ? "Playing a local sample." : "Play a local speaker test.";
+                            color: VxTheme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.output-devices.length > 0
+                                ? "Confirms the selected speaker route without joining a call."
+                                : "Choose an output route to test playback.";
+                            color: root.output-devices.length > 0 ? VxTheme.text-muted : VxTheme.danger;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        VxButton {
+                            label: root.speaker-test-active ? "Playing sample..." : "Play sample tone";
+                            accent: !root.speaker-test-active;
+                            soft: root.speaker-test-active;
+                            enabled: root.output-devices.length > 0 && !root.speaker-test-active;
+                            horizontal-stretch: 1;
+                            clicked => { root.play-speaker-test(); }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "MIC CHECK"; }
+                        Text {
+                            text: root.mic-preview-active ? "Mic check is live." : "Start a local mic check.";
+                            color: VxTheme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
+                        Rectangle {
+                            height: 10px;
+                            border-radius: 5px;
+                            background: VxTheme.bg-soft;
+
+                            Rectangle {
+                                width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
+                                height: parent.height;
+                                border-radius: 5px;
+                                background: !root.mic-preview-active ? VxTheme.text-muted :
+                                            root.mic-level > 0.20 ? VxTheme.warning :
+                                            root.mic-level > 0.06 ? VxTheme.success : VxTheme.accent;
+                                animate width { duration: 40ms; }
+                            }
+                        }
+                        VxButton {
+                            label: root.mic-preview-active ? "Stop mic check" : "Start mic check";
+                            accent: !root.mic-preview-active;
+                            soft: root.mic-preview-active;
+                            enabled: root.input-devices.length > 0;
+                            horizontal-stretch: 1;
+                            clicked => { root.toggle-mic-preview(); }
                         }
                     }
                 }

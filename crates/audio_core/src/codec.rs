@@ -20,7 +20,7 @@ pub(crate) struct NoiseGate {
 
 // Gain ramp speed: ~2ms attack, ~5ms release at 48kHz
 // Each frame is 960 samples (20ms), so per-sample ramp:
-const GATE_ATTACK_PER_SAMPLE: f32 = 1.0 / 96.0;  // ~2ms to fully open
+const GATE_ATTACK_PER_SAMPLE: f32 = 1.0 / 96.0; // ~2ms to fully open
 const GATE_RELEASE_PER_SAMPLE: f32 = 1.0 / 240.0; // ~5ms to fully close
 
 impl NoiseGate {
@@ -70,7 +70,11 @@ impl NoiseGate {
     #[inline]
     pub fn apply_gain(&mut self, samples: &mut [f32], gate_open: bool) {
         let target = if gate_open { 1.0 } else { 0.0 };
-        let ramp = if gate_open { GATE_ATTACK_PER_SAMPLE } else { GATE_RELEASE_PER_SAMPLE };
+        let ramp = if gate_open {
+            GATE_ATTACK_PER_SAMPLE
+        } else {
+            GATE_RELEASE_PER_SAMPLE
+        };
 
         for s in samples.iter_mut() {
             if (self.gain - target).abs() > 0.001 {
@@ -116,7 +120,11 @@ impl MuteRamp {
     #[inline]
     pub fn apply(&mut self, samples: &mut [f32]) -> bool {
         // is_capturing=true means unmuted, is_capturing=false means muted
-        let target = if self.is_capturing.load(Ordering::Relaxed) { 1.0 } else { 0.0 };
+        let target = if self.is_capturing.load(Ordering::Relaxed) {
+            1.0
+        } else {
+            0.0
+        };
         let mut any_nonzero = false;
 
         for s in samples.iter_mut() {
@@ -232,7 +240,8 @@ impl DeEsser {
 
             // Smooth gain reduction
             let target = if ratio > DEESSER_THRESHOLD {
-                DEESSER_MAX_REDUCTION * ((ratio - DEESSER_THRESHOLD) / (1.0 - DEESSER_THRESHOLD)).min(1.0)
+                DEESSER_MAX_REDUCTION
+                    * ((ratio - DEESSER_THRESHOLD) / (1.0 - DEESSER_THRESHOLD)).min(1.0)
             } else {
                 0.0
             };
@@ -262,18 +271,18 @@ pub(crate) struct Agc {
 }
 
 // AGC smoothing: slow adaptation avoids pumping artifacts
-const AGC_RMS_ATTACK: f32 = 0.003;   // ~300ms to adapt to louder signal
-const AGC_RMS_RELEASE: f32 = 0.001;  // ~1s to adapt to quieter signal
-const AGC_GAIN_SMOOTH: f32 = 0.005;  // gain change rate per sample
+const AGC_RMS_ATTACK: f32 = 0.003; // ~300ms to adapt to louder signal
+const AGC_RMS_RELEASE: f32 = 0.001; // ~1s to adapt to quieter signal
+const AGC_GAIN_SMOOTH: f32 = 0.005; // gain change rate per sample
 
 impl Agc {
     pub fn new() -> Self {
         Self {
             rms_estimate: 0.05,
             gain: 1.0,
-            target_rms: 0.12,    // comfortable voice level
-            max_gain: 10.0,      // +20dB max boost
-            min_gain: 0.1,       // -20dB max cut
+            target_rms: 0.12, // comfortable voice level
+            max_gain: 10.0,   // +20dB max boost
+            min_gain: 0.1,    // -20dB max cut
         }
     }
 
@@ -482,7 +491,10 @@ mod tests {
                 hold_count += 1;
             }
         }
-        assert!(hold_count >= 1, "Gate should hold open after loud signal, got {hold_count} frames");
+        assert!(
+            hold_count >= 1,
+            "Gate should hold open after loud signal, got {hold_count} frames"
+        );
     }
 
     #[test]
@@ -499,8 +511,14 @@ mod tests {
         gate.apply_gain(&mut samples, true);
 
         // Gain should ramp up — first few samples attenuated, last samples near full
-        assert!(samples[0] < 0.5, "First sample should be attenuated during ramp-up");
-        assert!(samples[FRAME_SIZE - 1] > 0.45, "Last sample should be near full after ramp");
+        assert!(
+            samples[0] < 0.5,
+            "First sample should be attenuated during ramp-up"
+        );
+        assert!(
+            samples[FRAME_SIZE - 1] > 0.45,
+            "Last sample should be near full after ramp"
+        );
     }
 
     #[test]
@@ -514,7 +532,9 @@ mod tests {
 
         // Close gate
         gate.process(0.0, true); // hold starts
-        for _ in 0..6 { gate.process(0.0, true); } // exhaust hold
+        for _ in 0..6 {
+            gate.process(0.0, true);
+        } // exhaust hold
 
         let mut samples = [0.5f32; FRAME_SIZE];
         gate.apply_gain(&mut samples, false);
@@ -522,7 +542,10 @@ mod tests {
         // First sample should still be near full (smooth ramp-down)
         assert!(samples[0] > 0.3, "Release should be smooth, not instant");
         // After the ramp, last samples should be near zero
-        assert!(samples[FRAME_SIZE - 1] < 0.1, "Should be mostly closed by end of frame");
+        assert!(
+            samples[FRAME_SIZE - 1] < 0.1,
+            "Should be mostly closed by end of frame"
+        );
     }
 
     // ─── MuteRamp ───
@@ -576,7 +599,10 @@ mod tests {
         de.process(&mut samples);
         let processed_energy: f32 = samples.iter().map(|s| s * s).sum();
         let ratio = processed_energy / original_energy;
-        assert!(ratio > 0.9, "Low freq should pass through mostly unchanged: ratio={ratio}");
+        assert!(
+            ratio > 0.9,
+            "Low freq should pass through mostly unchanged: ratio={ratio}"
+        );
     }
 
     // ─── AGC ───
@@ -592,8 +618,12 @@ mod tests {
         // Now check that output is louder than input
         let mut samples = [0.01f32; FRAME_SIZE];
         agc.process(&mut samples);
-        let output_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
-        assert!(output_rms > 0.01, "AGC should boost quiet signal: rms={output_rms}");
+        let output_rms: f32 =
+            (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
+        assert!(
+            output_rms > 0.01,
+            "AGC should boost quiet signal: rms={output_rms}"
+        );
     }
 
     #[test]
@@ -606,8 +636,12 @@ mod tests {
         }
         let mut samples = [0.8f32; FRAME_SIZE];
         agc.process(&mut samples);
-        let output_rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
-        assert!(output_rms < 0.8, "AGC should attenuate loud signal: rms={output_rms}");
+        let output_rms: f32 =
+            (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
+        assert!(
+            output_rms < 0.8,
+            "AGC should attenuate loud signal: rms={output_rms}"
+        );
     }
 
     #[test]
@@ -631,7 +665,10 @@ mod tests {
         cn.fill(&mut samples);
         let energy: f32 = samples.iter().map(|s| s * s).sum::<f32>() / 960.0;
         assert!(energy > 0.0, "Comfort noise should be non-silent");
-        assert!(energy < 0.001, "Comfort noise should be very quiet: energy={energy}");
+        assert!(
+            energy < 0.001,
+            "Comfort noise should be very quiet: energy={energy}"
+        );
     }
 
     #[test]
@@ -640,9 +677,8 @@ mod tests {
         let mut samples = [0.0f32; 100];
         cn.fill(&mut samples);
         // Should not be all the same value
-        let distinct: std::collections::HashSet<u32> = samples.iter()
-            .map(|s| s.to_bits())
-            .collect();
+        let distinct: std::collections::HashSet<u32> =
+            samples.iter().map(|s| s.to_bits()).collect();
         assert!(distinct.len() > 10, "Comfort noise should have variety");
     }
 }

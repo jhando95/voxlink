@@ -13,10 +13,11 @@ pub fn handle_channel_created(
     channel: &shared_types::ChannelInfo,
 ) {
     log::info!("Channel created: {} ({})", channel.name, channel.id);
+    let search_query = w.get_space_search_query().to_string();
     let mut s = state.borrow_mut();
     if let Some(ref mut space) = s.space {
         space.channels.push(channel.clone());
-        ui_shell::set_channels(w, &space.channels);
+        ui_shell::render_space(w, space, &search_query);
     }
     w.set_new_channel_name(slint::SharedString::default());
     w.set_new_channel_is_voice(true);
@@ -31,6 +32,7 @@ pub fn handle_channel_joined(
     ctx: &AudioContext,
 ) {
     log::info!("Joined channel: {channel_name} ({channel_id})");
+    let search_query = w.get_space_search_query().to_string();
 
     let mut s = state.borrow_mut();
 
@@ -59,10 +61,14 @@ pub fn handle_channel_joined(
 
     if let Some(ref mut space) = s.space {
         space.active_channel_id = Some(channel_id.to_string());
+        ui_shell::render_space(w, space, &search_query);
     }
 
     w.set_room_code(channel_name.into());
     w.set_in_space_channel(true);
+    w.set_reconnect_attempts(0);
+    w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+    w.set_dropped_frames(0);
     w.set_current_view(ui_shell::view_to_index(AppView::Room));
     let count = s.room.participants.len();
     w.set_window_title(format!("Voxlink \u{2014} {channel_name} ({count})").into());
@@ -89,19 +95,22 @@ pub fn handle_channel_left(
     {
         let s = state.borrow();
         if s.current_view != AppView::Room {
-            log::debug!("Ignoring ChannelLeft — already left (view={:?})", s.current_view);
+            log::debug!(
+                "Ignoring ChannelLeft — already left (view={:?})",
+                s.current_view
+            );
             return;
         }
     }
 
     log::info!("Left channel");
+    let search_query = w.get_space_search_query().to_string();
     {
         let mut s = state.borrow_mut();
         s.room = Default::default();
         if let Some(ref mut space) = s.space {
             space.active_channel_id = None;
-            ui_shell::set_channels(w, &space.channels);
-            ui_shell::set_members(w, &space.members);
+            ui_shell::render_space(w, space, &search_query);
         }
         s.current_view = AppView::Space;
     }
@@ -113,6 +122,9 @@ pub fn handle_channel_left(
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
     w.set_mic_level(0.0);
+    w.set_reconnect_attempts(0);
+    w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+    w.set_dropped_frames(0);
     w.set_window_title("Voxlink".into());
 
     let audio = ctx.audio.clone();

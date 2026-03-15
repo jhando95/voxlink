@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { SpaceData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
     in property <bool> wide: false;
@@ -242,6 +242,27 @@ export component HomeView inherits Rectangle {
                     width: 340px;
                     spacing: 18px;
 
+                    if root.join-code != "" : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "RECENT ROOM"; }
+                            VxStatBlock {
+                                label: "Last call code";
+                                value: root.join-code;
+                                detail: "Stored locally so you can jump back in faster.";
+                                tone: VxTheme.accent;
+                            }
+                            VxButton {
+                                label: root.is-connected ? "Rejoin last call" : "Connect to rejoin";
+                                accent: root.is-connected;
+                                enabled: root.is-connected;
+                                horizontal-stretch: 1;
+                                clicked => { root.join-room(root.join-code); }
+                            }
+                        }
+                    }
+
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
@@ -481,6 +502,19 @@ export component HomeView inherits Rectangle {
                     VerticalLayout {
                         padding: 18px;
                         spacing: 12px;
+                        if root.join-code != "" : VxStatBlock {
+                            label: "Recent room";
+                            value: root.join-code;
+                            detail: "Jump back in when you are ready.";
+                            tone: VxTheme.accent;
+                        }
+                        if root.join-code != "" : VxButton {
+                            label: root.is-connected ? "Rejoin last call" : "Connect to rejoin";
+                            accent: root.is-connected;
+                            enabled: root.is-connected;
+                            horizontal-stretch: 1;
+                            clicked => { root.join-room(root.join-code); }
+                        }
                         HorizontalLayout {
                             alignment: space-between;
                             SectionLabel { text: "QUICK CALL"; }

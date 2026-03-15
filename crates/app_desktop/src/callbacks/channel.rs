@@ -17,7 +17,9 @@ pub fn setup_create_channel(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_create_channel(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let channel_name = w.get_new_channel_name().to_string().trim().to_string();
         if channel_name.is_empty() {
             w.set_status_text("Enter a channel name".into());
@@ -34,7 +36,10 @@ pub fn setup_create_channel(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             if let Err(e) = net
-                .send_signal(&SignalMessage::CreateChannel { channel_name, channel_type })
+                .send_signal(&SignalMessage::CreateChannel {
+                    channel_name,
+                    channel_type,
+                })
                 .await
             {
                 log::error!("Failed to create channel: {e}");
@@ -56,7 +61,9 @@ pub fn setup_join_channel(
     let rt_handle = rt_handle.clone();
     window.on_join_channel(move |channel_id| {
         let channel_id_str = channel_id.to_string();
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_status_text("Joining channel...".into());
         let network = network.clone();
         let window_weak = window_weak.clone();
@@ -112,14 +119,15 @@ pub fn setup_leave_channel(
         *audio_started.borrow_mut() = false;
         speaking_ticks.borrow_mut().clear();
 
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
 
         // Restore channel/member list before switching view
         {
             let s = state.borrow();
             if let Some(ref space) = s.space {
-                ui_shell::set_channels(&w, &space.channels);
-                ui_shell::set_members(&w, &space.members);
+                ui_shell::render_space(&w, space, &w.get_space_search_query().to_string());
             }
         }
 
@@ -132,6 +140,9 @@ pub fn setup_leave_channel(
         w.set_window_title("Voxlink".into());
         w.set_room_status(slint::SharedString::default());
         w.set_mic_level(0.0);
+        w.set_reconnect_attempts(0);
+        w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+        w.set_dropped_frames(0);
 
         let network = network.clone();
         let audio = audio.clone();

@@ -13,13 +13,17 @@ pub fn setup_connect(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_connect_server(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let addr = w.get_server_address().to_string().trim().to_string();
         let user_name = w.get_user_name().to_string().trim().to_string();
         if addr.is_empty() {
             w.set_status_text("Enter a server address".into());
             return;
         }
+        w.set_reconnect_attempts(0);
+        w.set_ping_ms(-1);
         let network = network.clone();
         let window_weak = window_weak.clone();
         w.set_status_text("Connecting...".into());
@@ -80,7 +84,9 @@ pub fn setup_disconnect(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_disconnect_server(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         if w.get_current_view() == 1 {
             w.invoke_leave_room();
         }
@@ -90,6 +96,10 @@ pub fn setup_disconnect(
         });
         w.set_is_connected(false);
         w.set_status_text("Disconnected".into());
+        w.set_ping_ms(-1);
+        w.set_reconnect_attempts(0);
+        w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+        w.set_dropped_frames(0);
     });
 }
 

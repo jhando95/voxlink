@@ -9,11 +9,18 @@ export component SpaceView inherits Rectangle {
     in property <bool> is-space-owner: false;
     in property <[ChannelData]> channels: [];
     in property <[MemberData]> members: [];
+    in-out property <string> search-query: "";
+    in property <int> visible-text-channels: 0;
+    in property <int> visible-voice-channels: 0;
+    in property <int> visible-members: 0;
     in-out property <string> new-channel-name: "";
     in-out property <bool> new-channel-is-voice: true;
     in-out property <bool> confirm-delete-visible: false;
+    changed search-query => { root.search-changed(root.search-query); }
     callback navigate(int);
     callback copy-invite-code();
+    callback copy-share-message();
+    callback search-changed(string);
     callback select-text-channel(string);
     callback join-channel(string);
     callback create-channel();
@@ -67,6 +74,48 @@ export component SpaceView inherits Rectangle {
                 }
             }
 
+            VxCard {
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 12px;
+                    SectionLabel { text: "DISCOVER"; }
+
+                    VxInput {
+                        text <=> root.search-query;
+                        placeholder: "Filter channels or members";
+                        horizontal-stretch: 1;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        VxStatusPill {
+                            label: root.visible-text-channels + " text";
+                            tone: VxTheme.accent;
+                            fill: VxTheme.accent-subtle;
+                        }
+                        VxStatusPill {
+                            label: root.visible-voice-channels + " voice";
+                            tone: VxTheme.success;
+                            fill: VxTheme.success-dim;
+                        }
+                        VxStatusPill {
+                            label: root.visible-members + " members";
+                            tone: VxTheme.warning;
+                            fill: VxTheme.warning-soft;
+                        }
+                    }
+
+                    Text {
+                        text: root.search-query == ""
+                            ? "Use filters to jump straight to the right channel or teammate."
+                            : "Results update instantly without reloading the space.";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
             if root.wide : HorizontalLayout {
                 spacing: 18px;
 
@@ -80,8 +129,10 @@ export component SpaceView inherits Rectangle {
                             spacing: 12px;
                             SectionLabel { text: "TEXT CHANNELS"; }
 
-                            if root.channels.length == 0 : Text {
-                                text: "Create the first channel to shape the space.";
+                            if root.visible-text-channels == 0 : Text {
+                                text: root.search-query == ""
+                                    ? "Create the first text channel to shape the space."
+                                    : "No text channels match this filter.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                             }
@@ -90,8 +141,12 @@ export component SpaceView inherits Rectangle {
                                 height: channel.is-voice ? 0px : 58px;
                                 visible: !channel.is-voice;
                                 border-radius: VxTheme.radius-card;
-                                background: text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
+                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                            channel.unread-count > 0 ? VxTheme.accent-subtle :
+                                            text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: channel.is-active || channel.unread-count > 0
+                                    ? VxTheme.accent-border
+                                    : VxTheme.border-subtle;
                                 border-width: 1px;
 
                                 text-channel-touch := TouchArea {
@@ -109,12 +164,18 @@ export component SpaceView inherits Rectangle {
                                         width: 36px;
                                         height: 36px;
                                         border-radius: 10px;
-                                        background: VxTheme.bg-panel;
-                                        border-color: VxTheme.border-subtle;
+                                        background: channel.is-active || channel.unread-count > 0
+                                            ? VxTheme.accent-subtle
+                                            : VxTheme.bg-panel;
+                                        border-color: channel.is-active || channel.unread-count > 0
+                                            ? VxTheme.accent-border
+                                            : VxTheme.border-subtle;
                                         border-width: 1px;
                                         Text {
                                             text: "TXT";
-                                            color: VxTheme.text-secondary;
+                                            color: channel.is-active || channel.unread-count > 0
+                                                ? VxTheme.accent
+                                                : VxTheme.text-secondary;
                                             font-size: 10px;
                                             font-weight: 800;
                                             horizontal-alignment: center;
@@ -128,21 +189,28 @@ export component SpaceView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: channel.name;
-                                            color: VxTheme.text-primary;
+                                            color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
                                             font-size: 12px;
                                             font-weight: 700;
                                         }
                                         Text {
-                                            text: "Persistent text channel";
+                                            text: channel.unread-count > 0
+                                                ? channel.unread-count + " new messages"
+                                                : channel.is-active ? "Recent conversation" : "Persistent text channel";
                                             color: VxTheme.text-muted;
                                             font-size: 9px;
                                         }
                                     }
 
-                                    VxStatusPill {
-                                        label: "Open";
+                                    if channel.unread-count > 0 : VxStatusPill {
+                                        label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
                                         tone: VxTheme.accent;
                                         fill: VxTheme.accent-subtle;
+                                    }
+                                    if channel.unread-count == 0 : VxStatusPill {
+                                        label: channel.is-active ? "Recent" : "Open";
+                                        tone: channel.is-active ? VxTheme.success : VxTheme.accent;
+                                        fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
                                     }
                                 }
                             }
@@ -155,13 +223,23 @@ export component SpaceView inherits Rectangle {
                             spacing: 12px;
                             SectionLabel { text: "VOICE CHANNELS"; }
 
+                            if root.visible-voice-channels == 0 : Text {
+                                text: root.search-query == ""
+                                    ? "Voice channels appear here as soon as you add them."
+                                    : "No voice channels match this filter.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+
                             for channel in root.channels : Rectangle {
                                 height: channel.is-voice ? 62px : 0px;
                                 visible: channel.is-voice;
                                 border-radius: VxTheme.radius-card;
-                                background: channel.peer-count > 0 ? VxTheme.speaking-row-bg :
+                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                            channel.peer-count > 0 ? VxTheme.speaking-row-bg :
                                             voice-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: channel.peer-count > 0 ? VxTheme.speaking-border : VxTheme.border-subtle;
+                                border-color: channel.is-active ? VxTheme.accent-border :
+                                              channel.peer-count > 0 ? VxTheme.speaking-border : VxTheme.border-subtle;
                                 border-width: 1px;
 
                                 voice-touch := TouchArea {
@@ -179,12 +257,18 @@ export component SpaceView inherits Rectangle {
                                         width: 36px;
                                         height: 36px;
                                         border-radius: 10px;
-                                        background: channel.peer-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-panel;
-                                        border-color: channel.peer-count > 0 ? VxTheme.accent-border : VxTheme.border-subtle;
+                                        background: channel.is-active || channel.peer-count > 0
+                                            ? VxTheme.accent-subtle
+                                            : VxTheme.bg-panel;
+                                        border-color: channel.is-active || channel.peer-count > 0
+                                            ? VxTheme.accent-border
+                                            : VxTheme.border-subtle;
                                         border-width: 1px;
                                         Text {
                                             text: "VC";
-                                            color: channel.peer-count > 0 ? VxTheme.accent : VxTheme.text-secondary;
+                                            color: channel.is-active || channel.peer-count > 0
+                                                ? VxTheme.accent
+                                                : VxTheme.text-secondary;
                                             font-size: 10px;
                                             font-weight: 800;
                                             horizontal-alignment: center;
@@ -198,17 +282,23 @@ export component SpaceView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: channel.name;
-                                            color: VxTheme.text-primary;
+                                            color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
                                             font-size: 12px;
                                             font-weight: 700;
                                         }
                                         Text {
-                                            text: channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
+                                            text: channel.is-active ? "Connected right now" :
+                                                  channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
                                             color: VxTheme.text-muted;
                                             font-size: 9px;
                                         }
                                     }
 
+                                    if channel.is-active : VxStatusPill {
+                                        label: "Connected";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
                                     if channel.peer-count > 0 : VxStatusPill {
                                         label: channel.peer-count + " live";
                                         tone: VxTheme.success;
@@ -269,8 +359,8 @@ export component SpaceView inherits Rectangle {
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
-                            spacing: 10px;
-                            SectionLabel { text: "SPACE DETAILS"; }
+                            spacing: 12px;
+                            SectionLabel { text: "SPACE INVITE"; }
                             Text {
                                 text: root.current-space-invite;
                                 color: VxTheme.text-primary;
@@ -278,17 +368,69 @@ export component SpaceView inherits Rectangle {
                                 font-weight: 700;
                                 letter-spacing: 1.5px;
                             }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: "Paste to join";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
+                                }
+                                VxStatusPill {
+                                    label: "No account wall";
+                                    tone: VxTheme.success;
+                                    fill: VxTheme.success-dim;
+                                }
+                            }
                             Text {
                                 text: "Share this invite to grow the room without making anyone create an account.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
                             }
-                            VxButton {
-                                label: "Copy invite";
-                                accent: true;
-                                horizontal-stretch: 1;
-                                clicked => { root.copy-invite-code(); }
+                            Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "Join " + (root.current-space-name != "" ? root.current-space-name : "this space") + " on Voxlink";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: "Invite code: " + root.current-space-invite;
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: "Open Voxlink and paste the invite code to jump straight in.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxButton {
+                                    label: "Copy invite";
+                                    accent: true;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.copy-invite-code(); }
+                                }
+                                VxButton {
+                                    label: "Copy share";
+                                    soft: true;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.copy-share-message(); }
+                                }
                             }
                         }
                     }
@@ -301,11 +443,19 @@ export component SpaceView inherits Rectangle {
                                 alignment: space-between;
                                 SectionLabel { text: "MEMBERS"; }
                                 Text {
-                                    text: root.members.length + " online";
+                                    text: root.visible-members + " visible";
                                     color: VxTheme.text-muted;
                                     font-size: 10px;
                                     font-weight: 600;
                                 }
+                            }
+
+                            if root.visible-members == 0 : Text {
+                                text: root.search-query == ""
+                                    ? "Members show up here as soon as they join the space."
+                                    : "No members match this filter.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
                             }
 
                             for member in root.members : Rectangle {
@@ -428,12 +578,59 @@ export component SpaceView inherits Rectangle {
                     VerticalLayout {
                         padding: 18px;
                         spacing: 12px;
+                        SectionLabel { text: "SPACE INVITE"; }
+                        Text {
+                            text: root.current-space-invite;
+                            color: VxTheme.text-primary;
+                            font-size: 18px;
+                            font-weight: 700;
+                            letter-spacing: 1.5px;
+                        }
+                        Text {
+                            text: "Share the code directly or copy a ready-to-send invite note.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxButton {
+                                label: "Copy invite";
+                                accent: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.copy-invite-code(); }
+                            }
+                            VxButton {
+                                label: "Copy share";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.copy-share-message(); }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
                         SectionLabel { text: "CHANNELS"; }
+                        if root.channels.length == 0 : Text {
+                            text: root.search-query == ""
+                                ? "Channels appear here when the space has activity."
+                                : "No channels match this filter.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                        }
                         for channel in root.channels : Rectangle {
                             height: 56px;
                             border-radius: VxTheme.radius-card;
-                            background: compact-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                            border-color: VxTheme.border-subtle;
+                            background: channel.is-active ? VxTheme.tab-active-bg :
+                                        channel.unread-count > 0 ? VxTheme.accent-subtle :
+                                        compact-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: channel.is-active || channel.unread-count > 0
+                                ? VxTheme.accent-border
+                                : VxTheme.border-subtle;
                             border-width: 1px;
 
                             compact-channel-touch := TouchArea {
@@ -454,16 +651,22 @@ export component SpaceView inherits Rectangle {
                                 alignment: center;
                                 Text {
                                     text: channel.is-voice ? "VC" : "TXT";
-                                    color: channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
+                                    color: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
                                     font-size: 10px;
                                     font-weight: 800;
                                 }
                                 Text {
                                     text: channel.name;
-                                    color: VxTheme.text-primary;
+                                    color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
                                     font-size: 12px;
                                     font-weight: 700;
                                     horizontal-stretch: 1;
+                                }
+                                if channel.unread-count > 0 : Text {
+                                    text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
                                 }
                                 if channel.peer-count > 0 : Text {
                                     text: channel.peer-count + "";

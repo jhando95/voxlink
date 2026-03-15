@@ -32,7 +32,9 @@ pub fn setup_toggle_mute(
             }
         }
 
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_is_muted(muted);
         ui_shell::set_participants(&w, &state.borrow().room.participants);
 
@@ -80,7 +82,9 @@ pub fn setup_toggle_deafen(
             }
         }
 
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_is_deafened(v.is_deafened);
         w.set_is_muted(v.is_muted);
         ui_shell::set_participants(&w, &state.borrow().room.participants);
@@ -103,7 +107,9 @@ pub fn setup_toggle_deafen(
                 .send_signal(&SignalMessage::MuteChanged { is_muted: muted })
                 .await;
             let _ = net
-                .send_signal(&SignalMessage::DeafenChanged { is_deafened: deafened })
+                .send_signal(&SignalMessage::DeafenChanged {
+                    is_deafened: deafened,
+                })
                 .await;
         });
     });
@@ -126,7 +132,9 @@ pub fn setup_toggle_mic_mode(
             MicMode::PushToTalk => MicMode::OpenMic,
         };
         v.set_mic_mode(new_mode);
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_is_open_mic(new_mode == MicMode::OpenMic);
 
         let audio = audio.clone();

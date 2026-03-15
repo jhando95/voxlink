@@ -19,7 +19,9 @@ pub fn setup_create_room(
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_create_room(move || {
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         let user_name = w.get_user_name().to_string().trim().to_string();
         if user_name.is_empty() {
             w.set_status_text("Enter your name first".into());
@@ -58,7 +60,9 @@ pub fn setup_join_room(
     let rt_handle = rt_handle.clone();
     window.on_join_room(move |code| {
         let code = code.to_string().trim().to_uppercase();
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         if code.is_empty() {
             w.set_status_text("Enter a call code".into());
             return;
@@ -124,7 +128,9 @@ pub fn setup_leave_room(
         *audio_started.borrow_mut() = false;
         speaking_ticks.borrow_mut().clear();
 
-        let Some(w) = window_weak.upgrade() else { return; };
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
         w.set_current_view(ui_shell::view_to_index(AppView::Home));
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
@@ -133,6 +139,9 @@ pub fn setup_leave_room(
         w.set_window_title("Voxlink".into());
         w.set_room_status(slint::SharedString::default());
         w.set_mic_level(0.0);
+        w.set_reconnect_attempts(0);
+        w.set_dropped_frames_baseline(w.get_dropped_frames_total());
+        w.set_dropped_frames(0);
 
         helpers::clear_room_code_async();
 
