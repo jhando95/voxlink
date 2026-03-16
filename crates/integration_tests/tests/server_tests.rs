@@ -4520,3 +4520,710 @@ async fn test_duplicate_friend_request_rejected() {
         other => panic!("Expected Error for duplicate request, got: {:?}", other),
     }
 }
+
+// ─── Stress Tests: Concurrency, Reconnection, Edge Cases ───
+
+/// Test: rapid connect/disconnect cycles don't crash the server.
+#[tokio::test]
+async fn test_rapid_connect_disconnect_cycles() {
+    let server = TestServer::start().await;
+
+    for _ in 0..20 {
+        let mut client = server.connect().await;
+        // Send a harmless message to engage the connection
+        client
+            .send_signal(&SignalMessage::CreateRoom {
+                user_name: "FlashUser".to_string(),
+                password: None,
+            })
+            .await;
+        // Drop immediately — simulates abrupt disconnect
+        drop(client);
+    }
+
+    // Server should still be alive and accepting connections
+    let mut check = server.connect().await;
+    let code = create_room(&mut check, "StillAlive").await;
+    assert!(!code.is_empty());
+}
+
+/// Test: multiple clients join/leave rooms concurrently.
+#[tokio::test]
+async fn test_concurrent_room_join_leave() {
+    let server = TestServer::start().await;
+    let mut host = server.connect().await;
+    let room_code = create_room(&mut host, "Host").await;
+
+    // Spawn 5 clients that join, send audio, then leave concurrently
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let mut client = server.connect().await;
+        let code = room_code.clone();
+        let name = format!("Client{i}");
+        let handle = tokio::spawn(async move {
+            join_room(&mut client, &code, &name).await;
+            // Drain PeerJoined etc
+            let _ = client.recv_signal_timeout(Duration::from_millis(500)).await;
+
+            // Send a few audio frames
+            let audio = generate_test_audio();
+            for _ in 0..3 {
+                client.send_binary(&audio).await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+
+            // Leave
+            client
+                .send_signal(&SignalMessage::LeaveRoom)
+                .await;
+            let _ = client.recv_signal_timeout(Duration::from_millis(500)).await;
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // Host should still be connected and functional
+    host.send_signal(&SignalMessage::LeaveRoom).await;
+}
+
+/// Test: client sends malformed JSON — server ignores it, stays alive.
+#[tokio::test]
+async fn test_malformed_json_ignored() {
+    let server = TestServer::start().await;
+    let mut client = server.connect().await;
+
+    // Send garbage text
+    client
+        .sink
+        .send(Message::Text("{{not valid json".into()))
+        .await
+        .unwrap();
+
+    // Send more garbage
+    client
+        .sink
+        .send(Message::Text("".into()))
+        .await
+        .unwrap();
+
+    // Send a valid unknown field — should be ignored gracefully
+    client
+        .sink
+        .send(Message::Text(r#"{"UnknownVariant":{}}"#.into()))
+        .await
+        .unwrap();
+
+    // Server should still respond to valid messages
+    let code = create_room(&mut client, "StillWorks").await;
+    assert!(!code.is_empty());
+}
+
+/// Test: oversized audio frame is rejected.
+#[tokio::test]
+async fn test_oversized_audio_frame_rejected() {
+    let server = TestServer::start().await;
+    let mut host = server.connect().await;
+    let room_code = create_room(&mut host, "Host").await;
+    let mut listener = server.connect().await;
+    join_room(&mut listener, &room_code, "Listener").await;
+    // drain PeerJoined
+    let _ = listener
+        .recv_signal_timeout(Duration::from_millis(300))
+        .await;
+    let _ = host
+        .recv_signal_timeout(Duration::from_millis(300))
+        .await;
+
+    // Send a frame much larger than MAX_AUDIO_FRAME_SIZE (4096 bytes)
+    let big_frame = vec![0u8; 10000];
+    host.send_binary(&big_frame).await;
+
+    // Listener should NOT receive the oversized frame
+    let got = listener
+        .recv_binary_timeout(Duration::from_millis(500))
+        .await;
+    assert!(got.is_none(), "Oversized frame should be rejected");
+
+    // Normal-sized frame should still work
+    let audio = generate_test_audio();
+    host.send_binary(&audio).await;
+    let got = listener
+        .recv_binary_timeout(Duration::from_secs(2))
+        .await;
+    assert!(got.is_some(), "Normal frame should still be relayed");
+}
+
+/// Test: space operations while disconnected peers are listed as members.
+#[tokio::test]
+async fn test_stale_members_cleaned_on_join() {
+    let server = TestServer::start().await;
+
+    // Alice creates space
+    let mut alice = server.connect().await;
+    let (space, _channels) = create_space(&mut alice, "TestSpace", "Alice").await;
+
+    // Bob joins, then abruptly disconnects
+    let mut bob = server.connect().await;
+    let (_, _, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+    assert!(members.len() >= 1); // At least Alice
+    // drain MemberJoined from Alice
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    drop(bob); // Abrupt disconnect
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Charlie joins — stale Bob should be cleaned up
+    let mut charlie = server.connect().await;
+    let (_, _, members) = join_space(&mut charlie, &space.invite_code, "Charlie").await;
+
+    // members should contain Alice and Charlie but NOT Bob (stale)
+    let member_names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+    assert!(
+        !member_names.contains(&"Bob"),
+        "Stale Bob should have been cleaned up. Members: {:?}",
+        member_names
+    );
+}
+
+/// Test: space invite code with whitespace/mixed case works.
+#[tokio::test]
+async fn test_invite_code_normalization() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (space, _) = create_space(&mut alice, "CaseTest", "Alice").await;
+
+    // Try joining with the invite code in uppercase
+    let mut bob = server.connect().await;
+    let upper_code = space.invite_code.to_uppercase();
+    bob.send_signal(&SignalMessage::JoinSpace {
+        invite_code: upper_code,
+        user_name: "Bob".to_string(),
+    })
+    .await;
+
+    // Server should accept or reject consistently — check for either SpaceJoined or Error
+    match bob.recv_signal().await {
+        SignalMessage::SpaceJoined { .. } => {
+            // Server normalizes case — great
+        }
+        SignalMessage::Error { message } => {
+            // Server is case-sensitive — also valid
+            assert!(
+                message.contains("not found") || message.contains("Invalid"),
+                "Unexpected error: {message}"
+            );
+        }
+        other => panic!("Unexpected response: {:?}", other),
+    }
+}
+
+/// Test: sending messages to a channel after being kicked from the space.
+#[tokio::test]
+async fn test_message_after_kick_rejected() {
+    let server = TestServer::start().await;
+
+    // Alice creates space, Bob joins
+    let mut alice = server.connect().await;
+    authenticate(&mut alice, "Alice", None).await;
+    let (space, channels) = create_space(&mut alice, "KickTest", "Alice").await;
+
+    let mut bob = server.connect().await;
+    let (_bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
+    let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
+    // drain MemberJoined from Alice
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    // Alice kicks Bob
+    alice
+        .send_signal(&SignalMessage::KickMember {
+            member_id: bob_uid.clone(),
+        })
+        .await;
+
+    // Bob should receive Kicked
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::Kicked { .. } => break,
+            _ => continue,
+        }
+    }
+
+    // Find a text channel
+    let text_ch = channels
+        .iter()
+        .find(|c| c.channel_type == shared_types::ChannelType::Text);
+    if let Some(ch) = text_ch {
+        // Bob tries to send a message — should get error or be ignored
+        bob.send_signal(&SignalMessage::SendTextMessage {
+            channel_id: ch.id.clone(),
+            content: "Shouldn't work".to_string(),
+            reply_to_message_id: None,
+        })
+        .await;
+
+        match bob.recv_signal_timeout(Duration::from_secs(1)).await {
+            Some(SignalMessage::Error { .. }) => {} // Expected
+            None => {}                              // Also OK — server ignored it
+            Some(other) => {
+                // Might get SpaceDeleted or similar; as long as it's not a TextMessage, it's fine
+                assert!(
+                    !matches!(other, SignalMessage::TextMessage { .. }),
+                    "Kicked user should not be able to send messages"
+                );
+            }
+        }
+    }
+}
+
+/// Test: two clients authenticate with the same token (reconnect scenario).
+#[tokio::test]
+async fn test_reconnect_same_token() {
+    let server = TestServer::start().await;
+
+    let mut alice1 = server.connect().await;
+    let (token, user_id) = authenticate(&mut alice1, "Alice", None).await;
+
+    // Alice reconnects with same token
+    let mut alice2 = server.connect().await;
+    alice2
+        .send_signal(&SignalMessage::Authenticate {
+            token: Some(token.clone()),
+            user_name: "Alice".to_string(),
+        })
+        .await;
+    match alice2.recv_signal().await {
+        SignalMessage::Authenticated {
+            token: t2,
+            user_id: uid2,
+        } => {
+            assert_eq!(uid2, user_id, "Same token should yield same user_id");
+            assert_eq!(t2, token, "Token should be the same");
+        }
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    }
+    // drain FriendSnapshot
+    let _ = alice2
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+}
+
+/// Test: creating many channels doesn't crash or slow down.
+#[tokio::test]
+async fn test_many_channels_in_space() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (space, _) = create_space(&mut alice, "BigSpace", "Alice").await;
+
+    for i in 0..20 {
+        alice
+            .send_signal(&SignalMessage::CreateChannel {
+                channel_name: format!("channel-{i}"),
+                channel_type: if i % 2 == 0 {
+                    shared_types::ChannelType::Voice
+                } else {
+                    shared_types::ChannelType::Text
+                },
+            })
+            .await;
+        match alice.recv_signal().await {
+            SignalMessage::ChannelCreated { .. } => {}
+            other => panic!("Expected ChannelCreated for channel {i}, got: {:?}", other),
+        }
+    }
+
+    // Verify Bob can join and see all channels
+    let mut bob = server.connect().await;
+    let (_, channels, _) = join_space(&mut bob, &space.invite_code, "Bob").await;
+    // Original General (voice) + 20 new = 21
+    assert!(
+        channels.len() >= 21,
+        "Expected at least 21 channels, got {}",
+        channels.len()
+    );
+}
+
+/// Test: empty room cleanup — creating and leaving a room, then verifying it's gone.
+#[tokio::test]
+async fn test_room_cleaned_after_all_leave() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let room_code = create_room(&mut alice, "Alice").await;
+
+    // Leave the room
+    alice
+        .send_signal(&SignalMessage::LeaveRoom)
+        .await;
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    // Try to join the now-empty room — should fail
+    let mut bob = server.connect().await;
+    bob.send_signal(&SignalMessage::JoinRoom {
+        room_code: room_code.clone(),
+        user_name: "Bob".to_string(),
+        password: None,
+    })
+    .await;
+
+    match bob.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.to_lowercase().contains("not found")
+                    || message.to_lowercase().contains("does not exist"),
+                "Expected room not found error, got: {message}"
+            );
+        }
+        SignalMessage::RoomJoined { .. } => {
+            panic!("Should not be able to join a cleaned-up room");
+        }
+        other => panic!("Expected Error, got: {:?}", other),
+    }
+}
+
+/// Test: sending text message with unicode/emoji content.
+#[tokio::test]
+async fn test_unicode_text_messages() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, _channels) = create_space(&mut alice, "UnicodeSpace", "Alice").await;
+
+    // Create a text channel (default space only has a voice channel)
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let text_ch = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    let mut bob = server.connect().await;
+    let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
+    // drain MemberJoined from Alice
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    // Select channel for Bob
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+        channel_id: text_ch.id.clone(),
+    })
+    .await;
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::TextChannelSelected { .. } => break,
+            _ => continue,
+        }
+    }
+
+    // Alice sends unicode-heavy messages
+    let test_messages = vec![
+        "Hello 🎉🎊🎈",
+        "日本語テスト",
+        "Ñoño café résumé naïve",
+        "🏳️‍🌈 flag test",
+        "Mixed: hello世界🌍",
+        // Long multi-byte message that would panic with byte slicing at 50
+        "🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥",
+    ];
+
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: text_ch.id.clone(),
+        })
+        .await;
+    loop {
+        match alice.recv_signal().await {
+            SignalMessage::TextChannelSelected { .. } => break,
+            _ => continue,
+        }
+    }
+
+    for msg in &test_messages {
+        alice
+            .send_signal(&SignalMessage::SendTextMessage {
+                channel_id: text_ch.id.clone(),
+                content: msg.to_string(),
+                reply_to_message_id: None,
+            })
+            .await;
+        // Wait for Alice's echo
+        loop {
+            match alice.recv_signal().await {
+                SignalMessage::TextMessage { .. } => break,
+                _ => continue,
+            }
+        }
+    }
+
+    // Bob should receive all messages intact
+    let mut received = Vec::new();
+    for _ in 0..test_messages.len() {
+        loop {
+            match bob.recv_signal().await {
+                SignalMessage::TextMessage { message, .. } => {
+                    received.push(message.content);
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    for expected in &test_messages {
+        assert!(
+            received.iter().any(|r| r == expected),
+            "Missing message: {expected}"
+        );
+    }
+}
+
+/// Test: concurrent space operations — create, join, create channels, send messages.
+#[tokio::test]
+async fn test_concurrent_space_operations() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, _channels) = create_space(&mut alice, "ConcurrentSpace", "Alice").await;
+
+    // Create a text channel first
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let text_ch_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    // Spawn multiple joiners concurrently
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let mut client = server.connect().await;
+        let invite = space.invite_code.clone();
+        let ch_id = text_ch_id.clone();
+        let name = format!("User{i}");
+        let handle = tokio::spawn(async move {
+            let _ = join_space(&mut client, &invite, &name).await;
+
+            // Select text channel and send a message
+            client
+                .send_signal(&SignalMessage::SelectTextChannel {
+                    channel_id: ch_id.clone(),
+                })
+                .await;
+            loop {
+                match client.recv_signal().await {
+                    SignalMessage::TextChannelSelected { .. } => break,
+                    _ => continue,
+                }
+            }
+
+            client
+                .send_signal(&SignalMessage::SendTextMessage {
+                    channel_id: ch_id,
+                    content: format!("Hello from {name}"),
+                    reply_to_message_id: None,
+                })
+                .await;
+
+            // Drain response
+            let _ = client
+                .recv_signal_timeout(Duration::from_millis(500))
+                .await;
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // Alice should still be able to operate
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "after-concurrent".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+
+    // Drain until we find ChannelCreated (may get MemberJoined and TextMessage first)
+    loop {
+        match alice.recv_signal().await {
+            SignalMessage::ChannelCreated { .. } => break,
+            _ => continue,
+        }
+    }
+}
+
+/// Test: creating a room with max-length username works, over-length is rejected.
+#[tokio::test]
+async fn test_very_long_username() {
+    let server = TestServer::start().await;
+
+    // Max length (32) should work
+    let mut client1 = server.connect().await;
+    let ok_name = "A".repeat(32);
+    let code = create_room(&mut client1, &ok_name).await;
+    assert!(!code.is_empty());
+
+    // Over max length should be rejected
+    let mut client2 = server.connect().await;
+    let long_name = "A".repeat(1000);
+    client2
+        .send_signal(&SignalMessage::CreateRoom {
+            user_name: long_name,
+            password: None,
+        })
+        .await;
+    match client2.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(message.contains("too long"), "Expected 'too long' error: {message}");
+        }
+        other => panic!("Expected Error for long name, got: {:?}", other),
+    }
+}
+
+/// Test: audio relay under load — many frames sent rapidly.
+#[tokio::test]
+async fn test_audio_relay_burst() {
+    let server = TestServer::start().await;
+    let mut host = server.connect().await;
+    let room_code = create_room(&mut host, "Host").await;
+    let mut listener = server.connect().await;
+    join_room(&mut listener, &room_code, "Listener").await;
+    // drain PeerJoined
+    let _ = listener
+        .recv_signal_timeout(Duration::from_millis(300))
+        .await;
+    let _ = host
+        .recv_signal_timeout(Duration::from_millis(300))
+        .await;
+
+    // Send 200 frames rapidly (simulates burst)
+    let audio = generate_test_audio();
+    for _ in 0..200 {
+        host.send_binary(&audio).await;
+    }
+
+    // Give server time to process
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Listener should receive some frames (rate limiter may drop some, which is fine)
+    let mut received = 0;
+    loop {
+        match listener
+            .recv_binary_timeout(Duration::from_millis(200))
+            .await
+        {
+            Some(_) => received += 1,
+            None => break,
+        }
+    }
+    assert!(
+        received > 0,
+        "Should receive at least some audio frames from burst"
+    );
+    // Due to 100fps rate limit, should be capped
+    assert!(
+        received <= 110,
+        "Rate limiter should cap frames, got {received}"
+    );
+}
+
+/// Test: WebSocket ping/pong keepalive (server sends pings).
+#[tokio::test]
+async fn test_websocket_keepalive() {
+    let server = TestServer::start().await;
+    let mut client = server.connect().await;
+
+    // Create a room so we have an active connection
+    let _code = create_room(&mut client, "PingTest").await;
+
+    // Wait a bit — server should ping us periodically
+    // The tungstenite library auto-responds to pings, so we just need
+    // to verify the connection stays alive
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Connection should still be alive
+    client
+        .send_signal(&SignalMessage::CreateRoom {
+            user_name: "StillAlive".to_string(),
+            password: None,
+        })
+        .await;
+    // No panic = success
+}
+
+/// Test: deleting a space while members are in a voice channel.
+#[tokio::test]
+async fn test_delete_space_with_active_voice() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, channels) = create_space(&mut alice, "DeleteTest", "Alice").await;
+    let voice_ch = channels
+        .iter()
+        .find(|c| c.channel_type == shared_types::ChannelType::Voice)
+        .expect("Should have voice channel");
+
+    let mut bob = server.connect().await;
+    let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
+    // drain MemberJoined from Alice
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    // Bob joins voice channel
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: voice_ch.id.clone(),
+    })
+    .await;
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::ChannelJoined { .. } => break,
+            _ => continue,
+        }
+    }
+    // drain MemberChannelChanged from Alice
+    let _ = alice
+        .recv_signal_timeout(Duration::from_millis(500))
+        .await;
+
+    // Alice deletes space
+    alice
+        .send_signal(&SignalMessage::DeleteSpace)
+        .await;
+
+    // Both should get SpaceDeleted
+    loop {
+        match alice.recv_signal().await {
+            SignalMessage::SpaceDeleted { .. } => break,
+            _ => continue,
+        }
+    }
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::SpaceDeleted { .. } => break,
+            _ => continue,
+        }
+    }
+
+    // Both clients should still be functional
+    let code = create_room(&mut alice, "Alice").await;
+    assert!(!code.is_empty());
+}

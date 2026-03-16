@@ -138,11 +138,7 @@ pub fn handle_text_message(
         // Send notification for messages in other channels
         if w.get_notifications_enabled() && !is_self_message {
             let sender = message.sender_name.clone();
-            let content = if message.content.len() > 50 {
-                format!("{}...", &message.content[..50])
-            } else {
-                message.content.clone()
-            };
+            let content = truncate_for_notification(&message.content);
             crate::helpers::send_notification(&sender, &content);
         }
         return;
@@ -186,11 +182,7 @@ pub fn handle_direct_message(
     if !chat_open {
         if w.get_notifications_enabled() && !is_self_message {
             let sender = message.sender_name.clone();
-            let content = if message.content.len() > 50 {
-                format!("{}...", &message.content[..50])
-            } else {
-                message.content.clone()
-            };
+            let content = truncate_for_notification(&message.content);
             crate::helpers::send_notification(&sender, &content);
         }
         return;
@@ -564,6 +556,23 @@ fn remove_message(w: &MainWindow, message_id: &str) {
         w.set_reply_target_preview(slint::SharedString::default());
     }
     sync_pinned_messages(w);
+}
+
+/// Truncate message content to ~50 chars for notification preview,
+/// safe for multi-byte UTF-8 (never splits a char boundary).
+fn truncate_for_notification(content: &str) -> String {
+    let mut end = 0;
+    for (i, ch) in content.char_indices() {
+        if i + ch.len_utf8() > 50 {
+            break;
+        }
+        end = i + ch.len_utf8();
+    }
+    if end < content.len() {
+        format!("{}...", &content[..end])
+    } else {
+        content.to_string()
+    }
 }
 
 fn is_self_message(
