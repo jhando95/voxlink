@@ -240,8 +240,34 @@ pub async fn handle_join_space(
         *peer.space_id.lock().await = Some(space_id.clone());
     }
 
-    // Add peer to space
+    // Collect the joining user's user_id and find stale peer_ids (same user, old connection)
+    let new_user_id = if let Some(peer) = s.peers.get(peer_id) {
+        peer.user_id.lock().await.clone()
+    } else {
+        None
+    };
+    let mut stale_ids = Vec::new();
+    if let (Some(ref uid), Some(space)) = (&new_user_id, s.spaces.get(&space_id)) {
+        for mid in &space.member_ids {
+            if mid == peer_id {
+                continue;
+            }
+            if let Some(p) = s.peers.get(mid.as_str()) {
+                if p.user_id.lock().await.as_deref() == Some(uid.as_str()) {
+                    stale_ids.push(mid.clone());
+                }
+            } else {
+                // Peer no longer connected — stale entry
+                stale_ids.push(mid.clone());
+            }
+        }
+    }
+
+    // Add peer to space, removing any stale entries first
     if let Some(space) = s.spaces.get_mut(&space_id) {
+        for stale in &stale_ids {
+            space.member_ids.retain(|id| id != stale);
+        }
         if !space.member_ids.contains(&peer_id.to_string()) {
             space.member_ids.push(peer_id.to_string());
         }
@@ -249,7 +275,10 @@ pub async fn handle_join_space(
 
     // Build response data
     let (space_info, channels, members) = {
-        let space = s.spaces.get(&space_id).unwrap();
+        let Some(space) = s.spaces.get(&space_id) else {
+            log::warn!("Space {space_id} disappeared before building response");
+            return;
+        };
         let space_info = SpaceInfo {
             id: space.id.clone(),
             name: space.name.clone(),

@@ -11,7 +11,15 @@ pub fn handle_member_online(
     log::info!("Member online: {} ({})", member.name, member.id);
     let mut s = state.borrow_mut();
     if let Some(ref mut space) = s.space {
-        // Don't add duplicates
+        // Remove any existing entry for the same user_id (reconnect with new peer_id)
+        if let Some(ref uid) = member.user_id {
+            if !uid.is_empty() {
+                space
+                    .members
+                    .retain(|m| m.user_id.as_deref() != Some(uid) || m.id == member.id);
+            }
+        }
+        // Don't add duplicates by peer_id
         if !space.members.iter().any(|m| m.id == member.id) {
             space.members.push(member.clone());
         }

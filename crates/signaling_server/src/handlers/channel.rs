@@ -164,7 +164,11 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
         }
 
         let deleted_channel = {
-            let space = s.spaces.get_mut(&space_id).expect("space should exist");
+            let Some(space) = s.spaces.get_mut(&space_id) else {
+                drop(s);
+                send_error(state, peer_id, "Space no longer exists").await;
+                return;
+            };
             let Some(index) = space
                 .channels
                 .iter()
