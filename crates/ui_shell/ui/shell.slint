@@ -7,6 +7,8 @@ export component TopBar inherits Rectangle {
     in property <string> subtitle: "";
     in property <bool> is-connected: false;
     in property <int> ping-ms: -1;
+    in property <string> room-code: "";
+    in property <int> unread-direct-messages-count: 0;
     in property <bool> show-nav-button: false;
     in property <bool> in-call: false;
     in property <bool> is-muted: false;
@@ -15,7 +17,7 @@ export component TopBar inherits Rectangle {
     in property <string> update-version: "";
     callback nav-toggle();
 
-    height: 68px;
+    height: 72px;
     background: VxTheme.bg-panel;
 
     AccentBar {
@@ -82,6 +84,18 @@ export component TopBar inherits Rectangle {
         HorizontalLayout {
             spacing: 8px;
             alignment: center;
+
+            if root.room-code != "" : VxStatusPill {
+                label: "Room " + root.room-code;
+                tone: root.in-call ? VxTheme.success : VxTheme.accent;
+                fill: root.in-call ? VxTheme.success-dim : VxTheme.accent-subtle;
+            }
+
+            if root.unread-direct-messages-count > 0 : VxStatusPill {
+                label: "Inbox " + root.unread-direct-messages-count;
+                tone: VxTheme.accent;
+                fill: VxTheme.accent-subtle;
+            }
 
             if root.update-available : VxStatusPill {
                 label: "Update " + root.update-version;
@@ -150,6 +164,10 @@ export component WorkspaceRail inherits Rectangle {
     in property <string> current-space-id: "";
     in property <[MemberData]> members: [];
     in property <bool> show-members: false;
+    in property <string> room-code: "";
+    in property <int> unread-direct-messages-count: 0;
+    in property <int> favorite-friends-count: 0;
+    in property <int> online-friends-count: 0;
     callback navigate(int);
     callback select-space(string);
 
@@ -207,6 +225,84 @@ export component WorkspaceRail inherits Rectangle {
                 padding-right: 12px;
                 padding-bottom: 14px;
                 spacing: 14px;
+
+                Rectangle {
+                    border-radius: VxTheme.radius-card;
+                    background: @linear-gradient(135deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 70%, transparent 100%);
+                    border-color: session-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
+                    border-width: 1px;
+                    clip: true;
+
+                    session-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.navigate(root.room-code != "" ? 1 : 3);
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width;
+                        height: 2px;
+                        background: root.room-code != "" ? VxTheme.accent : VxTheme.border-subtle;
+                    }
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            spacing: 8px;
+
+                            SectionLabel { text: "SESSION DECK"; }
+
+                            if root.room-code != "" : VxStatusPill {
+                                label: "Live";
+                                tone: VxTheme.success;
+                                fill: VxTheme.success-dim;
+                            }
+                        }
+
+                        Text {
+                            text: root.room-code != ""
+                                ? "Room " + root.room-code + " is ready to resume."
+                                : "Quiet deck, fast routing.";
+                            color: VxTheme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: root.room-code != ""
+                                ? "Jump straight back into voice or sweep the inbox without searching the shell."
+                                : "Unread direct messages and friend presence stay visible here.";
+                            color: VxTheme.text-secondary;
+                            font-size: 9px;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            VxStatusPill {
+                                label: root.unread-direct-messages-count > 0
+                                    ? root.unread-direct-messages-count + " unread"
+                                    : "Inbox clear";
+                                tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                            }
+
+                            VxStatusPill {
+                                label: root.favorite-friends-count > 0
+                                    ? root.online-friends-count + " online"
+                                    : "No friends yet";
+                                tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                            }
+                        }
+                    }
+                }
 
                 VerticalLayout {
                     spacing: 6px;
@@ -365,6 +461,14 @@ export component WorkspaceRail inherits Rectangle {
                                     font-size: 9px;
                                 }
                             }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                label: root.unread-direct-messages-count + "";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
                         }
                     }
                 }
@@ -473,7 +577,7 @@ export component WorkspaceRail inherits Rectangle {
                                 initial: member.initial;
                                 color-index: member.color-index;
                                 show-status: true;
-                                is-online: member.is-in-voice;
+                                is-online: member.is-online;
                             }
 
                             VerticalLayout {
@@ -510,6 +614,7 @@ export component WorkspaceRail inherits Rectangle {
 
 export component BottomNav inherits Rectangle {
     in property <int> current-view: 0;
+    in property <int> unread-direct-messages-count: 0;
     callback navigate(int);
 
     height: 62px;
@@ -589,6 +694,26 @@ export component BottomNav inherits Rectangle {
                     text: "Health";
                     color: VxTheme.text-muted;
                     font-size: 9px;
+                }
+            }
+
+            if root.unread-direct-messages-count > 0 : Rectangle {
+                x: parent.width - (root.unread-direct-messages-count > 9 ? 30px : 24px);
+                y: 6px;
+                width: root.unread-direct-messages-count > 9 ? 24px : 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: VxTheme.accent;
+                border-color: VxTheme.accent-border;
+                border-width: 1px;
+
+                Text {
+                    text: root.unread-direct-messages-count + "";
+                    color: VxTheme.text-inverse;
+                    font-size: 9px;
+                    font-weight: 800;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
                 }
             }
         }

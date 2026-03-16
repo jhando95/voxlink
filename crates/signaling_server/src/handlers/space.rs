@@ -5,11 +5,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::channel::handle_leave_channel;
+use super::presence::notify_watchers_for_user;
 
-pub async fn broadcast_to_space(state: &State, space_id: &str, exclude_id: &str, msg: &SignalMessage) {
+pub async fn broadcast_to_space(
+    state: &State,
+    space_id: &str,
+    exclude_id: &str,
+    msg: &SignalMessage,
+) {
     let s = state.read().await;
     if let Some(space) = s.spaces.get(space_id) {
-        let members: Vec<Arc<Peer>> = space.member_ids.iter()
+        let members: Vec<Arc<Peer>> = space
+            .member_ids
+            .iter()
             .filter(|id| id.as_str() != exclude_id)
             .filter_map(|id| s.peers.get(id).cloned())
             .collect();
@@ -20,7 +28,13 @@ pub async fn broadcast_to_space(state: &State, space_id: &str, exclude_id: &str,
     }
 }
 
-pub async fn handle_create_space(state: &State, peer_id: &str, name: String, user_name: String, db: &Db) {
+pub async fn handle_create_space(
+    state: &State,
+    peer_id: &str,
+    name: String,
+    user_name: String,
+    db: &Db,
+) {
     if let Err(e) = validate_name(&name) {
         send_error(state, peer_id, &e).await;
         return;
@@ -49,6 +63,7 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
         Room {
             peer_ids: Vec::new(),
             password: None,
+            active_screen_share_peer_id: None,
             created_at: Instant::now(),
         },
     );
@@ -94,7 +109,14 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
 
     if let Some(peer) = s.peers.get(peer_id).cloned() {
         drop(s);
-        send_to(&peer, &SignalMessage::SpaceCreated { space: space_info, channels }).await;
+        send_to(
+            &peer,
+            &SignalMessage::SpaceCreated {
+                space: space_info,
+                channels,
+            },
+        )
+        .await;
     } else {
         drop(s);
     }
@@ -134,7 +156,13 @@ pub async fn handle_create_space(state: &State, peer_id: &str, name: String, use
     }
 }
 
-pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String, user_name: String, db: &Db) {
+pub async fn handle_join_space(
+    state: &State,
+    peer_id: &str,
+    invite_code: String,
+    user_name: String,
+    db: &Db,
+) {
     if let Err(e) = validate_name(&user_name) {
         send_error(state, peer_id, &e).await;
         return;
@@ -148,13 +176,23 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
             None => {
                 if let Some(peer) = s.peers.get(peer_id).cloned() {
                     drop(s);
-                    send_to(&peer, &SignalMessage::Error { message: "Invalid invite code".into() }).await;
+                    send_to(
+                        &peer,
+                        &SignalMessage::Error {
+                            message: "Invalid invite code".into(),
+                        },
+                    )
+                    .await;
                 }
                 return;
             }
         };
         let check_id = if let Some(peer) = s.peers.get(peer_id) {
-            peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string())
+            peer.user_id
+                .lock()
+                .await
+                .clone()
+                .unwrap_or_else(|| peer_id.to_string())
         } else {
             peer_id.to_string()
         };
@@ -166,9 +204,10 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
         let db_clone = db.clone();
         let sid = space_id.clone();
         let cid = check_id;
-        let banned = tokio::task::spawn_blocking(move || {
-            db_clone.is_banned(&sid, &cid).unwrap_or(false)
-        }).await.unwrap_or(false);
+        let banned =
+            tokio::task::spawn_blocking(move || db_clone.is_banned(&sid, &cid).unwrap_or(false))
+                .await
+                .unwrap_or(false);
         if banned {
             send_error(state, peer_id, "You are banned from this space").await;
             return;
@@ -202,26 +241,35 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
             is_owner: space.owner_id == peer_id,
         };
 
-        let channels: Vec<ChannelInfo> = space.channels.iter().map(|ch| {
-            let peer_count = s.rooms.get(&ch.room_key)
-                .map(|r| r.peer_ids.len() as u32)
-                .unwrap_or(0);
-            ChannelInfo {
-                id: ch.id.clone(),
-                name: ch.name.clone(),
-                peer_count,
-                channel_type: ch.channel_type,
-            }
-        }).collect();
+        let channels: Vec<ChannelInfo> = space
+            .channels
+            .iter()
+            .map(|ch| {
+                let peer_count = s
+                    .rooms
+                    .get(&ch.room_key)
+                    .map(|r| r.peer_ids.len() as u32)
+                    .unwrap_or(0);
+                ChannelInfo {
+                    id: ch.id.clone(),
+                    name: ch.name.clone(),
+                    peer_count,
+                    channel_type: ch.channel_type,
+                }
+            })
+            .collect();
 
         let mut members = Vec::new();
         for mid in &space.member_ids {
             if let Some(p) = s.peers.get(mid) {
                 let name = p.name.lock().await.clone();
                 // Find if this member is in a channel
-                let (ch_id, ch_name) = space.channels.iter()
+                let (ch_id, ch_name) = space
+                    .channels
+                    .iter()
                     .find(|ch| {
-                        s.rooms.get(&ch.room_key)
+                        s.rooms
+                            .get(&ch.room_key)
                             .map(|r| r.peer_ids.contains(mid))
                             .unwrap_or(false)
                     })
@@ -229,6 +277,13 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
                     .unwrap_or((None, None));
                 members.push(MemberInfo {
                     id: mid.clone(),
+                    user_id: Some(
+                        p.user_id
+                            .lock()
+                            .await
+                            .clone()
+                            .unwrap_or_else(|| mid.clone()),
+                    ),
                     name,
                     channel_id: ch_id,
                     channel_name: ch_name,
@@ -241,17 +296,28 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
 
     // Send SpaceJoined to joiner
     if let Some(peer) = s.peers.get(peer_id).cloned() {
-        send_to(&peer, &SignalMessage::SpaceJoined {
-            space: space_info,
-            channels,
-            members,
-        }).await;
+        send_to(
+            &peer,
+            &SignalMessage::SpaceJoined {
+                space: space_info,
+                channels,
+                members,
+            },
+        )
+        .await;
     }
 
     // Build MemberOnline for broadcasting
     let member_info = if let Some(p) = s.peers.get(peer_id) {
         Some(MemberInfo {
             id: peer_id.to_string(),
+            user_id: Some(
+                p.user_id
+                    .lock()
+                    .await
+                    .clone()
+                    .unwrap_or_else(|| peer_id.to_string()),
+            ),
             name: p.name.lock().await.clone(),
             channel_id: None,
             channel_name: None,
@@ -264,7 +330,13 @@ pub async fn handle_join_space(state: &State, peer_id: &str, invite_code: String
 
     // Broadcast MemberOnline to other space members
     if let Some(member) = member_info {
-        broadcast_to_space(state, &space_id, peer_id, &SignalMessage::MemberOnline { member }).await;
+        broadcast_to_space(
+            state,
+            &space_id,
+            peer_id,
+            &SignalMessage::MemberOnline { member },
+        )
+        .await;
     }
 
     log::info!("Peer {peer_id} joined space {space_id}");
@@ -280,6 +352,8 @@ pub async fn handle_leave_space(state: &State, peer_id: &str) {
     };
 
     let Some(space_id) = space_id else { return };
+
+    crate::handlers::chat::clear_typing_for_peer(state, peer_id).await;
 
     // If peer is in a voice channel within the space, leave it first
     handle_leave_channel(state, peer_id).await;
@@ -301,7 +375,9 @@ pub async fn handle_leave_space(state: &State, peer_id: &str) {
     }
 
     // Broadcast MemberOffline
-    let notify = SignalMessage::MemberOffline { member_id: peer_id.to_string() };
+    let notify = SignalMessage::MemberOffline {
+        member_id: peer_id.to_string(),
+    };
     broadcast_to_space(state, &space_id, peer_id, &notify).await;
 
     log::info!("Peer {peer_id} left space {space_id}");
@@ -324,7 +400,9 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
     // Check ownership
     {
         let s = state.read().await;
-        let is_owner = s.spaces.get(&space_id)
+        let is_owner = s
+            .spaces
+            .get(&space_id)
             .map(|space| space.owner_id == peer_id)
             .unwrap_or(false);
         if !is_owner {
@@ -337,9 +415,12 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
     // Collect all members to notify
     let member_peers: Vec<Arc<Peer>> = {
         let s = state.read().await;
-        s.spaces.get(&space_id)
+        s.spaces
+            .get(&space_id)
             .map(|space| {
-                space.member_ids.iter()
+                space
+                    .member_ids
+                    .iter()
                     .filter_map(|id| s.peers.get(id).cloned())
                     .collect()
             })
@@ -359,7 +440,11 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
     }
 
     // Clear space_id and room_code for all members, notify them
+    let mut affected_user_ids = Vec::new();
     for peer in &member_peers {
+        if let Some(user_id) = peer.user_id.lock().await.clone() {
+            affected_user_ids.push(user_id);
+        }
         *peer.space_id.lock().await = None;
         peer.set_room_code(None).await;
         send_to(peer, &SignalMessage::SpaceDeleted).await;
@@ -377,4 +462,8 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
     }
 
     log::info!("Space {space_id} deleted by {peer_id}");
+
+    for user_id in affected_user_ids {
+        notify_watchers_for_user(state, &user_id).await;
+    }
 }

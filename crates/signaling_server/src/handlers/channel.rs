@@ -8,7 +8,13 @@ use std::time::Instant;
 use super::room::collect_room_others;
 use super::space::broadcast_to_space;
 
-pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: String, channel_type: ChannelType, db: &Db) {
+pub async fn handle_create_channel(
+    state: &State,
+    peer_id: &str,
+    channel_name: String,
+    channel_type: ChannelType,
+    db: &Db,
+) {
     if let Err(e) = validate_name(&channel_name) {
         send_error(state, peer_id, &e).await;
         return;
@@ -38,6 +44,7 @@ pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: S
             Room {
                 peer_ids: Vec::new(),
                 password: None,
+                active_screen_share_peer_id: None,
                 created_at: Instant::now(),
             },
         );
@@ -61,7 +68,10 @@ pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: S
         }
     };
 
-    log::info!("Channel {} created in space {space_id} by {peer_id}", channel_info.id);
+    log::info!(
+        "Channel {} created in space {space_id} by {peer_id}",
+        channel_info.id
+    );
 
     // Persist channel to DB
     if let Some(ref db) = db {
@@ -72,12 +82,17 @@ pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: S
         // Retrieve room_key from state
         let rk = {
             let s = state.read().await;
-            s.spaces.get(&space_id)
+            s.spaces
+                .get(&space_id)
                 .and_then(|sp| sp.channels.iter().find(|c| c.id == cid))
                 .map(|c| c.room_key.clone())
                 .unwrap_or_default()
         };
-        let ct = if channel_type == ChannelType::Text { "text" } else { "voice" };
+        let ct = if channel_type == ChannelType::Text {
+            "text"
+        } else {
+            "voice"
+        };
         tokio::task::spawn_blocking(move || {
             if let Err(e) = db.save_channel(&crate::persistence::ChannelRow {
                 id: cid,
@@ -91,11 +106,15 @@ pub async fn handle_create_channel(state: &State, peer_id: &str, channel_name: S
         });
     }
 
-    let notify = SignalMessage::ChannelCreated { channel: channel_info };
+    let notify = SignalMessage::ChannelCreated {
+        channel: channel_info,
+    };
     // Broadcast to all space members including the creator
     let s = state.read().await;
     if let Some(space) = s.spaces.get(&space_id) {
-        let members: Vec<Arc<Peer>> = space.member_ids.iter()
+        let members: Vec<Arc<Peer>> = space
+            .member_ids
+            .iter()
             .filter_map(|id| s.peers.get(id).cloned())
             .collect();
         drop(s);
@@ -126,7 +145,9 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
 
     // Find channel in space
     let channel_data = s.spaces.get(&space_id).and_then(|space| {
-        space.channels.iter()
+        space
+            .channels
+            .iter()
             .find(|ch| ch.id == channel_id)
             .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type))
     });
@@ -134,7 +155,13 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
     let Some((room_key, channel_name, ch_type)) = channel_data else {
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
-            send_to(&peer, &SignalMessage::Error { message: "Channel not found".into() }).await;
+            send_to(
+                &peer,
+                &SignalMessage::Error {
+                    message: "Channel not found".into(),
+                },
+            )
+            .await;
         }
         return;
     };
@@ -143,7 +170,13 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
     if ch_type == ChannelType::Text {
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
-            send_to(&peer, &SignalMessage::Error { message: "Cannot join a text channel for voice".into() }).await;
+            send_to(
+                &peer,
+                &SignalMessage::Error {
+                    message: "Cannot join a text channel for voice".into(),
+                },
+            )
+            .await;
         }
         return;
     }
@@ -175,11 +208,15 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
 
     // Send ChannelJoined to the joiner
     if let Some(peer) = s.peers.get(peer_id).cloned() {
-        send_to(&peer, &SignalMessage::ChannelJoined {
-            channel_id: channel_id.clone(),
-            channel_name: channel_name.clone(),
-            participants,
-        }).await;
+        send_to(
+            &peer,
+            &SignalMessage::ChannelJoined {
+                channel_id: channel_id.clone(),
+                channel_name: channel_name.clone(),
+                participants,
+            },
+        )
+        .await;
     }
 
     // Send PeerJoined to others in the channel
@@ -195,9 +232,12 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
     };
 
     if let Some(info) = joiner_info {
-        let others: Vec<Arc<Peer>> = s.rooms.get(&room_key)
+        let others: Vec<Arc<Peer>> = s
+            .rooms
+            .get(&room_key)
             .map(|r| {
-                r.peer_ids.iter()
+                r.peer_ids
+                    .iter()
                     .filter(|pid| pid.as_str() != peer_id)
                     .filter_map(|pid| s.peers.get(pid).cloned())
                     .collect()
@@ -246,7 +286,11 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
 
     let Some(ref code) = room_code else { return };
     // Only handle space channel rooms (prefixed with "sp:")
-    if !code.starts_with("sp:") { return; }
+    if !code.starts_with("sp:") {
+        return;
+    }
+
+    super::room::stop_screen_share_in_room(state, code, peer_id).await;
 
     let remaining = collect_room_others(state, code, peer_id).await;
 
@@ -259,7 +303,9 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
     }
 
     // Notify remaining channel peers
-    let notify = SignalMessage::PeerLeft { peer_id: peer_id.to_string() };
+    let notify = SignalMessage::PeerLeft {
+        peer_id: peer_id.to_string(),
+    };
     for peer in remaining {
         send_to(&peer, &notify).await;
     }

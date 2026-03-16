@@ -1,6 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
-import { ParticipantData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, VxActionTile, VxAvatar, VxButton, VxCard, VxSlider, VxStatBlock, VxStatusPill } from "../components.slint";
+import { ParticipantData, ShareSourceData, VxTheme } from "../theme.slint";
+import { Divider, FieldLabel, SectionLabel, VxActionTile, VxAvatar, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component RoomView inherits Rectangle {
     in property <bool> wide: false;
@@ -19,6 +19,17 @@ export component RoomView inherits Rectangle {
     in property <int> dropped-frames: 0;
     in property <bool> in-space-channel: false;
     in property <string> current-space-name: "";
+    in property <bool> has-screen-share: false;
+    in property <bool> is-sharing-screen: false;
+    in property <string> screen-share-owner-name: "";
+    in property <image> screen-share-image;
+    in property <[ShareSourceData]> screen-share-sources: [];
+    in property <int> selected-screen-share-source: -1;
+    in property <int> selected-screen-share-profile: 0;
+    in property <string> screen-share-source-label: "";
+    in property <string> screen-share-source-detail: "";
+    in property <string> screen-share-quality-label: "";
+    in property <string> screen-share-quality-detail: "";
     in-out property <bool> show-copied: false;
     callback copy-room-code();
     callback leave-room();
@@ -26,6 +37,10 @@ export component RoomView inherits Rectangle {
     callback toggle-mute();
     callback toggle-deafen();
     callback toggle-mic-mode();
+    callback toggle-screen-share();
+    callback refresh-screen-share-sources();
+    callback select-screen-share-source(int);
+    callback select-screen-share-profile(int);
     callback volume-changed(string, float);
     callback navigate(int);
 
@@ -208,6 +223,184 @@ export component RoomView inherits Rectangle {
                                                     root.mic-level > 0.15 ? VxTheme.warning :
                                                     root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
                                         animate width { duration: 50ms; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "SCREEN SHARE"; }
+                                VxStatusPill {
+                                    label: root.has-screen-share
+                                        ? (root.is-sharing-screen ? "You are sharing" : root.screen-share-owner-name + " is sharing")
+                                        : "Idle";
+                                    tone: root.has-screen-share ? VxTheme.success : VxTheme.text-secondary;
+                                    fill: root.has-screen-share ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                            }
+
+                            Rectangle {
+                                height: 240px;
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-stage;
+                                border-color: root.has-screen-share ? VxTheme.accent-border : VxTheme.border-subtle;
+                                border-width: 1px;
+                                clip: true;
+
+                                if root.has-screen-share : Image {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    source: root.screen-share-image;
+                                    image-fit: contain;
+                                }
+
+                                if !root.has-screen-share : VerticalLayout {
+                                    alignment: center;
+                                    padding: 18px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "No screen share live";
+                                        color: VxTheme.text-primary;
+                                        font-size: 13px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Start sharing your primary display without touching the voice path.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Source";
+                                    value: root.screen-share-source-label != "" ? root.screen-share-source-label : "No source";
+                                    detail: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Refresh sources to choose a display or focused window.";
+                                    tone: VxTheme.accent;
+                                }
+                                VxStatBlock {
+                                    horizontal-stretch: 1;
+                                    label: "Mode";
+                                    value: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Efficient";
+                                    detail: root.screen-share-quality-detail != "" ? root.screen-share-quality-detail : "A lightweight stream preset that can step down under pressure.";
+                                    tone: root.is-sharing-screen ? VxTheme.success : VxTheme.text-primary;
+                                }
+                            }
+
+                            Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        SectionLabel { text: "SHARE SOURCE"; }
+                                        VxButton {
+                                            label: "Refresh";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => { root.refresh-screen-share-sources(); }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.has-screen-share && !root.is-sharing-screen
+                                            ? "A share is already live. Your selection is saved for the next turn."
+                                            : root.is-sharing-screen
+                                                ? "Changing the selection now applies to your next share."
+                                                : "Pick a display or focused app window before you go live.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+
+                                    Rectangle {
+                                        height: 164px;
+                                        clip: true;
+                                        if root.screen-share-sources.length > 0 : ListView {
+                                            for source[idx] in root.screen-share-sources : VxOptionRow {
+                                                label: source.label;
+                                                detail: source.kind-label + " · " + source.detail;
+                                                selected: idx == root.selected-screen-share-source;
+                                                clicked => { root.select-screen-share-source(idx); }
+                                            }
+                                        }
+                                        if root.screen-share-sources.length == 0 : VerticalLayout {
+                                            alignment: center;
+                                            spacing: 4px;
+                                            Text {
+                                                text: "No share sources ready";
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                            }
+                                            Text {
+                                                text: "Refresh once your target window is visible.";
+                                                color: VxTheme.text-muted;
+                                                font-size: 10px;
+                                                horizontal-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 10px;
+                                    SectionLabel { text: "STREAM PROFILE"; }
+                                    Text {
+                                        text: "Higher caps only apply while sharing and the adaptive ladder can still step down if the system falls behind.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                    VxOptionRow {
+                                        label: "Efficient";
+                                        detail: "Default low-cost mode · up to 540p / 8 fps";
+                                        selected: root.selected-screen-share-profile == 0;
+                                        clicked => { root.select-screen-share-profile(0); }
+                                    }
+                                    VxOptionRow {
+                                        label: "Balanced";
+                                        detail: "Readable desktop capture · up to 720p / 15 fps";
+                                        selected: root.selected-screen-share-profile == 1;
+                                        clicked => { root.select-screen-share-profile(1); }
+                                    }
+                                    VxOptionRow {
+                                        label: "Smooth";
+                                        detail: "Higher motion capture · up to 720p / 30 fps";
+                                        selected: root.selected-screen-share-profile == 2;
+                                        clicked => { root.select-screen-share-profile(2); }
+                                    }
+                                    VxOptionRow {
+                                        label: "Max";
+                                        detail: "High cost mode · attempts up to 720p / 60 fps";
+                                        selected: root.selected-screen-share-profile == 3;
+                                        clicked => { root.select-screen-share-profile(3); }
                                     }
                                 }
                             }
@@ -456,6 +649,20 @@ export component RoomView inherits Rectangle {
                                 clicked => { root.toggle-mic-mode(); }
                             }
 
+                            VxActionTile {
+                                eyebrow: "SCREEN";
+                                title: root.is-sharing-screen ? "Sharing display" :
+                                       root.has-screen-share ? "Viewer mode" : "Start share";
+                                detail: root.is-sharing-screen
+                                    ? "Live from " + (root.screen-share-source-label != "" ? root.screen-share-source-label : "your selected source") + ". Tap to stop."
+                                    : root.has-screen-share
+                                        ? root.screen-share-owner-name + " is already sharing this room."
+                                        : "Ready on " + (root.screen-share-source-label != "" ? root.screen-share-source-label : "your next source") + " with " + (root.screen-share-quality-label != "" ? root.screen-share-quality-label : "adaptive quality") + ".";
+                                active: root.is-sharing-screen;
+                                tone: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
+                                clicked => { root.toggle-screen-share(); }
+                            }
+
                             HorizontalLayout {
                                 spacing: 10px;
                                 VxButton {
@@ -524,6 +731,139 @@ export component RoomView inherits Rectangle {
                                         root.leave-room();
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "SCREEN SHARE"; }
+                        Rectangle {
+                            height: 180px;
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-stage;
+                            border-color: root.has-screen-share ? VxTheme.accent-border : VxTheme.border-subtle;
+                            border-width: 1px;
+                            clip: true;
+
+                            if root.has-screen-share : Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: root.screen-share-image;
+                                image-fit: contain;
+                            }
+
+                            if !root.has-screen-share : VerticalLayout {
+                                alignment: center;
+                                padding: 16px;
+                                spacing: 6px;
+                                Text {
+                                    text: "No active screen share";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "Share your primary display only when you need it.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        VxStatBlock {
+                            label: "Source";
+                            value: root.screen-share-source-label != "" ? root.screen-share-source-label : "No source";
+                            detail: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Choose a display or window before you share.";
+                            tone: VxTheme.accent;
+                        }
+
+                        VxStatBlock {
+                            label: "Mode";
+                            value: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Efficient";
+                            detail: root.screen-share-quality-detail != "" ? root.screen-share-quality-detail : "A lightweight stream preset that can step down under pressure.";
+                            tone: root.is-sharing-screen ? VxTheme.success : VxTheme.text-primary;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            SectionLabel { text: "SOURCE PICKER"; horizontal-stretch: 1; }
+                            VxButton {
+                                label: "Refresh";
+                                small: true;
+                                ghost: true;
+                                clicked => { root.refresh-screen-share-sources(); }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 150px;
+                            clip: true;
+                            if root.screen-share-sources.length > 0 : ListView {
+                                for source[idx] in root.screen-share-sources : VxOptionRow {
+                                    label: source.label;
+                                    detail: source.kind-label + " · " + source.detail;
+                                    selected: idx == root.selected-screen-share-source;
+                                    clicked => { root.select-screen-share-source(idx); }
+                                }
+                            }
+                            if root.screen-share-sources.length == 0 : VerticalLayout {
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: "No share sources ready";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "Refresh once your target window is visible.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 10px;
+                            SectionLabel { text: "STREAM PROFILE"; }
+                            Text {
+                                text: "Only affects active shares. Higher profiles cost more CPU, bandwidth, and decode time.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            VxOptionRow {
+                                label: "Efficient";
+                                detail: "Default low-cost mode · up to 540p / 8 fps";
+                                selected: root.selected-screen-share-profile == 0;
+                                clicked => { root.select-screen-share-profile(0); }
+                            }
+                            VxOptionRow {
+                                label: "Balanced";
+                                detail: "Readable desktop capture · up to 720p / 15 fps";
+                                selected: root.selected-screen-share-profile == 1;
+                                clicked => { root.select-screen-share-profile(1); }
+                            }
+                            VxOptionRow {
+                                label: "Smooth";
+                                detail: "Higher motion capture · up to 720p / 30 fps";
+                                selected: root.selected-screen-share-profile == 2;
+                                clicked => { root.select-screen-share-profile(2); }
+                            }
+                            VxOptionRow {
+                                label: "Max";
+                                detail: "High cost mode · attempts up to 720p / 60 fps";
+                                selected: root.selected-screen-share-profile == 3;
+                                clicked => { root.select-screen-share-profile(3); }
                             }
                         }
                     }
@@ -608,6 +948,16 @@ export component RoomView inherits Rectangle {
                                 horizontal-stretch: 1;
                                 clicked => { root.toggle-mic-mode(); }
                             }
+                            VxButton {
+                                label: root.is-sharing-screen ? "Stop share" : "Share";
+                                soft: !root.is-sharing-screen;
+                                accent: root.is-sharing-screen;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-screen-share(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
                             VxButton {
                                 label: "Settings";
                                 soft: true;

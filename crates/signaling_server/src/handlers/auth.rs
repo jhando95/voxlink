@@ -1,8 +1,14 @@
 use crate::{send_to, Db, State};
 use shared_types::SignalMessage;
 
+use super::friends::send_friend_snapshot_to_peer;
+
 pub async fn handle_authenticate(
-    state: &State, peer_id: &str, token: Option<String>, user_name: String, db: &Db,
+    state: &State,
+    peer_id: &str,
+    token: Option<String>,
+    user_name: String,
+    db: &Db,
 ) {
     let user_name = user_name.trim().to_string();
     if user_name.is_empty() || user_name.len() > 32 {
@@ -17,15 +23,19 @@ pub async fn handle_authenticate(
         }
     }
 
-    let Some(ref db) = db else {
+    let Some(ref db_ref) = db else {
         // No DB — just acknowledge with a transient token
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
-            send_to(&peer, &SignalMessage::Authenticated {
-                token: String::new(),
-                user_id: peer_id.to_string(),
-            }).await;
+            send_to(
+                &peer,
+                &SignalMessage::Authenticated {
+                    token: String::new(),
+                    user_id: peer_id.to_string(),
+                },
+            )
+            .await;
         }
         return;
     };
@@ -33,16 +43,18 @@ pub async fn handle_authenticate(
     // Try to restore identity from existing token
     if let Some(ref tok) = token {
         if !tok.is_empty() {
-            let db_clone = db.clone();
+            let db_clone = db_ref.clone();
             let tok_clone = tok.clone();
             let found = tokio::task::spawn_blocking(move || {
                 db_clone.find_user_by_token(&tok_clone).unwrap_or(None)
-            }).await.unwrap_or(None);
+            })
+            .await
+            .unwrap_or(None);
 
             if let Some(user) = found {
                 // Restore identity — update name if changed
                 if user.display_name != user_name {
-                    let db_clone = db.clone();
+                    let db_clone = db_ref.clone();
                     let uid = user.user_id.clone();
                     let name = user_name.clone();
                     tokio::task::spawn_blocking(move || {
@@ -57,10 +69,15 @@ pub async fn handle_authenticate(
                 }
                 if let Some(peer) = s.peers.get(peer_id).cloned() {
                     drop(s);
-                    send_to(&peer, &SignalMessage::Authenticated {
-                        token: user.token,
-                        user_id: user.user_id,
-                    }).await;
+                    send_to(
+                        &peer,
+                        &SignalMessage::Authenticated {
+                            token: user.token,
+                            user_id: user.user_id,
+                        },
+                    )
+                    .await;
+                    send_friend_snapshot_to_peer(state, peer_id, db).await;
                 }
                 log::info!("Peer {peer_id} authenticated (restored identity)");
                 return;
@@ -81,7 +98,7 @@ pub async fn handle_authenticate(
     }
 
     // Persist new user
-    let db_clone = db.clone();
+    let db_clone = db_ref.clone();
     let uid = user_id.clone();
     let tok = new_token.clone();
     let name = user_name;
@@ -102,10 +119,15 @@ pub async fn handle_authenticate(
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id).cloned() {
         drop(s);
-        send_to(&peer, &SignalMessage::Authenticated {
-            token: new_token,
-            user_id,
-        }).await;
+        send_to(
+            &peer,
+            &SignalMessage::Authenticated {
+                token: new_token,
+                user_id,
+            },
+        )
+        .await;
+        send_friend_snapshot_to_peer(state, peer_id, db).await;
     }
 
     log::info!("Peer {peer_id} authenticated (new identity)");

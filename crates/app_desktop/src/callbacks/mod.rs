@@ -26,6 +26,7 @@ pub fn setup(
     perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
     audio_started: &Rc<RefCell<bool>>,
     audio_active_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     speaking_ticks: &Rc<RefCell<std::collections::HashMap<String, u64>>>,
     rt_handle: &tokio::runtime::Handle,
     ptt_key: &Rc<RefCell<Vec<Keycode>>>,
@@ -48,9 +49,14 @@ pub fn setup(
         audio,
         audio_started,
         audio_active_flag,
+        screen_share,
         speaking_ticks,
         rt_handle,
     );
+    room::setup_toggle_screen_share(window, network, screen_share, rt_handle);
+    room::setup_refresh_screen_share_sources(window, screen_share);
+    room::setup_select_screen_share_source(window, screen_share);
+    room::setup_select_screen_share_profile(window, screen_share);
 
     // Controls
     controls::setup_toggle_mute(window, state, voice, audio, network, rt_handle);
@@ -71,6 +77,7 @@ pub fn setup(
         audio,
         audio_started,
         audio_active_flag,
+        screen_share,
         speaking_ticks,
         rt_handle,
     );
@@ -92,12 +99,21 @@ pub fn setup(
         audio,
         audio_started,
         audio_active_flag,
+        screen_share,
         speaking_ticks,
         rt_handle,
     );
 
     // UI / Config
-    ui::setup_navigate(window, state, perf, audio, audio_started, rt_handle);
+    ui::setup_navigate(
+        window,
+        state,
+        perf,
+        network,
+        audio,
+        audio_started,
+        rt_handle,
+    );
     ui::setup_save_settings(window, audio, audio_started, rt_handle);
     ui::setup_copy_room_code(window);
     ui::setup_refresh_devices(window, audio, rt_handle);
@@ -105,14 +121,19 @@ pub fn setup(
     ui::setup_play_speaker_test(window, audio, audio_started, rt_handle);
     ui::setup_clear_keybind(window, ptt_key, mute_key, deafen_key);
     ui::setup_toggle_dark_mode(window);
+    ui::setup_toggle_member_widget(window, state);
+    ui::setup_friend_actions(window, network, rt_handle);
     ui::setup_toggle_feedback_sound(window);
     ui::setup_toggle_notifications(window);
     ui::setup_noise_suppression(window, audio, rt_handle);
 
     // Chat
+    chat::setup_open_direct_message(window, network, rt_handle);
     chat::setup_select_text_channel(window, network, rt_handle);
+    chat::setup_chat_typing_activity(window, network, rt_handle);
     chat::setup_send_text_message(window, network, rt_handle);
     chat::setup_edit_text_message(window, network, rt_handle);
     chat::setup_delete_text_message(window, network, rt_handle);
     chat::setup_react_to_message(window, network, rt_handle);
+    chat::setup_toggle_pin_message(window, network, rt_handle);
 }

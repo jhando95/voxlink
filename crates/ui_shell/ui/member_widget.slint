@@ -1,0 +1,197 @@
+import { ScrollView } from "std-widgets.slint";
+import { VxAvatar, VxButton, VxCard, VxStatusPill } from "components.slint";
+import { FriendData, VxTheme } from "theme.slint";
+
+import "../../../assets/fonts/Inter-Regular.ttf";
+import "../../../assets/fonts/Inter-SemiBold.ttf";
+import "../../../assets/fonts/Inter-Bold.ttf";
+
+export component MemberWidgetWindow inherits Window {
+    in-out property <string> space-name: "";
+    in-out property <string> status-text: "Join a space to add friends here.";
+    in-out property <int> member-count: 0;
+    in-out property <int> voice-count: 0;
+    in-out property <int> favorite-count: 0;
+    in-out property <[FriendData]> friends: [];
+    in-out property <bool> dark-mode: true;
+    changed dark-mode => { VxTheme.dark-mode = self.dark-mode; }
+    callback send-friend-request(string);
+    callback remove-friend(string);
+    callback open-direct-message(string);
+
+    title: root.space-name != "" ? root.space-name + " · Voxlink Friends" : "Voxlink Friends";
+    icon: @image-url("../../../assets/icon.png");
+    default-font-family: "Inter";
+    default-font-size: 13px;
+    min-width: 280px;
+    min-height: 260px;
+    preferred-width: 320px;
+    preferred-height: 540px;
+    background: VxTheme.bg-canvas;
+    always-on-top: true;
+
+    Rectangle {
+        background: VxTheme.bg-canvas;
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 20%);
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            VxCard {
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: root.space-name != "" ? root.space-name : "Friend radar";
+                        color: VxTheme.text-primary;
+                        font-size: 18px;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: root.status-text;
+                        color: VxTheme.text-secondary;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        VxStatusPill {
+                            label: root.member-count + " online";
+                            tone: VxTheme.accent;
+                            fill: VxTheme.accent-subtle;
+                        }
+
+                        VxStatusPill {
+                            label: root.favorite-count + " friends";
+                            tone: root.favorite-count > 0 ? VxTheme.accent-warm : VxTheme.text-muted;
+                            fill: root.favorite-count > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                        }
+
+                        VxStatusPill {
+                            label: root.voice-count + " in voice";
+                            tone: root.voice-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                            fill: root.voice-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                        }
+                    }
+                }
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 10px;
+
+                    if root.friends.length == 0 : VxCard {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 6px;
+
+                            Text {
+                                text: root.space-name == "" ? "No active space" : "Nobody is online in this space yet.";
+                                color: VxTheme.text-primary;
+                                font-size: 13px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: root.space-name == ""
+                                    ? "Open this pop-out while you work and it will populate as soon as you join a space."
+                                    : "This widget updates only when friend or presence state changes, so idle usage stays low.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    for friend in root.friends : Rectangle {
+                        border-radius: VxTheme.radius-card;
+                        background: friend-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                        border-color: friend.is-in-voice ? VxTheme.speaking-border :
+                                      friend.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
+                        border-width: 1px;
+
+                        friend-touch := TouchArea { }
+
+                        HorizontalLayout {
+                            padding: 12px;
+                            spacing: 10px;
+                            alignment: center;
+
+                            VxAvatar {
+                                avatar-size: 34px;
+                                initial: friend.initial;
+                                color-index: friend.color-index;
+                                show-status: true;
+                                is-online: friend.is-online;
+                                is-speaking: friend.is-in-voice;
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+
+                                Text {
+                                    text: friend.name;
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: friend.detail;
+                                    color: VxTheme.text-muted;
+                                    font-size: 9px;
+                                    overflow: elide;
+                                }
+                            }
+
+                            VxStatusPill {
+                                label: friend.status-label;
+                                tone: friend.is-in-voice ? VxTheme.success :
+                                      friend.is-online ? VxTheme.text-secondary : VxTheme.text-muted;
+                                fill: friend.is-in-voice ? VxTheme.success-dim :
+                                      friend.is-online ? VxTheme.bg-panel : VxTheme.bg-soft;
+                            }
+
+                            if friend.is-friend : VxButton {
+                                label: "Message";
+                                small: true;
+                                accent: true;
+                                clicked => { root.open-direct-message(friend.user-id); }
+                            }
+
+                            VxButton {
+                                label: friend.is-friend ? "Remove" : "Add";
+                                small: true;
+                                accent: !friend.is-friend;
+                                soft: friend.is-friend;
+                                clicked => {
+                                    if friend.is-friend {
+                                        root.remove-friend(friend.user-id);
+                                    } else {
+                                        root.send-friend-request(friend.user-id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

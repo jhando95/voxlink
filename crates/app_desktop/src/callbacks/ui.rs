@@ -15,6 +15,7 @@ pub fn setup_navigate(
     window: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
     perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
     audio_started: &Rc<RefCell<bool>>,
     rt_handle: &tokio::runtime::Handle,
@@ -22,6 +23,7 @@ pub fn setup_navigate(
     let window_weak = window.as_weak();
     let state = state.clone();
     let perf = perf.clone();
+    let network = network.clone();
     let audio = audio.clone();
     let audio_started = audio_started.clone();
     let rt_handle = rt_handle.clone();
@@ -59,6 +61,31 @@ pub fn setup_navigate(
                     }
                 });
             }
+        }
+
+        if current == ui_shell::view_to_index(AppView::TextChat) && view_index != current {
+            let target_id = w.get_chat_channel_id().to_string();
+            let is_direct_message = w.get_chat_is_direct_message();
+            if !target_id.is_empty() {
+                let network = network.clone();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = if is_direct_message {
+                        net.send_signal(&shared_types::SignalMessage::SetDirectTyping {
+                            user_id: target_id,
+                            is_typing: false,
+                        })
+                        .await
+                    } else {
+                        net.send_signal(&shared_types::SignalMessage::SetTyping {
+                            channel_id: target_id,
+                            is_typing: false,
+                        })
+                        .await
+                    };
+                });
+            }
+            w.set_chat_typing_text(slint::SharedString::default());
         }
 
         if current != view_index {
@@ -320,6 +347,7 @@ pub fn setup_toggle_dark_mode(window: &MainWindow) {
         };
         let new_mode = !w.get_dark_mode();
         w.set_dark_mode(new_mode);
+        ui_shell::sync_member_widget_theme(new_mode);
 
         std::thread::spawn(move || {
             let mut cfg = config_store::load_config();
@@ -327,6 +355,154 @@ pub fn setup_toggle_dark_mode(window: &MainWindow) {
             let _ = config_store::save_config(&cfg);
         });
     });
+}
+
+pub fn setup_toggle_member_widget(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    window.on_toggle_member_widget(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let next_visible = !w.get_member_widget_visible();
+        if next_visible {
+            let state = state.borrow();
+            ui_shell::sync_member_widget(state.space.as_ref(), &state.favorite_friends);
+            ui_shell::sync_member_widget_theme(w.get_dark_mode());
+        }
+
+        if ui_shell::set_member_widget_visible(next_visible) {
+            w.set_member_widget_visible(next_visible);
+            crate::helpers::save_member_widget_state_async(next_visible, None);
+        } else if next_visible {
+            w.set_status_text("Member pop-out could not open".into());
+        }
+    });
+}
+
+pub fn setup_friend_actions(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
+        window.on_send_friend_request(move |user_id| {
+            let user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text("Friend request sent".into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::SendFriendRequest { user_id })
+                    .await;
+            });
+        });
+    }
+
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
+        window.on_accept_friend_request(move |user_id| {
+            let user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text("Friend request accepted".into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::RespondFriendRequest {
+                        user_id,
+                        accept: true,
+                    })
+                    .await;
+            });
+        });
+    }
+
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
+        window.on_decline_friend_request(move |user_id| {
+            let user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text("Friend request declined".into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::RespondFriendRequest {
+                        user_id,
+                        accept: false,
+                    })
+                    .await;
+            });
+        });
+    }
+
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
+        window.on_cancel_friend_request(move |user_id| {
+            let user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text("Friend request canceled".into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::CancelFriendRequest { user_id })
+                    .await;
+            });
+        });
+    }
+
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
+        window.on_remove_friend(move |user_id| {
+            let user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text("Friend removed".into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::RemoveFriend { user_id })
+                    .await;
+            });
+        });
+    }
 }
 
 pub fn setup_toggle_feedback_sound(window: &MainWindow) {

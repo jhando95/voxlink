@@ -44,6 +44,16 @@ pub struct AppConfig {
     pub notifications_enabled: bool,
     #[serde(default)]
     pub auth_token: Option<String>,
+    #[serde(default)]
+    pub member_widget_visible: bool,
+    #[serde(default)]
+    pub member_widget_x: Option<i32>,
+    #[serde(default)]
+    pub member_widget_y: Option<i32>,
+    #[serde(default)]
+    pub favorite_friends: Vec<shared_types::FavoriteFriend>,
+    #[serde(default)]
+    pub recent_direct_messages: Vec<shared_types::DirectMessageThread>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,13 +116,17 @@ impl Default for AppConfig {
             output_volume: default_volume(),
             notifications_enabled: default_notifications(),
             auth_token: None,
+            member_widget_visible: false,
+            member_widget_x: None,
+            member_widget_y: None,
+            favorite_friends: Vec::new(),
+            recent_direct_messages: Vec::new(),
         }
     }
 }
 
 fn config_path() -> Option<PathBuf> {
-    ProjectDirs::from("com", "voxlink", "Voxlink")
-        .map(|dirs| dirs.config_dir().join("config.json"))
+    ProjectDirs::from("com", "voxlink", "Voxlink").map(|dirs| dirs.config_dir().join("config.json"))
 }
 
 pub fn load_config() -> AppConfig {
@@ -140,8 +154,7 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
 
-    let json =
-        serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {e}"))?;
+    let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
 
     log::info!("Config saved to {}", path.display());
@@ -199,6 +212,31 @@ mod tests {
             output_volume: 0.8,
             notifications_enabled: true,
             auth_token: None,
+            member_widget_visible: true,
+            member_widget_x: Some(120),
+            member_widget_y: Some(80),
+            favorite_friends: vec![shared_types::FavoriteFriend {
+                user_id: "u1".into(),
+                name: "Alice".into(),
+                is_online: false,
+                is_in_voice: false,
+                in_private_call: false,
+                active_space_name: String::new(),
+                active_channel_name: String::new(),
+                last_space_name: "Studio".into(),
+                last_channel_name: "General".into(),
+                last_seen_at: 123,
+            }],
+            recent_direct_messages: vec![shared_types::DirectMessageThread {
+                user_id: "u1".into(),
+                user_name: "Alice".into(),
+                last_message_id: "m1".into(),
+                last_message_preview: "Hello".into(),
+                last_message_at: 456,
+                unread_count: 2,
+                is_online: true,
+                is_in_voice: false,
+            }],
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
@@ -216,6 +254,13 @@ mod tests {
         assert_eq!(decoded.saved_spaces[0].name, "Test Space");
         assert_eq!(decoded.last_space_id.as_deref(), Some("s1"));
         assert_eq!(decoded.last_channel_id.as_deref(), Some("c1"));
+        assert!(decoded.member_widget_visible);
+        assert_eq!(decoded.member_widget_x, Some(120));
+        assert_eq!(decoded.member_widget_y, Some(80));
+        assert_eq!(decoded.favorite_friends.len(), 1);
+        assert_eq!(decoded.favorite_friends[0].user_id, "u1");
+        assert_eq!(decoded.recent_direct_messages.len(), 1);
+        assert_eq!(decoded.recent_direct_messages[0].user_id, "u1");
     }
 
     #[test]
@@ -238,5 +283,9 @@ mod tests {
         assert!(config.saved_spaces.is_empty());
         assert!(config.last_space_id.is_none());
         assert!(config.last_channel_id.is_none());
+        assert!(!config.member_widget_visible);
+        assert!(config.member_widget_x.is_none());
+        assert!(config.member_widget_y.is_none());
+        assert!(config.favorite_friends.is_empty());
     }
 }

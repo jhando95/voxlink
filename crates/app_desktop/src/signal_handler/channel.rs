@@ -13,12 +13,12 @@ pub fn handle_channel_created(
     channel: &shared_types::ChannelInfo,
 ) {
     log::info!("Channel created: {} ({})", channel.name, channel.id);
-    let search_query = w.get_space_search_query().to_string();
     let mut s = state.borrow_mut();
     if let Some(ref mut space) = s.space {
         space.channels.push(channel.clone());
-        ui_shell::render_space(w, space, &search_query);
     }
+    drop(s);
+    crate::friends::sync_ui(w, state);
     w.set_new_channel_name(slint::SharedString::default());
     w.set_new_channel_is_voice(true);
 }
@@ -32,7 +32,6 @@ pub fn handle_channel_joined(
     ctx: &AudioContext,
 ) {
     log::info!("Joined channel: {channel_name} ({channel_id})");
-    let search_query = w.get_space_search_query().to_string();
 
     let mut s = state.borrow_mut();
 
@@ -61,7 +60,6 @@ pub fn handle_channel_joined(
 
     if let Some(ref mut space) = s.space {
         space.active_channel_id = Some(channel_id.to_string());
-        ui_shell::render_space(w, space, &search_query);
     }
 
     w.set_room_code(channel_name.into());
@@ -74,6 +72,8 @@ pub fn handle_channel_joined(
     w.set_window_title(format!("Voxlink \u{2014} {channel_name} ({count})").into());
     w.set_room_status(slint::SharedString::default());
     ui_shell::set_participants(w, &s.room.participants);
+    drop(s);
+    crate::friends::sync_ui(w, state);
 
     crate::helpers::start_audio_if_needed(
         &ctx.audio_started,
@@ -104,16 +104,15 @@ pub fn handle_channel_left(
     }
 
     log::info!("Left channel");
-    let search_query = w.get_space_search_query().to_string();
     {
         let mut s = state.borrow_mut();
         s.room = Default::default();
         if let Some(ref mut space) = s.space {
             space.active_channel_id = None;
-            ui_shell::render_space(w, space, &search_query);
         }
         s.current_view = AppView::Space;
     }
+    crate::friends::sync_ui(w, state);
     *ctx.audio_started.borrow_mut() = false;
 
     w.set_current_view(ui_shell::view_to_index(AppView::Space));

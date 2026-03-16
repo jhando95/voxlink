@@ -46,6 +46,9 @@ pub struct RoomState {
     pub is_deafened: bool,
     pub mic_mode: MicMode,
     pub connection: ConnectionState,
+    pub active_screen_share_peer_id: Option<String>,
+    pub active_screen_share_peer_name: Option<String>,
+    pub is_sharing_screen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,11 +81,80 @@ pub struct ChannelInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberInfo {
     pub id: String,
+    #[serde(default)]
+    pub user_id: Option<String>,
     pub name: String,
     #[serde(default)]
     pub channel_id: Option<String>,
     #[serde(default)]
     pub channel_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FavoriteFriend {
+    pub user_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_online: bool,
+    #[serde(default)]
+    pub is_in_voice: bool,
+    #[serde(default)]
+    pub in_private_call: bool,
+    #[serde(default)]
+    pub active_space_name: String,
+    #[serde(default)]
+    pub active_channel_name: String,
+    #[serde(default)]
+    pub last_space_name: String,
+    #[serde(default)]
+    pub last_channel_name: String,
+    #[serde(default)]
+    pub last_seen_at: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FriendPresence {
+    pub user_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub is_online: bool,
+    #[serde(default)]
+    pub is_in_voice: bool,
+    #[serde(default)]
+    pub in_private_call: bool,
+    #[serde(default)]
+    pub active_space_name: Option<String>,
+    #[serde(default)]
+    pub active_channel_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FriendRequest {
+    pub user_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub requested_at: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DirectMessageThread {
+    pub user_id: String,
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub last_message_id: String,
+    #[serde(default)]
+    pub last_message_preview: String,
+    #[serde(default)]
+    pub last_message_at: u64,
+    #[serde(default)]
+    pub unread_count: u32,
+    #[serde(default)]
+    pub is_online: bool,
+    #[serde(default)]
+    pub is_in_voice: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -95,6 +167,7 @@ pub struct SpaceState {
     pub active_channel_id: Option<String>,
     pub selected_text_channel_id: Option<String>,
     pub unread_text_channels: HashMap<String, u32>,
+    pub typing_users: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -102,6 +175,13 @@ pub struct AppState {
     pub current_view: AppView,
     pub room: RoomState,
     pub space: Option<SpaceState>,
+    pub self_user_id: Option<String>,
+    pub favorite_friends: Vec<FavoriteFriend>,
+    pub incoming_friend_requests: Vec<FriendRequest>,
+    pub outgoing_friend_requests: Vec<FriendRequest>,
+    pub active_direct_message_user_id: Option<String>,
+    pub direct_typing_users: HashMap<String, Vec<String>>,
+    pub direct_message_threads: Vec<DirectMessageThread>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -136,6 +216,8 @@ pub enum SignalMessage {
     DeafenChanged {
         is_deafened: bool,
     },
+    StartScreenShare,
+    StopScreenShare,
 
     // Server -> Client
     RoomCreated {
@@ -158,6 +240,14 @@ pub enum SignalMessage {
     PeerDeafenChanged {
         peer_id: String,
         is_deafened: bool,
+    },
+    ScreenShareStarted {
+        sharer_id: String,
+        sharer_name: String,
+        is_self: bool,
+    },
+    ScreenShareStopped {
+        sharer_id: String,
     },
     Error {
         message: String,
@@ -186,9 +276,58 @@ pub enum SignalMessage {
     SelectTextChannel {
         channel_id: String,
     },
+    SetTyping {
+        channel_id: String,
+        is_typing: bool,
+    },
     SendTextMessage {
         channel_id: String,
         content: String,
+        #[serde(default)]
+        reply_to_message_id: Option<String>,
+    },
+    PinMessage {
+        channel_id: String,
+        message_id: String,
+        pinned: bool,
+    },
+    WatchFriendPresence {
+        user_ids: Vec<String>,
+    },
+    SendFriendRequest {
+        user_id: String,
+    },
+    RespondFriendRequest {
+        user_id: String,
+        accept: bool,
+    },
+    CancelFriendRequest {
+        user_id: String,
+    },
+    RemoveFriend {
+        user_id: String,
+    },
+    SelectDirectMessage {
+        user_id: String,
+    },
+    SetDirectTyping {
+        user_id: String,
+        is_typing: bool,
+    },
+    SendDirectMessage {
+        user_id: String,
+        content: String,
+        #[serde(default)]
+        reply_to_message_id: Option<String>,
+    },
+    EditDirectMessage {
+        user_id: String,
+        message_id: String,
+        new_content: String,
+    },
+    DeleteDirectMessage {
+        user_id: String,
+        message_id: String,
     },
 
     // Server -> Client (Space)
@@ -220,6 +359,11 @@ pub enum SignalMessage {
         channel_id: String,
         message: TextMessageData,
     },
+    TypingState {
+        channel_id: String,
+        user_name: String,
+        is_typing: bool,
+    },
     MemberOnline {
         member: MemberInfo,
     },
@@ -240,6 +384,40 @@ pub enum SignalMessage {
     Authenticated {
         token: String,
         user_id: String,
+    },
+    FriendSnapshot {
+        friends: Vec<FavoriteFriend>,
+        incoming_requests: Vec<FriendRequest>,
+        outgoing_requests: Vec<FriendRequest>,
+    },
+    DirectMessageSelected {
+        user_id: String,
+        user_name: String,
+        history: Vec<TextMessageData>,
+    },
+    DirectMessage {
+        user_id: String,
+        message: TextMessageData,
+    },
+    DirectTypingState {
+        user_id: String,
+        user_name: String,
+        is_typing: bool,
+    },
+    DirectMessageEdited {
+        user_id: String,
+        message_id: String,
+        new_content: String,
+    },
+    DirectMessageDeleted {
+        user_id: String,
+        message_id: String,
+    },
+    FriendPresenceSnapshot {
+        presences: Vec<FriendPresence>,
+    },
+    FriendPresenceChanged {
+        presence: FriendPresence,
     },
 
     // Chat improvements (Milestone 5)
@@ -272,6 +450,11 @@ pub enum SignalMessage {
         emoji: String,
         user_name: String,
     },
+    MessagePinned {
+        channel_id: String,
+        message_id: String,
+        pinned: bool,
+    },
 
     // Moderation (Milestone 6)
     KickMember {
@@ -295,6 +478,9 @@ pub enum SignalMessage {
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
 pub const MAX_AUDIO_FRAME_SIZE: usize = 4096;
+pub const MAX_SCREEN_FRAME_SIZE: usize = 512 * 1024;
+pub const MEDIA_PACKET_AUDIO: u8 = 1;
+pub const MEDIA_PACKET_SCREEN: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantInfo {
@@ -317,6 +503,14 @@ pub struct TextMessageData {
     pub edited: bool,
     #[serde(default)]
     pub reactions: Vec<ReactionData>,
+    #[serde(default)]
+    pub reply_to_message_id: Option<String>,
+    #[serde(default)]
+    pub reply_to_sender_name: Option<String>,
+    #[serde(default)]
+    pub reply_preview: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -630,6 +824,7 @@ mod tests {
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),
+                user_id: Some("u1".into()),
                 name: "Alice".into(),
                 channel_id: Some("c1".into()),
                 channel_name: Some("General".into()),
@@ -676,6 +871,164 @@ mod tests {
                 assert_eq!(channel_id, "c1");
                 assert_eq!(channel_name, "General");
                 assert_eq!(participants.len(), 1);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_watch_friend_presence() {
+        let msg = SignalMessage::WatchFriendPresence {
+            user_ids: vec!["u1".into(), "u2".into()],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::WatchFriendPresence { user_ids } => {
+                assert_eq!(user_ids, vec!["u1", "u2"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_send_friend_request() {
+        let msg = SignalMessage::SendFriendRequest {
+            user_id: "u2".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SendFriendRequest { user_id } => assert_eq!(user_id, "u2"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_friend_snapshot() {
+        let msg = SignalMessage::FriendSnapshot {
+            friends: vec![FavoriteFriend {
+                user_id: "u1".into(),
+                name: "Alice".into(),
+                is_online: true,
+                is_in_voice: false,
+                in_private_call: false,
+                active_space_name: "Studio".into(),
+                active_channel_name: String::new(),
+                last_space_name: "Studio".into(),
+                last_channel_name: "General".into(),
+                last_seen_at: 42,
+            }],
+            incoming_requests: vec![FriendRequest {
+                user_id: "u3".into(),
+                name: "Charlie".into(),
+                requested_at: 99,
+            }],
+            outgoing_requests: vec![FriendRequest {
+                user_id: "u4".into(),
+                name: "Dana".into(),
+                requested_at: 123,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::FriendSnapshot {
+                friends,
+                incoming_requests,
+                outgoing_requests,
+            } => {
+                assert_eq!(friends.len(), 1);
+                assert_eq!(friends[0].user_id, "u1");
+                assert_eq!(incoming_requests.len(), 1);
+                assert_eq!(incoming_requests[0].user_id, "u3");
+                assert_eq!(outgoing_requests.len(), 1);
+                assert_eq!(outgoing_requests[0].user_id, "u4");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_send_direct_message() {
+        let msg = SignalMessage::SendDirectMessage {
+            user_id: "u2".into(),
+            content: "hey".into(),
+            reply_to_message_id: Some("m1".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SendDirectMessage {
+                user_id,
+                content,
+                reply_to_message_id,
+            } => {
+                assert_eq!(user_id, "u2");
+                assert_eq!(content, "hey");
+                assert_eq!(reply_to_message_id.as_deref(), Some("m1"));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_direct_message_selected() {
+        let msg = SignalMessage::DirectMessageSelected {
+            user_id: "u2".into(),
+            user_name: "Bob".into(),
+            history: vec![TextMessageData {
+                sender_id: "u2".into(),
+                sender_name: "Bob".into(),
+                content: "hello".into(),
+                timestamp: 42,
+                message_id: "m1".into(),
+                edited: false,
+                reactions: Vec::new(),
+                reply_to_message_id: None,
+                reply_to_sender_name: None,
+                reply_preview: None,
+                pinned: false,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::DirectMessageSelected {
+                user_id,
+                user_name,
+                history,
+            } => {
+                assert_eq!(user_id, "u2");
+                assert_eq!(user_name, "Bob");
+                assert_eq!(history.len(), 1);
+                assert_eq!(history[0].content, "hello");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_friend_presence_snapshot() {
+        let msg = SignalMessage::FriendPresenceSnapshot {
+            presences: vec![FriendPresence {
+                user_id: "u1".into(),
+                name: "Alice".into(),
+                is_online: true,
+                is_in_voice: true,
+                in_private_call: false,
+                active_space_name: Some("Studio".into()),
+                active_channel_name: Some("General".into()),
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::FriendPresenceSnapshot { presences } => {
+                assert_eq!(presences.len(), 1);
+                assert_eq!(presences[0].user_id, "u1");
+                assert!(presences[0].is_online);
+                assert_eq!(presences[0].active_space_name.as_deref(), Some("Studio"));
             }
             _ => panic!("Wrong variant"),
         }

@@ -2,6 +2,7 @@ use crate::{send_error, send_to, Db, Peer, State};
 use shared_types::SignalMessage;
 use std::sync::Arc;
 
+use super::presence::notify_watchers_for_user;
 use super::space::broadcast_to_space;
 
 /// Get the space_id of a peer and verify they are the space owner.
@@ -34,7 +35,10 @@ pub async fn handle_kick_member(state: &State, peer_id: &str, member_id: String)
         s.peers.get(&member_id).cloned()
     };
 
-    let Some(member_peer) = member_peer else { return };
+    let Some(member_peer) = member_peer else {
+        return;
+    };
+    let member_user_id = member_peer.user_id.lock().await.clone();
 
     // Remove from space
     {
@@ -49,19 +53,29 @@ pub async fn handle_kick_member(state: &State, peer_id: &str, member_id: String)
     *member_peer.space_id.lock().await = None;
 
     // Notify kicked member
-    send_to(&member_peer, &SignalMessage::Kicked {
-        reason: "You have been kicked from the space".into(),
-    }).await;
+    send_to(
+        &member_peer,
+        &SignalMessage::Kicked {
+            reason: "You have been kicked from the space".into(),
+        },
+    )
+    .await;
 
     // Broadcast to remaining members
     broadcast_to_space(
         state,
         &space_id,
         &member_id,
-        &SignalMessage::MemberOffline { member_id: member_id.clone() },
-    ).await;
+        &SignalMessage::MemberOffline {
+            member_id: member_id.clone(),
+        },
+    )
+    .await;
 
     log::info!("Peer {member_id} kicked from space {space_id} by {peer_id}");
+    if let Some(user_id) = member_user_id {
+        notify_watchers_for_user(state, &user_id).await;
+    }
 }
 
 pub async fn handle_mute_member(state: &State, peer_id: &str, member_id: String, muted: bool) {
@@ -74,7 +88,8 @@ pub async fn handle_mute_member(state: &State, peer_id: &str, member_id: String,
     {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(&member_id) {
-            peer.is_muted.store(muted, std::sync::atomic::Ordering::Relaxed);
+            peer.is_muted
+                .store(muted, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -85,7 +100,14 @@ pub async fn handle_mute_member(state: &State, peer_id: &str, member_id: String,
     };
     broadcast_to_space(state, &space_id, "", &notify).await;
 
-    log::info!("Peer {member_id} {} in space {space_id} by {peer_id}", if muted { "server-muted" } else { "server-unmuted" });
+    log::info!(
+        "Peer {member_id} {} in space {space_id} by {peer_id}",
+        if muted {
+            "server-muted"
+        } else {
+            "server-unmuted"
+        }
+    );
 }
 
 pub async fn handle_ban_member(state: &State, peer_id: &str, member_id: String, db: &Db) {

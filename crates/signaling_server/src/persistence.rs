@@ -34,6 +34,11 @@ pub struct MessageRow {
     pub sender_name: String,
     pub content: String,
     pub timestamp: i64,
+    pub edited: bool,
+    pub reply_to_message_id: Option<String>,
+    pub reply_to_sender_name: Option<String>,
+    pub reply_preview: Option<String>,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +54,35 @@ pub struct BanRow {
     pub space_id: String,
     pub user_id: String,
     pub banned_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FriendRequestRow {
+    pub requester_id: String,
+    pub addressee_id: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FriendshipRow {
+    pub user_low_id: String,
+    pub user_high_id: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectMessageRow {
+    pub id: String,
+    pub user_low_id: String,
+    pub user_high_id: String,
+    pub sender_user_id: String,
+    pub sender_name: String,
+    pub content: String,
+    pub timestamp: i64,
+    pub edited: bool,
+    pub reply_to_message_id: Option<String>,
+    pub reply_to_sender_name: Option<String>,
+    pub reply_preview: Option<String>,
 }
 
 impl Database {
@@ -67,53 +101,109 @@ impl Database {
     }
 
     fn init_tables(&self) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS spaces (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                invite_code TEXT NOT NULL UNIQUE,
-                owner_id TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS channels (
-                id TEXT PRIMARY KEY,
-                space_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                room_key TEXT NOT NULL,
-                channel_type TEXT NOT NULL DEFAULT 'voice',
-                FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                sender_id TEXT NOT NULL,
-                sender_name TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                token TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS bans (
-                space_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                banned_at INTEGER NOT NULL,
-                PRIMARY KEY (space_id, user_id),
-                FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_channels_space ON channels(space_id);
-            CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
-            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_users_token ON users(token);
-            CREATE INDEX IF NOT EXISTS idx_bans_space ON bans(space_id);",
-        )
-        .map_err(|e| format!("Failed to init tables: {e}"))?;
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS spaces (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    invite_code TEXT NOT NULL UNIQUE,
+                    owner_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS channels (
+                    id TEXT PRIMARY KEY,
+                    space_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    room_key TEXT NOT NULL,
+                    channel_type TEXT NOT NULL DEFAULT 'voice',
+                    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL,
+                    sender_id TEXT NOT NULL,
+                    sender_name TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    reply_to_message_id TEXT,
+                    reply_to_sender_name TEXT,
+                    reply_preview TEXT,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    token TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS bans (
+                    space_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    banned_at INTEGER NOT NULL,
+                    PRIMARY KEY (space_id, user_id),
+                    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS friend_requests (
+                    requester_id TEXT NOT NULL,
+                    addressee_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (requester_id, addressee_id)
+                );
+                CREATE TABLE IF NOT EXISTS friendships (
+                    user_low_id TEXT NOT NULL,
+                    user_high_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (user_low_id, user_high_id)
+                );
+                CREATE TABLE IF NOT EXISTS direct_messages (
+                    id TEXT PRIMARY KEY,
+                    user_low_id TEXT NOT NULL,
+                    user_high_id TEXT NOT NULL,
+                    sender_user_id TEXT NOT NULL,
+                    sender_name TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    reply_to_message_id TEXT,
+                    reply_to_sender_name TEXT,
+                    reply_preview TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_channels_space ON channels(space_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_users_token ON users(token);
+                CREATE INDEX IF NOT EXISTS idx_bans_space ON bans(space_id);
+                CREATE INDEX IF NOT EXISTS idx_friend_requests_addressee ON friend_requests(addressee_id);
+                CREATE INDEX IF NOT EXISTS idx_friendships_low ON friendships(user_low_id);
+                CREATE INDEX IF NOT EXISTS idx_friendships_high ON friendships(user_high_id);
+                CREATE INDEX IF NOT EXISTS idx_direct_messages_pair ON direct_messages(user_low_id, user_high_id);
+                CREATE INDEX IF NOT EXISTS idx_direct_messages_timestamp ON direct_messages(timestamp);",
+            )
+            .map_err(|e| format!("Failed to init tables: {e}"))?;
+        }
+        self.ensure_message_column("edited", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_message_column("reply_to_message_id", "TEXT")?;
+        self.ensure_message_column("reply_to_sender_name", "TEXT")?;
+        self.ensure_message_column("reply_preview", "TEXT")?;
+        self.ensure_message_column("pinned", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
+    }
+
+    fn ensure_message_column(&self, column: &str, definition: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!("ALTER TABLE messages ADD COLUMN {column} {definition}");
+        match conn.execute(&sql, []) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_ERROR =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to migrate messages table: {e}")),
+        }
     }
 
     // ─── Spaces ───
@@ -197,7 +287,8 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, channel_id, sender_id, sender_name, content, timestamp
+                "SELECT id, channel_id, sender_id, sender_name, content, timestamp, edited,
+                        reply_to_message_id, reply_to_sender_name, reply_preview, pinned
                  FROM messages WHERE channel_id = ?1 ORDER BY timestamp DESC LIMIT ?2",
             )
             .map_err(|e| format!("Query error: {e}"))?;
@@ -210,6 +301,11 @@ impl Database {
                     sender_name: row.get(3)?,
                     content: row.get(4)?,
                     timestamp: row.get(5)?,
+                    edited: row.get::<_, i64>(6)? != 0,
+                    reply_to_message_id: row.get(7)?,
+                    reply_to_sender_name: row.get(8)?,
+                    reply_preview: row.get(9)?,
+                    pinned: row.get::<_, i64>(10)? != 0,
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?;
@@ -223,8 +319,23 @@ impl Database {
     pub fn save_message(&self, msg: &MessageRow) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO messages (id, channel_id, sender_id, sender_name, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![msg.id, msg.channel_id, msg.sender_id, msg.sender_name, msg.content, msg.timestamp],
+            "INSERT INTO messages (
+                id, channel_id, sender_id, sender_name, content, timestamp, edited,
+                reply_to_message_id, reply_to_sender_name, reply_preview, pinned
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                msg.id,
+                msg.channel_id,
+                msg.sender_id,
+                msg.sender_name,
+                msg.content,
+                msg.timestamp,
+                msg.edited as i64,
+                msg.reply_to_message_id,
+                msg.reply_to_sender_name,
+                msg.reply_preview,
+                msg.pinned as i64
+            ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
@@ -234,8 +345,19 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .execute(
-                "UPDATE messages SET content = ?2 WHERE id = ?1",
+                "UPDATE messages SET content = ?2, edited = 1 WHERE id = ?1",
                 params![message_id, new_content],
+            )
+            .map_err(|e| format!("Update error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn set_message_pinned(&self, message_id: &str, pinned: bool) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "UPDATE messages SET pinned = ?2 WHERE id = ?1",
+                params![message_id, pinned as i64],
             )
             .map_err(|e| format!("Update error: {e}"))?;
         Ok(rows > 0)
@@ -254,9 +376,7 @@ impl Database {
         let mut stmt = conn
             .prepare("SELECT sender_id FROM messages WHERE id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
-        let result = stmt
-            .query_row(params![message_id], |row| row.get(0))
-            .ok();
+        let result = stmt.query_row(params![message_id], |row| row.get(0)).ok();
         Ok(result)
     }
 
@@ -290,6 +410,26 @@ impl Database {
         Ok(result)
     }
 
+    pub fn find_user_by_id(&self, user_id: &str) -> Result<Option<UserRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT user_id, token, display_name, created_at FROM users WHERE user_id = ?1",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let result = stmt
+            .query_row(params![user_id], |row| {
+                Ok(UserRow {
+                    user_id: row.get(0)?,
+                    token: row.get(1)?,
+                    display_name: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .ok();
+        Ok(result)
+    }
+
     pub fn update_user_name(&self, user_id: &str, name: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -298,6 +438,282 @@ impl Database {
         )
         .map_err(|e| format!("Update error: {e}"))?;
         Ok(())
+    }
+
+    // ─── Friends ───
+
+    pub fn save_friend_request(&self, request: &FriendRequestRow) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO friend_requests (requester_id, addressee_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![
+                request.requester_id,
+                request.addressee_id,
+                request.created_at
+            ],
+        )
+        .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_friend_request(
+        &self,
+        requester_id: &str,
+        addressee_id: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "DELETE FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2",
+                params![requester_id, addressee_id],
+            )
+            .map_err(|e| format!("Delete error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn friend_request_exists(
+        &self,
+        requester_id: &str,
+        addressee_id: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT 1 FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2")
+            .map_err(|e| format!("Query error: {e}"))?;
+        let exists = stmt
+            .query_row(params![requester_id, addressee_id], |_| Ok(()))
+            .is_ok();
+        Ok(exists)
+    }
+
+    pub fn load_incoming_friend_requests(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<FriendRequestRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT requester_id, addressee_id, created_at
+                 FROM friend_requests WHERE addressee_id = ?1 ORDER BY created_at DESC",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![user_id], |row| {
+                Ok(FriendRequestRow {
+                    requester_id: row.get(0)?,
+                    addressee_id: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))
+    }
+
+    pub fn load_outgoing_friend_requests(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<FriendRequestRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT requester_id, addressee_id, created_at
+                 FROM friend_requests WHERE requester_id = ?1 ORDER BY created_at DESC",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![user_id], |row| {
+                Ok(FriendRequestRow {
+                    requester_id: row.get(0)?,
+                    addressee_id: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))
+    }
+
+    pub fn save_friendship(&self, friendship: &FriendshipRow) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO friendships (user_low_id, user_high_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![
+                friendship.user_low_id,
+                friendship.user_high_id,
+                friendship.created_at
+            ],
+        )
+        .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_friendship(&self, user_a: &str, user_b: &str) -> Result<bool, String> {
+        let (low, high) = ordered_friend_pair(user_a, user_b);
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "DELETE FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2",
+                params![low, high],
+            )
+            .map_err(|e| format!("Delete error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn friendship_exists(&self, user_a: &str, user_b: &str) -> Result<bool, String> {
+        let (low, high) = ordered_friend_pair(user_a, user_b);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT 1 FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2")
+            .map_err(|e| format!("Query error: {e}"))?;
+        let exists = stmt.query_row(params![low, high], |_| Ok(())).is_ok();
+        Ok(exists)
+    }
+
+    pub fn load_friendships_for_user(&self, user_id: &str) -> Result<Vec<FriendshipRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT user_low_id, user_high_id, created_at
+                 FROM friendships WHERE user_low_id = ?1 OR user_high_id = ?1 ORDER BY created_at DESC",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![user_id], |row| {
+                Ok(FriendshipRow {
+                    user_low_id: row.get(0)?,
+                    user_high_id: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))
+    }
+
+    // ─── Direct Messages ───
+
+    pub fn load_direct_messages_between(
+        &self,
+        user_a: &str,
+        user_b: &str,
+        limit: usize,
+    ) -> Result<Vec<DirectMessageRow>, String> {
+        let (low, high) = ordered_friend_pair(user_a, user_b);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, user_low_id, user_high_id, sender_user_id, sender_name, content,
+                        timestamp, edited, reply_to_message_id, reply_to_sender_name, reply_preview
+                 FROM direct_messages
+                 WHERE user_low_id = ?1 AND user_high_id = ?2
+                 ORDER BY timestamp DESC LIMIT ?3",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![low, high, limit as i64], |row| {
+                Ok(DirectMessageRow {
+                    id: row.get(0)?,
+                    user_low_id: row.get(1)?,
+                    user_high_id: row.get(2)?,
+                    sender_user_id: row.get(3)?,
+                    sender_name: row.get(4)?,
+                    content: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    edited: row.get::<_, i64>(7)? != 0,
+                    reply_to_message_id: row.get(8)?,
+                    reply_to_sender_name: row.get(9)?,
+                    reply_preview: row.get(10)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        let mut messages = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))?;
+        messages.reverse();
+        Ok(messages)
+    }
+
+    pub fn save_direct_message(&self, msg: &DirectMessageRow) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO direct_messages (
+                id, user_low_id, user_high_id, sender_user_id, sender_name, content, timestamp,
+                edited, reply_to_message_id, reply_to_sender_name, reply_preview
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                msg.id,
+                msg.user_low_id,
+                msg.user_high_id,
+                msg.sender_user_id,
+                msg.sender_name,
+                msg.content,
+                msg.timestamp,
+                msg.edited as i64,
+                msg.reply_to_message_id,
+                msg.reply_to_sender_name,
+                msg.reply_preview,
+            ],
+        )
+        .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn update_direct_message(
+        &self,
+        message_id: &str,
+        new_content: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "UPDATE direct_messages SET content = ?2, edited = 1 WHERE id = ?1",
+                params![message_id, new_content],
+            )
+            .map_err(|e| format!("Update error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn delete_direct_message(&self, message_id: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute(
+                "DELETE FROM direct_messages WHERE id = ?1",
+                params![message_id],
+            )
+            .map_err(|e| format!("Delete error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn get_direct_message(&self, message_id: &str) -> Result<Option<DirectMessageRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, user_low_id, user_high_id, sender_user_id, sender_name, content,
+                        timestamp, edited, reply_to_message_id, reply_to_sender_name, reply_preview
+                 FROM direct_messages WHERE id = ?1",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let result = stmt
+            .query_row(params![message_id], |row| {
+                Ok(DirectMessageRow {
+                    id: row.get(0)?,
+                    user_low_id: row.get(1)?,
+                    user_high_id: row.get(2)?,
+                    sender_user_id: row.get(3)?,
+                    sender_name: row.get(4)?,
+                    content: row.get(5)?,
+                    timestamp: row.get(6)?,
+                    edited: row.get::<_, i64>(7)? != 0,
+                    reply_to_message_id: row.get(8)?,
+                    reply_to_sender_name: row.get(9)?,
+                    reply_preview: row.get(10)?,
+                })
+            })
+            .ok();
+        Ok(result)
     }
 
     // ─── Bans ───
@@ -317,7 +733,9 @@ impl Database {
         let mut stmt = conn
             .prepare("SELECT 1 FROM bans WHERE space_id = ?1 AND user_id = ?2")
             .map_err(|e| format!("Query error: {e}"))?;
-        let exists = stmt.query_row(params![space_id, user_id], |_| Ok(())).is_ok();
+        let exists = stmt
+            .query_row(params![space_id, user_id], |_| Ok(()))
+            .is_ok();
         Ok(exists)
     }
 
@@ -344,7 +762,9 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         // table and col are controlled internally, not from user input
         let query = format!("SELECT {col} FROM {table}");
-        let mut stmt = conn.prepare(&query).map_err(|e| format!("Query error: {e}"))?;
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| format!("Query error: {e}"))?;
         let rows = stmt
             .query_map([], |row| {
                 let val: String = row.get(0)?;
@@ -365,6 +785,14 @@ impl Database {
     }
 }
 
+fn ordered_friend_pair<'a>(user_a: &'a str, user_b: &'a str) -> (&'a str, &'a str) {
+    if user_a <= user_b {
+        (user_a, user_b)
+    } else {
+        (user_b, user_a)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,10 +802,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "voxlink_test_{}_{n}.db",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("voxlink_test_{}_{n}.db", std::process::id()));
         let db = Database::open(&path).unwrap();
         (db, path)
     }
@@ -433,13 +858,21 @@ mod tests {
         let (db, path) = temp_db();
         // Create parent space and channel for foreign key constraints
         db.save_space(&SpaceRow {
-            id: "s1".into(), name: "S".into(), invite_code: "X".into(),
-            owner_id: "p1".into(), created_at: 0,
-        }).unwrap();
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
         db.save_channel(&ChannelRow {
-            id: "c1".into(), space_id: "s1".into(), name: "General".into(),
-            room_key: "sp:s1:ch:c1".into(), channel_type: "text".into(),
-        }).unwrap();
+            id: "c1".into(),
+            space_id: "s1".into(),
+            name: "General".into(),
+            room_key: "sp:s1:ch:c1".into(),
+            channel_type: "text".into(),
+        })
+        .unwrap();
         db.save_message(&MessageRow {
             id: "m1".into(),
             channel_id: "c1".into(),
@@ -447,15 +880,29 @@ mod tests {
             sender_name: "Alice".into(),
             content: "Hello".into(),
             timestamp: 1000,
+            edited: false,
+            reply_to_message_id: Some("m0".into()),
+            reply_to_sender_name: Some("Bob".into()),
+            reply_preview: Some("Earlier note".into()),
+            pinned: true,
         })
         .unwrap();
         let msgs = db.load_messages_for_channel("c1", 50).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "Hello");
+        assert_eq!(msgs[0].reply_to_message_id.as_deref(), Some("m0"));
+        assert_eq!(msgs[0].reply_to_sender_name.as_deref(), Some("Bob"));
+        assert_eq!(msgs[0].reply_preview.as_deref(), Some("Earlier note"));
+        assert!(msgs[0].pinned);
 
         db.update_message("m1", "Updated").unwrap();
         let msgs = db.load_messages_for_channel("c1", 50).unwrap();
         assert_eq!(msgs[0].content, "Updated");
+        assert!(msgs[0].edited);
+
+        db.set_message_pinned("m1", false).unwrap();
+        let msgs = db.load_messages_for_channel("c1", 50).unwrap();
+        assert!(!msgs[0].pinned);
 
         assert!(db.delete_message("m1").unwrap());
         assert!(db.load_messages_for_channel("c1", 50).unwrap().is_empty());
@@ -485,9 +932,13 @@ mod tests {
         let (db, path) = temp_db();
         // Create parent space for foreign key constraint
         db.save_space(&SpaceRow {
-            id: "s1".into(), name: "S".into(), invite_code: "X".into(),
-            owner_id: "p1".into(), created_at: 0,
-        }).unwrap();
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
         assert!(!db.is_banned("s1", "u1").unwrap());
         db.save_ban(&BanRow {
             space_id: "s1".into(),
@@ -497,6 +948,82 @@ mod tests {
         .unwrap();
         assert!(db.is_banned("s1", "u1").unwrap());
         assert!(!db.is_banned("s1", "u2").unwrap());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn friend_request_round_trip() {
+        let (db, path) = temp_db();
+        db.save_friend_request(&FriendRequestRow {
+            requester_id: "u1".into(),
+            addressee_id: "u2".into(),
+            created_at: 1000,
+        })
+        .unwrap();
+        assert!(db.friend_request_exists("u1", "u2").unwrap());
+        assert!(!db.friend_request_exists("u2", "u1").unwrap());
+        let incoming = db.load_incoming_friend_requests("u2").unwrap();
+        let outgoing = db.load_outgoing_friend_requests("u1").unwrap();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].requester_id, "u1");
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].addressee_id, "u2");
+        assert!(db.delete_friend_request("u1", "u2").unwrap());
+        assert!(!db.friend_request_exists("u1", "u2").unwrap());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn friendship_round_trip() {
+        let (db, path) = temp_db();
+        db.save_friendship(&FriendshipRow {
+            user_low_id: "u1".into(),
+            user_high_id: "u2".into(),
+            created_at: 1000,
+        })
+        .unwrap();
+        assert!(db.friendship_exists("u1", "u2").unwrap());
+        assert!(db.friendship_exists("u2", "u1").unwrap());
+        let friends = db.load_friendships_for_user("u2").unwrap();
+        assert_eq!(friends.len(), 1);
+        assert_eq!(friends[0].user_low_id, "u1");
+        assert!(db.delete_friendship("u2", "u1").unwrap());
+        assert!(!db.friendship_exists("u1", "u2").unwrap());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn direct_message_round_trip() {
+        let (db, path) = temp_db();
+        db.save_direct_message(&DirectMessageRow {
+            id: "m7".into(),
+            user_low_id: "u1".into(),
+            user_high_id: "u2".into(),
+            sender_user_id: "u1".into(),
+            sender_name: "Alice".into(),
+            content: "Hello there".into(),
+            timestamp: 1000,
+            edited: false,
+            reply_to_message_id: Some("m5".into()),
+            reply_to_sender_name: Some("Bob".into()),
+            reply_preview: Some("Earlier note".into()),
+        })
+        .unwrap();
+
+        let history = db.load_direct_messages_between("u2", "u1", 50).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "Hello there");
+        assert_eq!(history[0].reply_to_message_id.as_deref(), Some("m5"));
+        assert_eq!(history[0].reply_to_sender_name.as_deref(), Some("Bob"));
+        assert_eq!(history[0].reply_preview.as_deref(), Some("Earlier note"));
+
+        assert!(db.update_direct_message("m7", "Updated").unwrap());
+        let stored = db.get_direct_message("m7").unwrap().unwrap();
+        assert_eq!(stored.content, "Updated");
+        assert!(stored.edited);
+
+        assert!(db.delete_direct_message("m7").unwrap());
+        assert!(db.get_direct_message("m7").unwrap().is_none());
         let _ = std::fs::remove_file(path);
     }
 

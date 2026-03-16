@@ -10,9 +10,12 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 // ─── Test Infrastructure ───
 
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+
 struct TestServer {
     child: Child,
     port: u16,
+    db_path: std::path::PathBuf,
 }
 
 impl TestServer {
@@ -28,9 +31,15 @@ impl TestServer {
             .parent()
             .unwrap()
             .join("target/debug/signaling_server");
+        let db_path = std::env::temp_dir().join(format!(
+            "voxlink_integration_{}_{}.db",
+            std::process::id(),
+            port
+        ));
 
         let child = Command::new(&server_bin)
             .env("PV_ADDR", format!("127.0.0.1:{port}"))
+            .env("PV_DB_PATH", &db_path)
             .env("RUST_LOG", "info")
             .kill_on_drop(true)
             .stdout(std::process::Stdio::null())
@@ -43,13 +52,20 @@ impl TestServer {
                 )
             });
 
-        let server = TestServer { child, port };
+        let server = TestServer {
+            child,
+            port,
+            db_path,
+        };
 
         // Wait for server to be ready by trying to connect
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
         loop {
             if tokio::time::Instant::now() > deadline {
-                panic!("Server did not start within 5 seconds on port {port}");
+                panic!(
+                    "Server did not start within {} seconds on port {port}",
+                    STARTUP_TIMEOUT.as_secs()
+                );
             }
             match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
                 Ok(_) => break,
@@ -62,10 +78,13 @@ impl TestServer {
 
     async fn connect(&self) -> TestClient {
         let url = format!("ws://127.0.0.1:{}", self.port);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
         loop {
             if tokio::time::Instant::now() > deadline {
-                panic!("Could not connect WebSocket client within 5 seconds");
+                panic!(
+                    "Could not connect WebSocket client within {} seconds",
+                    STARTUP_TIMEOUT.as_secs()
+                );
             }
             match tokio_tungstenite::connect_async(&url).await {
                 Ok((ws, _)) => {
@@ -82,6 +101,9 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         // kill_on_drop handles cleanup, but let's be explicit
         let _ = self.child.start_kill();
+        let _ = std::fs::remove_file(&self.db_path);
+        let _ = std::fs::remove_file(self.db_path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(self.db_path.with_extension("db-shm"));
     }
 }
 
@@ -121,8 +143,11 @@ impl TestClient {
     }
 
     async fn send_binary(&mut self, data: &[u8]) {
+        let mut packet = Vec::with_capacity(data.len() + 1);
+        packet.push(shared_types::MEDIA_PACKET_AUDIO);
+        packet.extend_from_slice(data);
         self.sink
-            .send(Message::Binary(data.to_vec().into()))
+            .send(Message::Binary(packet.into()))
             .await
             .unwrap();
     }
@@ -201,6 +226,21 @@ fn generate_test_audio() -> Vec<u8> {
     bytes
 }
 
+fn parse_audio_frame(frame: &[u8]) -> (&str, &[u8]) {
+    assert!(
+        frame.len() >= 3 && frame[0] == shared_types::MEDIA_PACKET_AUDIO,
+        "Expected audio media packet"
+    );
+    let id_len = frame[1] as usize;
+    assert!(
+        frame.len() > 2 + id_len,
+        "Frame too short for sender header"
+    );
+    let sender_id = std::str::from_utf8(&frame[2..2 + id_len]).unwrap();
+    let audio = &frame[2 + id_len..];
+    (sender_id, audio)
+}
+
 // ─── Tests ───
 
 #[tokio::test]
@@ -251,7 +291,11 @@ async fn test_join_room() {
             participants,
         } => {
             assert_eq!(rc, room_code);
-            assert_eq!(participants.len(), 1, "Should have 1 existing participant (Alice)");
+            assert_eq!(
+                participants.len(),
+                1,
+                "Should have 1 existing participant (Alice)"
+            );
             assert_eq!(participants[0].name, "Alice");
         }
         other => panic!("Expected RoomJoined for Bob, got: {:?}", other),
@@ -372,18 +416,11 @@ async fn test_audio_relay() {
         .await
         .expect("Bob should receive audio");
 
-    // Frame format: [id_len: u8, sender_id: bytes, audio_data: bytes]
-    assert!(frame.len() > 1);
-    let id_len = frame[0] as usize;
-    assert!(frame.len() > 1 + id_len, "Frame too short for header");
-    let _sender_id = std::str::from_utf8(&frame[1..1 + id_len]).unwrap();
-    let received_audio = &frame[1 + id_len..];
+    let (_sender_id, received_audio) = parse_audio_frame(&frame);
     assert_eq!(received_audio, &audio_data[..], "Audio data should match");
 
     // Alice should NOT receive her own audio back
-    let own_frame = alice
-        .recv_binary_timeout(Duration::from_millis(500))
-        .await;
+    let own_frame = alice.recv_binary_timeout(Duration::from_millis(500)).await;
     assert!(own_frame.is_none(), "Sender should not receive own audio");
 }
 
@@ -404,9 +441,7 @@ async fn test_oversized_frame_rejected() {
     alice.send_binary(&big_frame).await;
 
     // Bob should NOT receive anything
-    let received = bob
-        .recv_binary_timeout(Duration::from_millis(500))
-        .await;
+    let received = bob.recv_binary_timeout(Duration::from_millis(500)).await;
     assert!(received.is_none(), "Oversized frame should be rejected");
 }
 
@@ -459,8 +494,7 @@ async fn test_multiple_peers() {
             .await
             .unwrap_or_else(|| panic!("{name} should receive audio"));
 
-        let id_len = frame[0] as usize;
-        let received_audio = &frame[1 + id_len..];
+        let (_, received_audio) = parse_audio_frame(&frame);
         assert_eq!(received_audio, &audio_data[..], "{name} audio should match");
     }
 }
@@ -598,7 +632,10 @@ async fn test_password_room() {
         SignalMessage::RoomJoined { room_code: rc, .. } => {
             assert_eq!(rc, room_code);
         }
-        other => panic!("Expected RoomJoined with correct password, got: {:?}", other),
+        other => panic!(
+            "Expected RoomJoined with correct password, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -667,7 +704,11 @@ async fn test_performance_load() {
     // Drain all PeerJoined notifications
     tokio::time::sleep(Duration::from_millis(200)).await;
     for client in clients.iter_mut() {
-        while client.recv_signal_timeout(Duration::from_millis(100)).await.is_some() {}
+        while client
+            .recv_signal_timeout(Duration::from_millis(100))
+            .await
+            .is_some()
+        {}
     }
 
     let audio_data = generate_test_audio();
@@ -689,7 +730,11 @@ async fn test_performance_load() {
     let mut received = 0u32;
     let recv_start = std::time::Instant::now();
     while recv_start.elapsed() < Duration::from_secs(10) {
-        if clients[1].recv_binary_timeout(Duration::from_millis(500)).await.is_some() {
+        if clients[1]
+            .recv_binary_timeout(Duration::from_millis(500))
+            .await
+            .is_some()
+        {
             received += 1;
             if received >= frame_count as u32 {
                 break;
@@ -704,14 +749,29 @@ async fn test_performance_load() {
     println!("║         PERFORMANCE TEST RESULTS             ║");
     println!("╠══════════════════════════════════════════════╣");
     println!("║ Peers in room:     5                         ║");
-    println!("║ Audio frame size:  {} bytes              ║", audio_data.len());
+    println!(
+        "║ Audio frame size:  {} bytes              ║",
+        audio_data.len()
+    );
     println!("║ Frames sent:       {:<26}║", frame_count);
-    println!("║ Send time:         {:.2}s ({:.0} fps){:>14}║",
-        send_elapsed.as_secs_f64(), send_fps, "");
-    println!("║ Frames received:   {:<6} / {:<6} ({:.0}%){:>7}║",
-        received, frame_count,
-        (received as f64 / frame_count as f64) * 100.0, "");
-    println!("║ Recv time:         {:.2}s{:>24}║", recv_elapsed.as_secs_f64(), "");
+    println!(
+        "║ Send time:         {:.2}s ({:.0} fps){:>14}║",
+        send_elapsed.as_secs_f64(),
+        send_fps,
+        ""
+    );
+    println!(
+        "║ Frames received:   {:<6} / {:<6} ({:.0}%){:>7}║",
+        received,
+        frame_count,
+        (received as f64 / frame_count as f64) * 100.0,
+        ""
+    );
+    println!(
+        "║ Recv time:         {:.2}s{:>24}║",
+        recv_elapsed.as_secs_f64(),
+        ""
+    );
     println!("╚══════════════════════════════════════════════╝");
 
     // All frames should be received
@@ -735,7 +795,11 @@ async fn test_performance_load() {
     let expected_per_peer = multi_frames * 4;
     let mut peer1_received = 0u32;
     while peer1_received < expected_per_peer as u32 {
-        if clients[1].recv_binary_timeout(Duration::from_millis(500)).await.is_some() {
+        if clients[1]
+            .recv_binary_timeout(Duration::from_millis(500))
+            .await
+            .is_some()
+        {
             peer1_received += 1;
         } else {
             break;
@@ -747,11 +811,22 @@ async fn test_performance_load() {
     println!("╠══════════════════════════════════════════════╣");
     println!("║ Senders:           5 simultaneous             ║");
     println!("║ Frames/sender:     {:<26}║", multi_frames);
-    println!("║ Total relayed:     {:<4} (5 senders x 4 recv)  ║", multi_frames * 5 * 4);
-    println!("║ Send time:         {:.2}s{:>24}║", multi_send.as_secs_f64(), "");
-    println!("║ Peer1 received:    {:<6} / {:<6} ({:.0}%){:>7}║",
-        peer1_received, expected_per_peer,
-        (peer1_received as f64 / expected_per_peer as f64) * 100.0, "");
+    println!(
+        "║ Total relayed:     {:<4} (5 senders x 4 recv)  ║",
+        multi_frames * 5 * 4
+    );
+    println!(
+        "║ Send time:         {:.2}s{:>24}║",
+        multi_send.as_secs_f64(),
+        ""
+    );
+    println!(
+        "║ Peer1 received:    {:<6} / {:<6} ({:.0}%){:>7}║",
+        peer1_received,
+        expected_per_peer,
+        (peer1_received as f64 / expected_per_peer as f64) * 100.0,
+        ""
+    );
     println!("╚══════════════════════════════════════════════╝");
 
     assert!(
@@ -783,7 +858,11 @@ async fn test_sustained_chat_session() {
     // Drain PeerJoined notifications
     tokio::time::sleep(Duration::from_millis(500)).await;
     for client in clients.iter_mut() {
-        while client.recv_signal_timeout(Duration::from_millis(50)).await.is_some() {}
+        while client
+            .recv_signal_timeout(Duration::from_millis(50))
+            .await
+            .is_some()
+        {}
     }
 
     let audio_data = generate_test_audio();
@@ -807,16 +886,26 @@ async fn test_sustained_chat_session() {
 
     // Drain and count frames on a listener (client 5)
     let mut listener_received = 0u64;
-    while clients[5].recv_binary_timeout(Duration::from_millis(200)).await.is_some() {
+    while clients[5]
+        .recv_binary_timeout(Duration::from_millis(200))
+        .await
+        .is_some()
+    {
         listener_received += 1;
     }
 
     // Drain remaining binary frames on client 5 before signal test
-    while clients[5].recv_binary_timeout(Duration::from_millis(100)).await.is_some() {}
+    while clients[5]
+        .recv_binary_timeout(Duration::from_millis(100))
+        .await
+        .is_some()
+    {}
 
     // Verify server still responsive after sustained load by sending a signal
     // Use a fresh pair of clients for clarity
-    clients[3].send_signal(&SignalMessage::MuteChanged { is_muted: true }).await;
+    clients[3]
+        .send_signal(&SignalMessage::MuteChanged { is_muted: true })
+        .await;
     // Client 5 should receive PeerMuteChanged (skip any binary frames)
     let mut server_responsive = false;
     for _ in 0..20 {
@@ -832,7 +921,10 @@ async fn test_sustained_chat_session() {
             _ => break,
         }
     }
-    assert!(server_responsive, "Server should still be responsive after sustained load");
+    assert!(
+        server_responsive,
+        "Server should still be responsive after sustained load"
+    );
 
     let elapsed = start.elapsed();
     let _expected_per_listener = total_sent; // Each non-sender should get all frames from all 3 speakers
@@ -842,19 +934,30 @@ async fn test_sustained_chat_session() {
     println!("╠══════════════════════════════════════════════╣");
     println!("║ Peers:             10                         ║");
     println!("║ Active speakers:   3                          ║");
-    println!("║ Duration:          {:.1}s{:>25}║", elapsed.as_secs_f64(), "");
+    println!(
+        "║ Duration:          {:.1}s{:>25}║",
+        elapsed.as_secs_f64(),
+        ""
+    );
     println!("║ Total frames sent: {:<26}║", total_sent);
     println!("║ Listener received: {:<26}║", listener_received);
     println!("║ Server responsive: YES                        ║");
     println!("╚══════════════════════════════════════════════╝");
 
     // At least some frames should arrive
-    assert!(listener_received > 0, "Listener should have received audio frames");
+    assert!(
+        listener_received > 0,
+        "Listener should have received audio frames"
+    );
 }
 
 // ─── Space & Channel Tests ───
 
-async fn create_space(client: &mut TestClient, space_name: &str, user_name: &str) -> (shared_types::SpaceInfo, Vec<shared_types::ChannelInfo>) {
+async fn create_space(
+    client: &mut TestClient,
+    space_name: &str,
+    user_name: &str,
+) -> (shared_types::SpaceInfo, Vec<shared_types::ChannelInfo>) {
     client
         .send_signal(&SignalMessage::CreateSpace {
             name: space_name.to_string(),
@@ -867,7 +970,15 @@ async fn create_space(client: &mut TestClient, space_name: &str, user_name: &str
     }
 }
 
-async fn join_space(client: &mut TestClient, invite_code: &str, user_name: &str) -> (shared_types::SpaceInfo, Vec<shared_types::ChannelInfo>, Vec<shared_types::MemberInfo>) {
+async fn join_space(
+    client: &mut TestClient,
+    invite_code: &str,
+    user_name: &str,
+) -> (
+    shared_types::SpaceInfo,
+    Vec<shared_types::ChannelInfo>,
+    Vec<shared_types::MemberInfo>,
+) {
     client
         .send_signal(&SignalMessage::JoinSpace {
             invite_code: invite_code.to_string(),
@@ -875,9 +986,43 @@ async fn join_space(client: &mut TestClient, invite_code: &str, user_name: &str)
         })
         .await;
     match client.recv_signal().await {
-        SignalMessage::SpaceJoined { space, channels, members } => (space, channels, members),
+        SignalMessage::SpaceJoined {
+            space,
+            channels,
+            members,
+        } => (space, channels, members),
         other => panic!("Expected SpaceJoined, got: {:?}", other),
     }
+}
+
+async fn authenticate(
+    client: &mut TestClient,
+    user_name: &str,
+    token: Option<String>,
+) -> (String, String) {
+    client
+        .send_signal(&SignalMessage::Authenticate {
+            token,
+            user_name: user_name.to_string(),
+        })
+        .await;
+    let (token, user_id) = match client.recv_signal().await {
+        SignalMessage::Authenticated { token, user_id } => (token, user_id),
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    };
+    match client.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert!(friends.is_empty());
+            assert!(incoming_requests.is_empty());
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!("Expected FriendSnapshot after auth, got: {:?}", other),
+    }
+    (token, user_id)
 }
 
 #[tokio::test]
@@ -916,7 +1061,10 @@ async fn test_join_space_by_invite_code() {
     assert_eq!(channels.len(), 1);
     assert_eq!(channels[0].name, "General");
     // Members should include Alice
-    assert!(members.iter().any(|m| m.name == "Alice"), "Members should include Alice");
+    assert!(
+        members.iter().any(|m| m.name == "Alice"),
+        "Members should include Alice"
+    );
 
     // Alice should get MemberOnline for Bob
     let msg = alice.recv_signal().await;
@@ -943,7 +1091,10 @@ async fn test_join_space_invalid_code() {
     let msg = client.recv_signal().await;
     match msg {
         SignalMessage::Error { message } => {
-            assert!(message.contains("invite"), "Error should mention invite code: {message}");
+            assert!(
+                message.contains("invite"),
+                "Error should mention invite code: {message}"
+            );
         }
         other => panic!("Expected Error for invalid invite code, got: {:?}", other),
     }
@@ -1080,7 +1231,11 @@ async fn test_join_voice_channel() {
 
     let msg = alice.recv_signal().await;
     match msg {
-        SignalMessage::ChannelJoined { channel_id, channel_name, participants } => {
+        SignalMessage::ChannelJoined {
+            channel_id,
+            channel_name,
+            participants,
+        } => {
             assert_eq!(channel_id, general_id);
             assert_eq!(channel_name, "General");
             assert_eq!(participants.len(), 0); // No one else in channel yet
@@ -1091,7 +1246,11 @@ async fn test_join_voice_channel() {
     // Alice should also get MemberChannelChanged for herself
     let msg2 = alice.recv_signal().await;
     match msg2 {
-        SignalMessage::MemberChannelChanged { channel_id, channel_name, .. } => {
+        SignalMessage::MemberChannelChanged {
+            channel_id,
+            channel_name,
+            ..
+        } => {
             assert_eq!(channel_id.as_deref(), Some(general_id.as_str()));
             assert_eq!(channel_name.as_deref(), Some("General"));
         }
@@ -1130,7 +1289,10 @@ async fn test_cannot_join_text_channel() {
     let msg = alice.recv_signal().await;
     match msg {
         SignalMessage::Error { message } => {
-            assert!(message.contains("text"), "Error should mention text channel: {message}");
+            assert!(
+                message.contains("text"),
+                "Error should mention text channel: {message}"
+            );
         }
         other => panic!("Expected Error for text channel join, got: {:?}", other),
     }
@@ -1151,7 +1313,9 @@ async fn test_leave_channel() {
 
     // Both join the General channel
     alice
-        .send_signal(&SignalMessage::JoinChannel { channel_id: general_id.clone() })
+        .send_signal(&SignalMessage::JoinChannel {
+            channel_id: general_id.clone(),
+        })
         .await;
     let _ = alice.recv_signal().await; // ChannelJoined
     let _ = alice.recv_signal().await; // MemberChannelChanged(self)
@@ -1159,7 +1323,10 @@ async fn test_leave_channel() {
     // Bob also gets MemberChannelChanged for Alice
     let _ = bob.recv_signal().await;
 
-    bob.send_signal(&SignalMessage::JoinChannel { channel_id: general_id.clone() }).await;
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: general_id.clone(),
+    })
+    .await;
     let _ = bob.recv_signal().await; // ChannelJoined (with Alice as participant)
     let _ = bob.recv_signal().await; // MemberChannelChanged(self)
 
@@ -1173,7 +1340,11 @@ async fn test_leave_channel() {
 
     // Bob should get ChannelLeft
     let msg = bob.recv_signal().await;
-    assert!(matches!(msg, SignalMessage::ChannelLeft), "Expected ChannelLeft, got: {:?}", msg);
+    assert!(
+        matches!(msg, SignalMessage::ChannelLeft),
+        "Expected ChannelLeft, got: {:?}",
+        msg
+    );
 
     // Alice should get PeerLeft
     let alice_msg = alice.recv_signal().await;
@@ -1198,7 +1369,9 @@ async fn test_channel_audio_relay() {
 
     // Both join the General channel
     alice
-        .send_signal(&SignalMessage::JoinChannel { channel_id: general_id.clone() })
+        .send_signal(&SignalMessage::JoinChannel {
+            channel_id: general_id.clone(),
+        })
         .await;
     let _ = alice.recv_signal().await; // ChannelJoined
     let _ = alice.recv_signal().await; // MemberChannelChanged
@@ -1206,7 +1379,10 @@ async fn test_channel_audio_relay() {
     // Consume Bob's MemberChannelChanged for Alice
     let _ = bob.recv_signal().await;
 
-    bob.send_signal(&SignalMessage::JoinChannel { channel_id: general_id.clone() }).await;
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: general_id.clone(),
+    })
+    .await;
     let _ = bob.recv_signal().await; // ChannelJoined
     let _ = bob.recv_signal().await; // MemberChannelChanged
 
@@ -1223,9 +1399,12 @@ async fn test_channel_audio_relay() {
         .await
         .expect("Bob should receive audio in space channel");
 
-    let id_len = frame[0] as usize;
-    let received_audio = &frame[1 + id_len..];
-    assert_eq!(received_audio, &audio[..], "Audio data should match in channel");
+    let (_, received_audio) = parse_audio_frame(&frame);
+    assert_eq!(
+        received_audio,
+        &audio[..],
+        "Audio data should match in channel"
+    );
 }
 
 #[tokio::test]
@@ -1290,7 +1469,10 @@ async fn test_space_name_validation() {
     let msg = client.recv_signal().await;
     match msg {
         SignalMessage::Error { message } => {
-            assert!(message.contains("empty") || message.contains("Name"), "Error: {message}");
+            assert!(
+                message.contains("empty") || message.contains("Name"),
+                "Error: {message}"
+            );
         }
         other => panic!("Expected Error for empty name, got: {:?}", other),
     }
@@ -1314,7 +1496,10 @@ async fn test_channel_name_validation() {
     let msg = alice.recv_signal().await;
     match msg {
         SignalMessage::Error { message } => {
-            assert!(message.contains("empty") || message.contains("Name"), "Error: {message}");
+            assert!(
+                message.contains("empty") || message.contains("Name"),
+                "Error: {message}"
+            );
         }
         other => panic!("Expected Error for empty channel name, got: {:?}", other),
     }
@@ -1348,7 +1533,11 @@ async fn test_join_space_shows_channels_with_type() {
     // Bob joins and should see all 3 channels with correct types
     let (_joined, channels, _members) = join_space(&mut bob, &space.invite_code, "Bob").await;
 
-    assert_eq!(channels.len(), 3, "Should have 3 channels (General + chat + gaming)");
+    assert_eq!(
+        channels.len(),
+        3,
+        "Should have 3 channels (General + chat + gaming)"
+    );
 
     let general = channels.iter().find(|c| c.name == "General").unwrap();
     assert_eq!(general.channel_type, shared_types::ChannelType::Voice);
@@ -1367,20 +1556,8 @@ async fn test_authenticate_new_user() {
     let server = TestServer::start().await;
     let mut alice = server.connect().await;
 
-    alice
-        .send_signal(&SignalMessage::Authenticate {
-            token: None,
-            user_name: "Alice".into(),
-        })
-        .await;
-
-    match alice.recv_signal().await {
-        SignalMessage::Authenticated { token: _, user_id } => {
-            // token may be empty when no DB is configured (test servers have no DB)
-            assert!(!user_id.is_empty(), "Should receive a user_id");
-        }
-        other => panic!("Expected Authenticated, got: {:?}", other),
-    }
+    let (_token, user_id) = authenticate(&mut alice, "Alice", None).await;
+    assert!(!user_id.is_empty(), "Should receive a user_id");
 }
 
 #[tokio::test]
@@ -1389,34 +1566,364 @@ async fn test_authenticate_restore_identity() {
     let mut alice = server.connect().await;
 
     // First auth — get a token
-    alice
-        .send_signal(&SignalMessage::Authenticate {
-            token: None,
-            user_name: "Alice".into(),
-        })
-        .await;
-    let (token, user_id) = match alice.recv_signal().await {
-        SignalMessage::Authenticated { token, user_id } => (token, user_id),
-        other => panic!("Expected Authenticated, got: {:?}", other),
-    };
+    let (token, user_id) = authenticate(&mut alice, "Alice", None).await;
 
     // Reconnect with the same token
     let mut alice2 = server.connect().await;
-    alice2
-        .send_signal(&SignalMessage::Authenticate {
-            token: Some(token.clone()),
-            user_name: "Alice Renamed".into(),
+    let (token2, user_id2) = authenticate(&mut alice2, "Alice Renamed", Some(token.clone())).await;
+    assert_eq!(token2, token, "Should get the same token back");
+    assert_eq!(user_id2, user_id, "Should restore the same user_id");
+}
+
+#[tokio::test]
+async fn test_friend_presence_watch_updates_globally() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let _alice_user_id = authenticate(&mut alice, "Alice", None).await.1;
+    let bob_user_id = authenticate(&mut bob, "Bob", None).await.1;
+
+    alice
+        .send_signal(&SignalMessage::WatchFriendPresence {
+            user_ids: vec![bob_user_id.clone()],
         })
         .await;
-    match alice2.recv_signal().await {
-        SignalMessage::Authenticated {
-            token: t2,
-            user_id: uid2,
-        } => {
-            assert_eq!(t2, token, "Should get the same token back");
-            assert_eq!(uid2, user_id, "Should restore the same user_id");
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceSnapshot { presences } => {
+            assert_eq!(presences.len(), 1);
+            assert_eq!(presences[0].user_id, bob_user_id);
+            assert!(presences[0].is_online);
+            assert!(presences[0].active_space_name.is_none());
+            assert!(presences[0].active_channel_name.is_none());
         }
-        other => panic!("Expected Authenticated, got: {:?}", other),
+        other => panic!("Expected FriendPresenceSnapshot, got: {:?}", other),
+    }
+
+    let (space, channels) = create_space(&mut bob, "Studio", "Bob").await;
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceChanged { presence } => {
+            assert_eq!(presence.user_id, bob_user_id);
+            assert!(presence.is_online);
+            assert_eq!(
+                presence.active_space_name.as_deref(),
+                Some(space.name.as_str())
+            );
+            assert!(presence.active_channel_name.is_none());
+        }
+        other => panic!(
+            "Expected FriendPresenceChanged after space join, got: {:?}",
+            other
+        ),
+    }
+
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: channels[0].id.clone(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::ChannelJoined { .. } => {}
+        other => panic!("Expected ChannelJoined, got: {:?}", other),
+    }
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceChanged { presence } => {
+            assert_eq!(presence.user_id, bob_user_id);
+            assert!(presence.is_online);
+            assert!(presence.is_in_voice);
+            assert_eq!(presence.active_space_name.as_deref(), Some("Studio"));
+            assert_eq!(presence.active_channel_name.as_deref(), Some("General"));
+        }
+        other => panic!(
+            "Expected FriendPresenceChanged after channel join, got: {:?}",
+            other
+        ),
+    }
+
+    bob.sink.close().await.unwrap();
+    match alice.recv_signal_timeout(Duration::from_secs(5)).await {
+        Some(SignalMessage::FriendPresenceChanged { presence }) => {
+            assert_eq!(presence.user_id, bob_user_id);
+            assert!(!presence.is_online);
+        }
+        other => panic!("Expected offline FriendPresenceChanged, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_friend_request_accept_and_remove_flow() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let _alice_user_id = authenticate(&mut alice, "Alice", None).await.1;
+    let bob_user_id = authenticate(&mut bob, "Bob", None).await.1;
+
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert!(friends.is_empty());
+            assert!(incoming_requests.is_empty());
+            assert_eq!(outgoing_requests.len(), 1);
+            assert_eq!(outgoing_requests[0].user_id, bob_user_id);
+        }
+        other => panic!("Expected requester FriendSnapshot, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert!(friends.is_empty());
+            assert_eq!(incoming_requests.len(), 1);
+            assert_eq!(incoming_requests[0].name, "Alice");
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!("Expected recipient FriendSnapshot, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: _alice_user_id.clone(),
+        accept: true,
+    })
+    .await;
+
+    match bob.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert_eq!(friends.len(), 1);
+            assert_eq!(friends[0].name, "Alice");
+            assert!(incoming_requests.is_empty());
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!("Expected accepted FriendSnapshot for Bob, got: {:?}", other),
+    }
+    match alice.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert_eq!(friends.len(), 1);
+            assert_eq!(friends[0].user_id, bob_user_id);
+            assert!(incoming_requests.is_empty());
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!(
+            "Expected accepted FriendSnapshot for Alice, got: {:?}",
+            other
+        ),
+    }
+
+    alice
+        .send_signal(&SignalMessage::RemoveFriend {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert!(friends.is_empty());
+            assert!(incoming_requests.is_empty());
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!(
+            "Expected removal FriendSnapshot for Alice, got: {:?}",
+            other
+        ),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::FriendSnapshot {
+            friends,
+            incoming_requests,
+            outgoing_requests,
+        } => {
+            assert!(friends.is_empty());
+            assert!(incoming_requests.is_empty());
+            assert!(outgoing_requests.is_empty());
+        }
+        other => panic!("Expected removal FriendSnapshot for Bob, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_direct_message_flow() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let alice_user_id = authenticate(&mut alice, "Alice", None).await.1;
+    let bob_user_id = authenticate(&mut bob, "Bob", None).await.1;
+
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+    let _ = alice.recv_signal().await;
+    let _ = bob.recv_signal().await;
+
+    bob.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: alice_user_id.clone(),
+        accept: true,
+    })
+    .await;
+    let _ = bob.recv_signal().await;
+    let _ = alice.recv_signal().await;
+
+    alice
+        .send_signal(&SignalMessage::SelectDirectMessage {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::DirectMessageSelected {
+            user_id,
+            user_name,
+            history,
+        } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(user_name, "Bob");
+            assert!(history.is_empty());
+        }
+        other => panic!("Expected DirectMessageSelected for Alice, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::SelectDirectMessage {
+        user_id: alice_user_id.clone(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::DirectMessageSelected {
+            user_id,
+            user_name,
+            history,
+        } => {
+            assert_eq!(user_id, alice_user_id);
+            assert_eq!(user_name, "Alice");
+            assert!(history.is_empty());
+        }
+        other => panic!("Expected DirectMessageSelected for Bob, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::SetDirectTyping {
+        user_id: alice_user_id.clone(),
+        is_typing: true,
+    })
+    .await;
+    match alice.recv_signal().await {
+        SignalMessage::DirectTypingState {
+            user_id,
+            user_name,
+            is_typing,
+        } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(user_name, "Bob");
+            assert!(is_typing);
+        }
+        other => panic!("Expected DirectTypingState, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::SendDirectMessage {
+            user_id: bob_user_id.clone(),
+            content: "Hello Bob".into(),
+            reply_to_message_id: None,
+        })
+        .await;
+
+    let message_id = match alice.recv_signal().await {
+        SignalMessage::DirectMessage { user_id, message } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(message.content, "Hello Bob");
+            message.message_id
+        }
+        other => panic!("Expected sender DirectMessage echo, got: {:?}", other),
+    };
+    match bob.recv_signal().await {
+        SignalMessage::DirectMessage { user_id, message } => {
+            assert_eq!(user_id, alice_user_id);
+            assert_eq!(message.message_id, message_id);
+            assert_eq!(message.content, "Hello Bob");
+        }
+        other => panic!("Expected recipient DirectMessage, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::EditDirectMessage {
+            user_id: bob_user_id.clone(),
+            message_id: message_id.clone(),
+            new_content: "Hello Bob, updated".into(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::DirectMessageEdited {
+            user_id,
+            message_id: edited_id,
+            new_content,
+        } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(edited_id, message_id);
+            assert_eq!(new_content, "Hello Bob, updated");
+        }
+        other => panic!("Expected sender DirectMessageEdited, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::DirectMessageEdited {
+            user_id,
+            message_id: edited_id,
+            new_content,
+        } => {
+            assert_eq!(user_id, alice_user_id);
+            assert_eq!(edited_id, message_id);
+            assert_eq!(new_content, "Hello Bob, updated");
+        }
+        other => panic!("Expected recipient DirectMessageEdited, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::DeleteDirectMessage {
+            user_id: bob_user_id.clone(),
+            message_id: message_id.clone(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::DirectMessageDeleted {
+            user_id,
+            message_id: deleted_id,
+        } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(deleted_id, message_id);
+        }
+        other => panic!("Expected sender DirectMessageDeleted, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::DirectMessageDeleted {
+            user_id,
+            message_id: deleted_id,
+        } => {
+            assert_eq!(user_id, alice_user_id);
+            assert_eq!(deleted_id, message_id);
+        }
+        other => panic!("Expected recipient DirectMessageDeleted, got: {:?}", other),
     }
 }
 
@@ -1457,9 +1964,9 @@ async fn test_chat_edit_message() {
     let _ = alice.recv_signal().await; // TextChannelHistory
 
     bob.send_signal(&SignalMessage::SelectTextChannel {
-            channel_id: channel_id.clone(),
-        })
-        .await;
+        channel_id: channel_id.clone(),
+    })
+    .await;
     let _ = bob.recv_signal().await; // TextChannelHistory
 
     // Alice sends a message
@@ -1467,6 +1974,7 @@ async fn test_chat_edit_message() {
         .send_signal(&SignalMessage::SendTextMessage {
             channel_id: channel_id.clone(),
             content: "Hello world".into(),
+            reply_to_message_id: None,
         })
         .await;
 
@@ -1541,9 +2049,9 @@ async fn test_chat_delete_message() {
         .await;
     let _ = alice.recv_signal().await;
     bob.send_signal(&SignalMessage::SelectTextChannel {
-            channel_id: channel_id.clone(),
-        })
-        .await;
+        channel_id: channel_id.clone(),
+    })
+    .await;
     let _ = bob.recv_signal().await;
 
     // Alice sends a message
@@ -1551,6 +2059,7 @@ async fn test_chat_delete_message() {
         .send_signal(&SignalMessage::SendTextMessage {
             channel_id: channel_id.clone(),
             content: "Delete me".into(),
+            reply_to_message_id: None,
         })
         .await;
     let msg_id = match alice.recv_signal().await {
@@ -1611,9 +2120,9 @@ async fn test_chat_react_to_message() {
         .await;
     let _ = alice.recv_signal().await;
     bob.send_signal(&SignalMessage::SelectTextChannel {
-            channel_id: channel_id.clone(),
-        })
-        .await;
+        channel_id: channel_id.clone(),
+    })
+    .await;
     let _ = bob.recv_signal().await;
 
     // Alice sends a message
@@ -1621,6 +2130,7 @@ async fn test_chat_react_to_message() {
         .send_signal(&SignalMessage::SendTextMessage {
             channel_id: channel_id.clone(),
             content: "React to me".into(),
+            reply_to_message_id: None,
         })
         .await;
     let msg_id = match alice.recv_signal().await {
@@ -1631,11 +2141,11 @@ async fn test_chat_react_to_message() {
 
     // Bob reacts with thumbs up
     bob.send_signal(&SignalMessage::ReactToMessage {
-            channel_id: channel_id.clone(),
-            message_id: msg_id.clone(),
-            emoji: "👍".into(),
-        })
-        .await;
+        channel_id: channel_id.clone(),
+        message_id: msg_id.clone(),
+        emoji: "👍".into(),
+    })
+    .await;
 
     // Both should receive MessageReaction
     let check_reaction = |msg: SignalMessage| match msg {
@@ -1700,9 +2210,9 @@ async fn test_non_owner_cannot_kick() {
 
     // Bob tries to kick Alice (should fail — Bob is not the owner)
     bob.send_signal(&SignalMessage::KickMember {
-            member_id: "p1".into(), // Alice's likely ID
-        })
-        .await;
+        member_id: "p1".into(), // Alice's likely ID
+    })
+    .await;
 
     match bob.recv_signal().await {
         SignalMessage::Error { message } => {

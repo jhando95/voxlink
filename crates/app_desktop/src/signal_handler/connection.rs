@@ -58,6 +58,44 @@ pub fn drain_audio_and_update_speaking(
     }
 }
 
+pub fn drain_screen_share_frame(
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    w: &MainWindow,
+) {
+    let mut latest = None;
+    if let Ok(mut net) = network.try_lock() {
+        while let Some(raw) = net.try_recv_screen_frame() {
+            latest = Some(raw);
+        }
+    }
+
+    let Some(raw) = latest else {
+        return;
+    };
+    let Some((sender_id, frame_data)) = net_control::parse_screen_frame(&raw) else {
+        return;
+    };
+    if sender_id != w.get_screen_share_owner_id().as_str() {
+        return;
+    }
+
+    match xcap::image::load_from_memory(frame_data) {
+        Ok(image) => {
+            let rgba = image.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                rgba.as_raw(),
+                width,
+                height,
+            );
+            w.set_screen_share_image(slint::Image::from_rgba8(buffer));
+        }
+        Err(e) => {
+            log::warn!("Failed to decode screen share frame: {e}");
+        }
+    }
+}
+
 /// Handle connection monitoring, auto-reconnect, and auto-rejoin.
 #[allow(clippy::too_many_arguments)]
 pub fn check_connection(
@@ -67,6 +105,7 @@ pub fn check_connection(
     reconnect_cooldown: &Rc<RefCell<u64>>,
     reconnect_interval: &Rc<RefCell<u64>>,
     network_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     rt_handle: &tokio::runtime::Handle,
     perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
 ) {
@@ -89,8 +128,16 @@ pub fn check_connection(
     // Connection just lost — start with short cooldown
     if !connected && prev_connected {
         log::warn!("Connection lost, will attempt reconnect");
+        screen_share.stop_capture();
         w.set_status_text("Reconnecting...".into());
         w.set_room_status("Connection lost, reconnecting...".into());
+        w.set_has_screen_share(false);
+        w.set_is_sharing_screen(false);
+        w.set_screen_share_owner_name(slint::SharedString::default());
+        w.set_screen_share_owner_id(slint::SharedString::default());
+        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+            slint::Rgba8Pixel,
+        >::new(1, 1)));
         *reconnect_interval.borrow_mut() = 3;
         *reconnect_cooldown.borrow_mut() = 3; // first attempt after 3 ticks (~3s)
     }
@@ -102,6 +149,14 @@ pub fn check_connection(
         let room_code = w.get_room_code().to_string();
         let user_name = w.get_user_name().to_string();
         let space_invite = w.get_current_space_invite().to_string();
+        let direct_message_user_id = if w.get_current_view()
+            == ui_shell::view_to_index(AppView::TextChat)
+            && w.get_chat_is_direct_message()
+        {
+            Some(w.get_chat_channel_id().to_string())
+        } else {
+            None
+        };
         let is_in_room = w.get_current_view() == 1 && !room_code.is_empty();
         let is_in_space = !space_invite.is_empty();
         let is_muted = w.get_is_muted();
@@ -149,6 +204,12 @@ pub fn check_connection(
                         .send_signal(&SignalMessage::DeafenChanged { is_deafened })
                         .await;
                 }
+            }
+
+            if let Some(user_id) = direct_message_user_id.filter(|user_id| !user_id.is_empty()) {
+                let _ = net
+                    .send_signal(&SignalMessage::SelectDirectMessage { user_id })
+                    .await;
             }
         });
     }

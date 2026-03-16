@@ -3,7 +3,7 @@ pub mod persistence;
 
 use futures_util::{SinkExt, StreamExt};
 use shared_types::SignalMessage;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -78,10 +78,8 @@ impl Unpin for ServerStream {}
 
 // ─── Types ───
 
-type Tx = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<ServerStream>,
-    Message,
->;
+type Tx =
+    futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<ServerStream>, Message>;
 
 struct Peer {
     id: String,
@@ -97,12 +95,17 @@ struct Peer {
     is_deafened: AtomicBool,
     tx: Mutex<Tx>,
     space_id: Mutex<Option<String>>,
+    typing_channel_id: Mutex<Option<String>>,
+    typing_dm_user_id: Mutex<Option<String>>,
+    watched_friend_ids: Mutex<HashSet<String>>,
     // Rate limiting
     msg_count: AtomicU32,
     rate_window: Mutex<Instant>,
     // Audio frame rate limiting (#5)
     audio_frame_count: AtomicU32,
     audio_rate_window: Mutex<Instant>,
+    screen_frame_count: AtomicU32,
+    screen_rate_window: Mutex<Instant>,
 }
 
 impl Peer {
@@ -121,6 +124,7 @@ impl Peer {
 struct Room {
     peer_ids: Vec<String>,
     password: Option<String>,
+    active_screen_share_peer_id: Option<String>,
     created_at: Instant,
 }
 
@@ -241,19 +245,17 @@ async fn main() {
 
     // TLS setup (optional)
     let tls_acceptor = match (std::env::var("PV_CERT"), std::env::var("PV_KEY")) {
-        (Ok(cert_path), Ok(key_path)) => {
-            match load_tls_config(&cert_path, &key_path) {
-                Ok(config) => {
-                    log::info!("TLS enabled (cert: {cert_path}, key: {key_path})");
-                    Some(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
-                }
-                Err(e) => {
-                    log::error!("Failed to load TLS config: {e}");
-                    log::warn!("Falling back to plain WebSocket (insecure)");
-                    None
-                }
+        (Ok(cert_path), Ok(key_path)) => match load_tls_config(&cert_path, &key_path) {
+            Ok(config) => {
+                log::info!("TLS enabled (cert: {cert_path}, key: {key_path})");
+                Some(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
             }
-        }
+            Err(e) => {
+                log::error!("Failed to load TLS config: {e}");
+                log::warn!("Falling back to plain WebSocket (insecure)");
+                None
+            }
+        },
         _ => {
             log::warn!("No TLS configured (set PV_CERT and PV_KEY for secure mode)");
             None
@@ -302,6 +304,7 @@ async fn main() {
                         s.rooms.entry(cr.room_key.clone()).or_insert_with(|| Room {
                             peer_ids: Vec::new(),
                             password: None,
+                            active_screen_share_peer_id: None,
                             created_at: Instant::now(),
                         });
                     }
@@ -312,7 +315,8 @@ async fn main() {
                     HashMap::new();
                 for cr in &channels_rows {
                     if cr.channel_type == "text" {
-                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, MAX_CHANNEL_MESSAGES) {
+                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, MAX_CHANNEL_MESSAGES)
+                        {
                             let dq: VecDeque<_> = msgs
                                 .into_iter()
                                 .map(|m| shared_types::TextMessageData {
@@ -321,8 +325,12 @@ async fn main() {
                                     content: m.content,
                                     timestamp: m.timestamp as u64,
                                     message_id: m.id,
-                                    edited: false,
+                                    edited: m.edited,
                                     reactions: Vec::new(),
+                                    reply_to_message_id: m.reply_to_message_id,
+                                    reply_to_sender_name: m.reply_to_sender_name,
+                                    reply_preview: m.reply_preview,
+                                    pinned: m.pinned,
                                 })
                                 .collect();
                             if !dq.is_empty() {
@@ -332,8 +340,7 @@ async fn main() {
                     }
                 }
 
-                s.invite_index
-                    .insert(sr.invite_code.clone(), sr.id.clone());
+                s.invite_index.insert(sr.invite_code.clone(), sr.id.clone());
                 s.spaces.insert(
                     sr.id.clone(),
                     Space {
@@ -353,14 +360,14 @@ async fn main() {
             let max_space = db.max_id_suffix("spaces", "id").unwrap_or(0);
             let max_channel = db.max_id_suffix("channels", "id").unwrap_or(0);
             let max_message = db.max_id_suffix("messages", "id").unwrap_or(0);
+            let max_direct_message = db.max_id_suffix("direct_messages", "id").unwrap_or(0);
             s.next_space_id = s.next_space_id.max(max_space + 1);
             s.next_channel_id = s.next_channel_id.max(max_channel + 1);
-            s.next_message_id = s.next_message_id.max(max_message + 1);
+            s.next_message_id = s
+                .next_message_id
+                .max(max_message.max(max_direct_message) + 1);
 
-            log::info!(
-                "Loaded {} space(s) from database",
-                space_rows.len()
-            );
+            log::info!("Loaded {} space(s) from database", space_rows.len());
         }
     }
 
@@ -518,10 +525,15 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
                 is_deafened: AtomicBool::new(false),
                 tx: Mutex::new(tx),
                 space_id: Mutex::new(None),
+                typing_channel_id: Mutex::new(None),
+                typing_dm_user_id: Mutex::new(None),
+                watched_friend_ids: Mutex::new(HashSet::new()),
                 msg_count: AtomicU32::new(0),
                 rate_window: Mutex::new(Instant::now()),
                 audio_frame_count: AtomicU32::new(0),
                 audio_rate_window: Mutex::new(Instant::now()),
+                screen_frame_count: AtomicU32::new(0),
+                screen_rate_window: Mutex::new(Instant::now()),
             }),
         );
         id
@@ -561,8 +573,18 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
                 }
             }
             Ok(Message::Binary(data)) => {
-                // Audio frames are not rate limited (high throughput needed)
-                relay_audio(&state, &peer_id, &data).await;
+                if data.is_empty() {
+                    continue;
+                }
+                match data[0] {
+                    shared_types::MEDIA_PACKET_AUDIO => {
+                        relay_audio(&state, &peer_id, &data[1..]).await;
+                    }
+                    shared_types::MEDIA_PACKET_SCREEN => {
+                        relay_screen(&state, &peer_id, &data[1..]).await;
+                    }
+                    _ => {}
+                }
             }
             Ok(Message::Close(_)) => break,
             Ok(Message::Pong(_)) => {} // keepalive response, ignore
@@ -577,8 +599,18 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
     if let Some(task) = ping_task {
         task.abort();
     }
+    let disconnected_user_id = {
+        let s = state.read().await;
+        match s.peers.get(&peer_id) {
+            Some(peer) => peer.user_id.lock().await.clone(),
+            None => None,
+        }
+    };
     handle_disconnect(&state, &peer_id).await;
     state.write().await.peers.remove(&peer_id);
+    if let Some(user_id) = disconnected_user_id {
+        handlers::presence::notify_watchers_for_user(&state, &user_id).await;
+    }
     log::info!("Peer {peer_id} disconnected");
 }
 
@@ -625,7 +657,10 @@ fn validate_room_code(code: &str) -> Result<(), String> {
 fn validate_password(pw: &Option<String>) -> Result<(), String> {
     if let Some(ref p) = pw {
         if p.len() > MAX_PASSWORD_LEN {
-            return Err(format!("Password too long (max {} characters)", MAX_PASSWORD_LEN));
+            return Err(format!(
+                "Password too long (max {} characters)",
+                MAX_PASSWORD_LEN
+            ));
         }
     }
     Ok(())
@@ -635,14 +670,24 @@ fn validate_password(pw: &Option<String>) -> Result<(), String> {
 
 async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db) {
     match msg {
-        SignalMessage::CreateRoom { user_name, password } => {
+        SignalMessage::CreateRoom {
+            user_name,
+            password,
+        } => {
             handlers::room::handle_create_room(state, peer_id, user_name, password).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
-        SignalMessage::JoinRoom { room_code, user_name, password } => {
+        SignalMessage::JoinRoom {
+            room_code,
+            user_name,
+            password,
+        } => {
             handlers::room::handle_join_room(state, peer_id, room_code, user_name, password).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::LeaveRoom => {
             handle_disconnect(state, peer_id).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::MuteChanged { is_muted } => {
             handlers::room::handle_mute_changed(state, peer_id, is_muted).await;
@@ -650,23 +695,47 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db
         SignalMessage::DeafenChanged { is_deafened } => {
             handlers::room::handle_deafen_changed(state, peer_id, is_deafened).await;
         }
+        SignalMessage::StartScreenShare => {
+            handlers::room::handle_start_screen_share(state, peer_id).await;
+        }
+        SignalMessage::StopScreenShare => {
+            handlers::room::handle_stop_screen_share(state, peer_id).await;
+        }
         SignalMessage::CreateSpace { name, user_name } => {
             handlers::space::handle_create_space(state, peer_id, name, user_name, db).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
-        SignalMessage::JoinSpace { invite_code, user_name } => {
+        SignalMessage::JoinSpace {
+            invite_code,
+            user_name,
+        } => {
             handlers::space::handle_join_space(state, peer_id, invite_code, user_name, db).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::LeaveSpace => {
             handlers::space::handle_leave_space(state, peer_id).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
-        SignalMessage::CreateChannel { channel_name, channel_type } => {
-            handlers::channel::handle_create_channel(state, peer_id, channel_name, channel_type, db).await;
+        SignalMessage::CreateChannel {
+            channel_name,
+            channel_type,
+        } => {
+            handlers::channel::handle_create_channel(
+                state,
+                peer_id,
+                channel_name,
+                channel_type,
+                db,
+            )
+            .await;
         }
         SignalMessage::JoinChannel { channel_id } => {
             handlers::channel::handle_join_channel(state, peer_id, channel_id).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::LeaveChannel => {
             handlers::channel::handle_leave_channel(state, peer_id).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::DeleteSpace => {
             handlers::space::handle_delete_space(state, peer_id, db).await;
@@ -674,20 +743,127 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db
         SignalMessage::SelectTextChannel { channel_id } => {
             handlers::chat::handle_select_text_channel(state, peer_id, channel_id).await;
         }
-        SignalMessage::SendTextMessage { channel_id, content } => {
-            handlers::chat::handle_send_text_message(state, peer_id, channel_id, content, db).await;
+        SignalMessage::SelectDirectMessage { user_id } => {
+            handlers::chat::handle_select_direct_message(state, peer_id, user_id, db).await;
+        }
+        SignalMessage::SetTyping {
+            channel_id,
+            is_typing,
+        } => {
+            handlers::chat::handle_set_typing(state, peer_id, channel_id, is_typing).await;
+        }
+        SignalMessage::SetDirectTyping { user_id, is_typing } => {
+            handlers::chat::handle_set_direct_typing(state, peer_id, user_id, is_typing, db).await;
+        }
+        SignalMessage::SendTextMessage {
+            channel_id,
+            content,
+            reply_to_message_id,
+        } => {
+            handlers::chat::handle_send_text_message(
+                state,
+                peer_id,
+                channel_id,
+                content,
+                reply_to_message_id,
+                db,
+            )
+            .await;
+        }
+        SignalMessage::SendDirectMessage {
+            user_id,
+            content,
+            reply_to_message_id,
+        } => {
+            handlers::chat::handle_send_direct_message(
+                state,
+                peer_id,
+                user_id,
+                content,
+                reply_to_message_id,
+                db,
+            )
+            .await;
+        }
+        SignalMessage::PinMessage {
+            channel_id,
+            message_id,
+            pinned,
+        } => {
+            handlers::chat::handle_pin_message(state, peer_id, channel_id, message_id, pinned, db)
+                .await;
         }
         SignalMessage::Authenticate { token, user_name } => {
             handlers::auth::handle_authenticate(state, peer_id, token, user_name, db).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
-        SignalMessage::EditTextMessage { channel_id, message_id, new_content } => {
-            handlers::chat::handle_edit_text_message(state, peer_id, channel_id, message_id, new_content, db).await;
+        SignalMessage::WatchFriendPresence { user_ids } => {
+            handlers::presence::handle_watch_friend_presence(state, peer_id, user_ids).await;
         }
-        SignalMessage::DeleteTextMessage { channel_id, message_id } => {
-            handlers::chat::handle_delete_text_message(state, peer_id, channel_id, message_id, db).await;
+        SignalMessage::SendFriendRequest { user_id } => {
+            handlers::friends::handle_send_friend_request(state, peer_id, user_id, db).await;
         }
-        SignalMessage::ReactToMessage { channel_id, message_id, emoji } => {
-            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji).await;
+        SignalMessage::RespondFriendRequest { user_id, accept } => {
+            handlers::friends::handle_respond_friend_request(state, peer_id, user_id, accept, db)
+                .await;
+        }
+        SignalMessage::CancelFriendRequest { user_id } => {
+            handlers::friends::handle_cancel_friend_request(state, peer_id, user_id, db).await;
+        }
+        SignalMessage::RemoveFriend { user_id } => {
+            handlers::friends::handle_remove_friend(state, peer_id, user_id, db).await;
+        }
+        SignalMessage::EditTextMessage {
+            channel_id,
+            message_id,
+            new_content,
+        } => {
+            handlers::chat::handle_edit_text_message(
+                state,
+                peer_id,
+                channel_id,
+                message_id,
+                new_content,
+                db,
+            )
+            .await;
+        }
+        SignalMessage::EditDirectMessage {
+            user_id,
+            message_id,
+            new_content,
+        } => {
+            handlers::chat::handle_edit_direct_message(
+                state,
+                peer_id,
+                user_id,
+                message_id,
+                new_content,
+                db,
+            )
+            .await;
+        }
+        SignalMessage::DeleteTextMessage {
+            channel_id,
+            message_id,
+        } => {
+            handlers::chat::handle_delete_text_message(state, peer_id, channel_id, message_id, db)
+                .await;
+        }
+        SignalMessage::DeleteDirectMessage {
+            user_id,
+            message_id,
+        } => {
+            handlers::chat::handle_delete_direct_message(state, peer_id, user_id, message_id, db)
+                .await;
+        }
+        SignalMessage::ReactToMessage {
+            channel_id,
+            message_id,
+            emoji,
+        } => {
+            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji)
+                .await;
         }
         SignalMessage::KickMember { member_id } => {
             handlers::moderation::handle_kick_member(state, peer_id, member_id).await;
@@ -719,6 +895,7 @@ async fn send_error(state: &State, peer_id: &str, message: &str) {
 // ─── Audio Relay ───
 
 const MAX_AUDIO_FRAMES_PER_SEC: u32 = 100; // 50fps normal, 100 allows burst
+const MAX_SCREEN_FRAMES_PER_SEC: u32 = 60;
 
 async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
     // #3: Reject oversized audio frames
@@ -757,8 +934,9 @@ async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
         None => return,
     };
 
-    // Build frame once: [id_len, sender_id_bytes, audio_data]
-    let mut frame = Vec::with_capacity(1 + sender_id.len() + data.len());
+    // Build frame once: [kind, id_len, sender_id_bytes, audio_data]
+    let mut frame = Vec::with_capacity(2 + sender_id.len() + data.len());
+    frame.push(shared_types::MEDIA_PACKET_AUDIO);
     frame.push(sender_id.len() as u8);
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
@@ -797,6 +975,76 @@ async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
     futures_util::future::join_all(futs).await;
 }
 
+async fn relay_screen(state: &State, sender_id: &str, data: &[u8]) {
+    if data.len() > shared_types::MAX_SCREEN_FRAME_SIZE {
+        return;
+    }
+
+    let (room_code, allowed) = {
+        let s = state.read().await;
+        let peer = match s.peers.get(sender_id) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let now = Instant::now();
+        let mut window = peer.screen_rate_window.lock().await;
+        if now.duration_since(*window).as_secs() >= 1 {
+            *window = now;
+            peer.screen_frame_count.store(1, Ordering::Relaxed);
+        } else {
+            let count = peer.screen_frame_count.fetch_add(1, Ordering::Relaxed);
+            if count >= MAX_SCREEN_FRAMES_PER_SEC {
+                return;
+            }
+        }
+
+        let room_code = peer.cached_room_code();
+        let allowed = room_code
+            .as_ref()
+            .and_then(|code| s.rooms.get(code))
+            .and_then(|room| room.active_screen_share_peer_id.as_deref())
+            == Some(sender_id);
+        (room_code, allowed)
+    };
+
+    if !allowed {
+        return;
+    }
+
+    let Some(room_code) = room_code else {
+        return;
+    };
+
+    let mut frame = Vec::with_capacity(2 + sender_id.len() + data.len());
+    frame.push(shared_types::MEDIA_PACKET_SCREEN);
+    frame.push(sender_id.len() as u8);
+    frame.extend_from_slice(sender_id.as_bytes());
+    frame.extend_from_slice(data);
+
+    let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    if others.is_empty() {
+        return;
+    }
+
+    let send_timeout = std::time::Duration::from_millis(300);
+    let frame = Arc::new(frame);
+    let futs: Vec<_> = others
+        .into_iter()
+        .map(|peer| {
+            let frame = frame.clone();
+            async move {
+                let fut = async {
+                    let mut tx = peer.tx.lock().await;
+                    let _ = tx.send(Message::Binary((*frame).clone().into())).await;
+                };
+                let _ = tokio::time::timeout(send_timeout, fut).await;
+            }
+        })
+        .collect();
+    futures_util::future::join_all(futs).await;
+}
+
 // ─── Disconnect ───
 
 async fn handle_disconnect(state: &State, peer_id: &str) {
@@ -810,6 +1058,7 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
     };
 
     if let Some(ref code) = room_code {
+        handlers::room::stop_screen_share_in_room(state, code, peer_id).await;
         let remaining = handlers::collect_room_others(state, code, peer_id).await;
 
         {
@@ -841,6 +1090,7 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
     };
 
     if let Some(ref sid) = space_id {
+        handlers::chat::clear_typing_for_peer(state, peer_id).await;
         {
             let mut s = state.write().await;
             if let Some(space) = s.spaces.get_mut(sid) {
@@ -857,6 +1107,8 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
             *peer.space_id.lock().await = None;
         }
     }
+
+    handlers::chat::clear_direct_typing_for_peer(state, peer_id).await;
 
     if let Some(peer) = state.read().await.peers.get(peer_id) {
         peer.set_room_code(None).await;
@@ -919,11 +1171,11 @@ mod tests {
 
     #[test]
     fn validate_room_code_invalid() {
-        assert!(validate_room_code("12345").is_err());   // too short
-        assert!(validate_room_code("1234567").is_err());  // too long
-        assert!(validate_room_code("12345a").is_err());   // non-digit
-        assert!(validate_room_code("").is_err());          // empty
-        assert!(validate_room_code("abcdef").is_err());   // letters
+        assert!(validate_room_code("12345").is_err()); // too short
+        assert!(validate_room_code("1234567").is_err()); // too long
+        assert!(validate_room_code("12345a").is_err()); // non-digit
+        assert!(validate_room_code("").is_err()); // empty
+        assert!(validate_room_code("abcdef").is_err()); // letters
     }
 
     #[test]

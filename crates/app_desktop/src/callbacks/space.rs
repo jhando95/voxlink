@@ -112,19 +112,23 @@ pub fn setup_select_space(
         w.set_space_search_query(slint::SharedString::default());
 
         // Show cached space data immediately for responsiveness
-        let invite_code = {
+        let (invite_code, had_cached_space) = {
             let s = state.borrow();
             let mut invite = None;
+            let mut had_cached = false;
             if let Some(ref space) = s.space {
                 if space.id == space_id_str {
                     w.set_current_space_name(space.name.clone().into());
                     w.set_current_space_invite(space.invite_code.clone().into());
-                    ui_shell::render_space(&w, space, "");
                     invite = Some(space.invite_code.clone());
+                    had_cached = true;
                 }
             }
-            invite
+            (invite, had_cached)
         };
+        if had_cached_space {
+            crate::friends::sync_ui(&w, &state);
+        }
 
         w.set_current_view(ui_shell::view_to_index(AppView::Space));
         state.borrow_mut().current_view = AppView::Space;
@@ -162,8 +166,16 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
         };
         let s = state.borrow();
         if let Some(ref space) = s.space {
-            if space.id == w.get_current_space_id().to_string() {
-                ui_shell::render_space(&w, space, query.as_str());
+            if w.get_current_space_id() == space.id {
+                ui_shell::render_space(
+                    &w,
+                    space,
+                    query.as_str(),
+                    &s.favorite_friends,
+                    &s.incoming_friend_requests,
+                    &s.outgoing_friend_requests,
+                    s.self_user_id.as_deref(),
+                );
             }
         }
     });
@@ -178,6 +190,7 @@ pub fn setup_leave_space(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
     audio_started: &Rc<RefCell<bool>>,
     audio_active_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     speaking_ticks: &Rc<RefCell<std::collections::HashMap<String, u64>>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
@@ -188,10 +201,12 @@ pub fn setup_leave_space(
     let rt_handle = rt_handle.clone();
     let audio_active_flag = audio_active_flag.clone();
     let audio_started = audio_started.clone();
+    let screen_share = screen_share.clone();
     let voice = voice.clone();
     let speaking_ticks = speaking_ticks.clone();
     window.on_leave_space(move || {
         log::info!("Leaving space");
+        screen_share.stop_capture();
 
         // If in a channel, clean up audio
         if *audio_started.borrow() {
@@ -204,6 +219,8 @@ pub fn setup_leave_space(
             let mut s = state.borrow_mut();
             s.room = Default::default();
             s.space = None;
+            s.active_direct_message_user_id = None;
+            s.direct_typing_users.clear();
             s.current_view = AppView::Home;
         }
 
@@ -225,13 +242,31 @@ pub fn setup_leave_space(
         w.set_is_deafened(false);
         w.set_chat_channel_id(slint::SharedString::default());
         w.set_chat_channel_name(slint::SharedString::default());
+        w.set_chat_is_direct_message(false);
+        w.set_chat_context_subtitle(slint::SharedString::default());
+        w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
         w.set_chat_input(slint::SharedString::default());
+        w.set_chat_pinned_messages(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+        w.set_chat_typing_text(slint::SharedString::default());
         w.set_editing_message_id(slint::SharedString::default());
         w.set_editing_original_content(slint::SharedString::default());
+        w.set_reply_target_message_id(slint::SharedString::default());
+        w.set_reply_target_sender_name(slint::SharedString::default());
+        w.set_reply_target_preview(slint::SharedString::default());
         w.set_status_text("Connected".into());
         w.set_window_title("Voxlink".into());
+        w.set_has_screen_share(false);
+        w.set_is_sharing_screen(false);
+        w.set_screen_share_owner_name(slint::SharedString::default());
+        w.set_screen_share_owner_id(slint::SharedString::default());
+        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+            slint::Rgba8Pixel,
+        >::new(1, 1)));
         ui_shell::set_channels(&w, &[]);
         ui_shell::set_members(&w, &[]);
+        crate::friends::sync_ui(&w, &state);
 
         // Repopulate saved spaces list so the space still shows on Home view
         let cfg = config_store::load_config();

@@ -49,6 +49,9 @@ pub fn handle_room_entered(
     });
 
     s.room.connection = shared_types::ConnectionState::Connected;
+    s.room.active_screen_share_peer_id = None;
+    s.room.active_screen_share_peer_name = None;
+    s.room.is_sharing_screen = false;
     s.current_view = AppView::Room;
 
     w.set_room_code(room_code.into());
@@ -60,6 +63,17 @@ pub fn handle_room_entered(
     w.set_window_title(format!("Voxlink — {room_code} ({count})").into());
     w.set_room_password(slint::SharedString::default());
     w.set_room_status(slint::SharedString::default());
+    w.set_has_screen_share(false);
+    w.set_is_sharing_screen(false);
+    w.set_screen_share_owner_name(slint::SharedString::default());
+    w.set_screen_share_owner_id(slint::SharedString::default());
+    w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+        slint::Rgba8Pixel,
+    >::new(1, 1)));
+    if let Err(message) = ctx.screen_share.refresh_sources() {
+        log::warn!("Failed to refresh screen share sources: {message}");
+    }
+    ctx.screen_share.apply_to_window(w);
     if !is_create {
         w.set_join_code(slint::SharedString::default());
     }
@@ -152,4 +166,98 @@ pub fn handle_peer_deafen_changed(
         p.is_deafened = is_deafened;
     }
     ui_shell::set_participants(w, &s.room.participants);
+}
+
+pub fn handle_screen_share_started(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    sharer_id: &str,
+    sharer_name: &str,
+    is_self: bool,
+    ctx: &AudioContext,
+) {
+    {
+        let mut s = state.borrow_mut();
+        s.room.active_screen_share_peer_id = Some(sharer_id.to_string());
+        s.room.active_screen_share_peer_name = Some(sharer_name.to_string());
+        s.room.is_sharing_screen = is_self;
+    }
+
+    w.set_has_screen_share(true);
+    w.set_is_sharing_screen(is_self);
+    w.set_screen_share_owner_id(sharer_id.into());
+    w.set_screen_share_owner_name(sharer_name.into());
+    w.set_room_status(
+        (if is_self {
+            "Screen share starting..."
+        } else {
+            "Screen share live"
+        })
+        .into(),
+    );
+
+    if is_self {
+        if let Err(message) = ctx
+            .screen_share
+            .start_capture(ctx.network.clone(), ctx.rt_handle.clone())
+        {
+            log::error!("Failed to start local screen share capture: {message}");
+            ctx.screen_share.stop_capture();
+            let network = ctx.network.clone();
+            ctx.rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::StopScreenShare)
+                    .await;
+            });
+            {
+                let mut s = state.borrow_mut();
+                s.room.active_screen_share_peer_id = None;
+                s.room.active_screen_share_peer_name = None;
+                s.room.is_sharing_screen = false;
+            }
+            w.set_has_screen_share(false);
+            w.set_is_sharing_screen(false);
+            w.set_screen_share_owner_id(slint::SharedString::default());
+            w.set_screen_share_owner_name(slint::SharedString::default());
+            w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+                slint::Rgba8Pixel,
+            >::new(1, 1)));
+            w.set_room_status("Screen share could not start".into());
+        }
+    }
+    ctx.screen_share.apply_to_window(w);
+}
+
+pub fn handle_screen_share_stopped(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    sharer_id: &str,
+    ctx: &AudioContext,
+) {
+    let was_self = {
+        let mut s = state.borrow_mut();
+        let was_self = s.room.is_sharing_screen
+            && s.room.active_screen_share_peer_id.as_deref() == Some(sharer_id);
+        s.room.active_screen_share_peer_id = None;
+        s.room.active_screen_share_peer_name = None;
+        s.room.is_sharing_screen = false;
+        was_self
+    };
+
+    if was_self {
+        ctx.screen_share.stop_capture();
+    }
+
+    w.set_has_screen_share(false);
+    w.set_is_sharing_screen(false);
+    w.set_screen_share_owner_id(slint::SharedString::default());
+    w.set_screen_share_owner_name(slint::SharedString::default());
+    w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+        slint::Rgba8Pixel,
+    >::new(1, 1)));
+    if w.get_room_status().as_str().contains("Screen share") {
+        w.set_room_status(slint::SharedString::default());
+    }
+    ctx.screen_share.apply_to_window(w);
 }

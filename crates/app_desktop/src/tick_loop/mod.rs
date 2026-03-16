@@ -32,6 +32,7 @@ pub fn start(
     audio_started: &Rc<RefCell<bool>>,
     audio_active_flag: &Arc<AtomicBool>,
     network_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     speaking_ticks: &Rc<RefCell<HashMap<String, u64>>>,
     saved_input_device: Rc<RefCell<Option<String>>>,
     saved_output_device: Rc<RefCell<Option<String>>>,
@@ -48,14 +49,18 @@ pub fn start(
     let perf = perf.clone();
     let network_flag = network_flag.clone();
     let rt_handle = rt_handle.clone();
+    let screen_share = screen_share.clone();
     let timer = slint::Timer::default();
+    let screen_frame_timer = Rc::new(slint::Timer::default());
     let tick_count = Rc::new(RefCell::new(0u64));
 
     let audio_ctx = signal_handler::AudioContext {
         audio_started: audio_started.clone(),
         audio: audio.clone(),
         media: media.clone(),
+        network: network.clone(),
         audio_active_flag: audio_active_flag.clone(),
+        screen_share: screen_share.clone(),
         rt_handle: rt_handle.clone(),
         saved_input_device,
         saved_output_device,
@@ -79,6 +84,7 @@ pub fn start(
     let mute_cooldown = Rc::new(RefCell::new(0u64));
     let deafen_cooldown = Rc::new(RefCell::new(0u64));
     let listen_state: Rc<RefCell<Option<ListenState>>> = Rc::new(RefCell::new(None));
+    let screen_frame_timer_tick = screen_frame_timer.clone();
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -164,6 +170,37 @@ pub fn start(
                         &w,
                     );
 
+                    if w.get_has_screen_share() {
+                        if !screen_frame_timer_tick.running() {
+                            screen_frame_timer_tick.start(
+                                slint::TimerMode::Repeated,
+                                std::time::Duration::from_millis(16),
+                                {
+                                    let screen_timer_window = window_weak.clone();
+                                    let screen_timer_network = network.clone();
+                                    move || {
+                                        let Some(w) = screen_timer_window.upgrade() else {
+                                            return;
+                                        };
+                                        if !w.get_has_screen_share() {
+                                            return;
+                                        }
+                                        signal_handler::connection::drain_screen_share_frame(
+                                            &screen_timer_network,
+                                            &w,
+                                        );
+                                    }
+                                },
+                            );
+                        }
+                    } else if screen_frame_timer_tick.running() {
+                        screen_frame_timer_tick.stop();
+                    }
+
+                    if tick.is_multiple_of(40) {
+                        screen_share.apply_to_window(&w);
+                    }
+
                     update_mic_level(tick, &audio, &state, &w);
                 } else if current_view == 2 && w.get_mic_preview_active() {
                     update_preview_mic_level(tick, &audio, &w);
@@ -193,6 +230,7 @@ pub fn start(
                     &reconnect_cooldown,
                     &reconnect_interval,
                     &network_flag,
+                    &screen_share,
                     &rt_handle,
                     &perf,
                 );
@@ -210,6 +248,7 @@ pub fn start(
     );
 
     std::mem::forget(timer);
+    std::mem::forget(screen_frame_timer);
 }
 
 // ─── Keybind Listening ───

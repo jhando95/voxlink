@@ -67,6 +67,11 @@ pub fn auto_save_settings(
             output_volume: existing.output_volume,
             notifications_enabled: existing.notifications_enabled,
             auth_token: existing.auth_token,
+            member_widget_visible: existing.member_widget_visible,
+            member_widget_x: existing.member_widget_x,
+            member_widget_y: existing.member_widget_y,
+            favorite_friends: existing.favorite_friends,
+            recent_direct_messages: existing.recent_direct_messages,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
@@ -165,6 +170,34 @@ pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
         let mut cfg = config_store::load_config();
         cfg.last_space_id = Some(space_id);
         cfg.last_channel_id = Some(channel_id);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)>) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.member_widget_visible = visible;
+        if let Some((x, y)) = position {
+            cfg.member_widget_x = Some(x);
+            cfg.member_widget_y = Some(y);
+        }
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn save_favorite_friends_async(favorites: Vec<shared_types::FavoriteFriend>) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.favorite_friends = favorites;
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn save_recent_direct_messages_async(threads: Vec<shared_types::DirectMessageThread>) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.recent_direct_messages = threads;
         let _ = config_store::save_config(&cfg);
     });
 }

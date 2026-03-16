@@ -10,6 +10,15 @@ use ui_shell::MainWindow;
 
 use crate::helpers;
 
+fn refresh_share_sources_ui(
+    window: &MainWindow,
+    screen_share: &crate::screen_share::ScreenShareController,
+) -> Result<(), String> {
+    screen_share.refresh_sources()?;
+    screen_share.apply_to_window(window);
+    Ok(())
+}
+
 pub fn setup_create_room(
     window: &MainWindow,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
@@ -105,6 +114,7 @@ pub fn setup_leave_room(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
     audio_started: &Rc<RefCell<bool>>,
     audio_active_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     speaking_ticks: &Rc<RefCell<std::collections::HashMap<String, u64>>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
@@ -115,10 +125,12 @@ pub fn setup_leave_room(
     let rt_handle = rt_handle.clone();
     let audio_active_flag = audio_active_flag.clone();
     let audio_started = audio_started.clone();
+    let screen_share = screen_share.clone();
     let voice = voice.clone();
     let speaking_ticks = speaking_ticks.clone();
     window.on_leave_room(move || {
         log::info!("Leaving room");
+        screen_share.stop_capture();
         voice.borrow_mut().reset();
         {
             let mut s = state.borrow_mut();
@@ -142,6 +154,25 @@ pub fn setup_leave_room(
         w.set_reconnect_attempts(0);
         w.set_dropped_frames_baseline(w.get_dropped_frames_total());
         w.set_dropped_frames(0);
+        w.set_has_screen_share(false);
+        w.set_is_sharing_screen(false);
+        w.set_screen_share_owner_name(slint::SharedString::default());
+        w.set_screen_share_owner_id(slint::SharedString::default());
+        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+            slint::Rgba8Pixel,
+        >::new(1, 1)));
+        w.set_screen_share_sources(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ShareSourceData>::from(
+                Vec::new(),
+            ))
+            .into(),
+        );
+        w.set_selected_screen_share_source(-1);
+        w.set_selected_screen_share_profile(0);
+        w.set_screen_share_source_label(slint::SharedString::default());
+        w.set_screen_share_source_detail(slint::SharedString::default());
+        w.set_screen_share_quality_label(slint::SharedString::default());
+        w.set_screen_share_quality_detail(slint::SharedString::default());
 
         helpers::clear_room_code_async();
 
@@ -156,5 +187,114 @@ pub fn setup_leave_room(
             aud.stop_playback();
             flag.store(false, Ordering::Relaxed);
         });
+    });
+}
+
+pub fn setup_toggle_screen_share(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let screen_share = screen_share.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_toggle_screen_share(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let is_sharing = w.get_is_sharing_screen();
+        if w.get_has_screen_share() && !is_sharing {
+            w.set_room_status("Another share is already live".into());
+            return;
+        }
+        if !is_sharing {
+            if let Err(message) = refresh_share_sources_ui(&w, &screen_share) {
+                w.set_room_status(message.into());
+                return;
+            }
+        }
+
+        let network = network.clone();
+        let window_weak = window_weak.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let result = if is_sharing {
+                net.send_signal(&SignalMessage::StopScreenShare).await
+            } else {
+                net.send_signal(&SignalMessage::StartScreenShare).await
+            };
+
+            if let Err(e) = result {
+                log::error!("Failed to toggle screen share: {e}");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_room_status("Screen share request failed".into());
+                }
+            }
+        });
+    });
+}
+
+pub fn setup_refresh_screen_share_sources(
+    window: &MainWindow,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
+) {
+    let window_weak = window.as_weak();
+    let screen_share = screen_share.clone();
+    window.on_refresh_screen_share_sources(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        match refresh_share_sources_ui(&w, &screen_share) {
+            Ok(()) => {
+                if w.get_room_status().as_str().contains("source") {
+                    w.set_room_status(slint::SharedString::default());
+                }
+            }
+            Err(message) => w.set_room_status(message.into()),
+        }
+    });
+}
+
+pub fn setup_select_screen_share_source(
+    window: &MainWindow,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
+) {
+    let window_weak = window.as_weak();
+    let screen_share = screen_share.clone();
+    window.on_select_screen_share_source(move |index| {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        if let Err(message) = screen_share.select_source_index(index as usize) {
+            w.set_room_status(message.into());
+            return;
+        }
+        screen_share.apply_to_window(&w);
+        if w.get_is_sharing_screen() {
+            w.set_room_status("Source updated for your next share".into());
+        }
+    });
+}
+
+pub fn setup_select_screen_share_profile(
+    window: &MainWindow,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
+) {
+    let window_weak = window.as_weak();
+    let screen_share = screen_share.clone();
+    window.on_select_screen_share_profile(move |index| {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        if let Err(message) = screen_share.select_profile_index(index as usize) {
+            w.set_room_status(message.into());
+            return;
+        }
+        screen_share.apply_to_window(&w);
+        if w.get_is_sharing_screen() {
+            w.set_room_status("Profile updated for your next share".into());
+        }
     });
 }

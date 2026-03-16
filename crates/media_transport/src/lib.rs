@@ -17,7 +17,11 @@ impl MediaSession {
         network: Arc<Mutex<NetworkClient>>,
         dropped_frames: Arc<AtomicU64>,
     ) -> Self {
-        Self { audio, network, dropped_frames }
+        Self {
+            audio,
+            network,
+            dropped_frames,
+        }
     }
 
     /// Wire audio capture -> dedicated sender task -> network.

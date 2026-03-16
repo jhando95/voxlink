@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
-import { ParticipantData, PerfData, VxTheme } from "../theme.slint";
-import { MetricRow, SectionLabel, VxCard, VxLogo, VxStatusPill } from "../components.slint";
+import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, VxTheme } from "../theme.slint";
+import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxLogo, VxStatusPill } from "../components.slint";
 
 export component SystemView inherits Rectangle {
     in property <bool> wide: false;
@@ -11,6 +11,23 @@ export component SystemView inherits Rectangle {
     in property <[ParticipantData]> participants: [];
     in property <bool> is-open-mic: true;
     in property <int> ping-ms: -1;
+    in property <string> current-space-name: "";
+    in property <bool> member-widget-visible: false;
+    in property <int> favorite-friends-count: 0;
+    in property <int> online-friends-count: 0;
+    in property <int> live-friends-count: 0;
+    in property <[FriendData]> favorite-friends: [];
+    in property <[FriendRequestData]> incoming-friend-requests: [];
+    in property <[FriendRequestData]> outgoing-friend-requests: [];
+    in property <[DirectMessageThreadData]> direct-message-threads: [];
+    in property <int> unread-direct-messages-count: 0;
+    callback navigate(int);
+    callback toggle-member-widget();
+    callback accept-friend-request(string);
+    callback decline-friend-request(string);
+    callback cancel-friend-request(string);
+    callback remove-friend(string);
+    callback open-direct-message(string);
 
     background: transparent;
 
@@ -72,6 +89,67 @@ export component SystemView inherits Rectangle {
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "QUICK ACTIONS"; }
+                            Text {
+                                text: root.room-code != ""
+                                    ? "Jump back into the live room, tune the audio stack, or keep the friend radar floating while you work."
+                                    : "Tune the audio stack, keep the friend radar floating, and use this page as the control deck.";
+                                color: VxTheme.text-secondary;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                if root.room-code != "" : VxButton {
+                                    label: "Resume room";
+                                    accent: true;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.navigate(1); }
+                                }
+                                VxButton {
+                                    label: "Audio settings";
+                                    accent: root.room-code == "";
+                                    soft: root.room-code != "";
+                                    horizontal-stretch: 1;
+                                    clicked => { root.navigate(2); }
+                                }
+                            }
+                            VxButton {
+                                label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                                accent: !root.member-widget-visible && root.room-code != "";
+                                soft: root.member-widget-visible || root.room-code == "";
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-member-widget(); }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: root.room-code != "" ? "Room live" : "Room idle";
+                                    tone: root.room-code != "" ? VxTheme.success : VxTheme.text-muted;
+                                    fill: root.room-code != "" ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: root.unread-direct-messages-count > 0
+                                        ? root.unread-direct-messages-count + " unread"
+                                        : "Inbox clear";
+                                    tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                    fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: root.favorite-friends-count > 0
+                                        ? root.online-friends-count + " online"
+                                        : "No friends yet";
+                                    tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                    fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
                             spacing: 8px;
                             SectionLabel { text: "RESOURCES"; }
                             MetricRow {
@@ -119,6 +197,87 @@ export component SystemView inherits Rectangle {
                                 metric-label: "Room";
                                 metric-value: root.room-code != "" ? root.room-code + "  ·  " + root.participants.length + " people" : "No active room";
                                 indicator-color: root.room-code != "" ? VxTheme.accent : VxTheme.text-muted;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                SectionLabel { text: "CONVERSATIONS"; }
+                                if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                    label: root.unread-direct-messages-count + " unread";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
+                                }
+                            }
+                            if root.direct-message-threads.length == 0 : Text {
+                                text: "Open a direct message from any friend card and it will stay here for quick return trips.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            for thread in root.direct-message-threads : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: thread.unread-count > 0 ? VxTheme.accent-border :
+                                              thread.is-in-voice ? VxTheme.speaking-border :
+                                              thread.is-online ? VxTheme.border-strong : VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: center;
+                                        VxAvatar {
+                                            avatar-size: 30px;
+                                            initial: thread.initial;
+                                            color-index: thread.color-index;
+                                            show-status: true;
+                                            is-online: thread.is-online;
+                                            is-speaking: thread.is-in-voice;
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: thread.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                            }
+                                            Text {
+                                                text: thread.meta;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                            }
+                                        }
+                                        if thread.unread-count > 0 : VxStatusPill {
+                                            label: thread.unread-count + "";
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                    }
+                                    Text {
+                                        text: thread.preview;
+                                        color: VxTheme.text-secondary;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                        max-height: 28px;
+                                    }
+                                    VxButton {
+                                        label: "Open conversation";
+                                        small: true;
+                                        accent: true;
+                                        horizontal-stretch: 1;
+                                        clicked => { root.open-direct-message(thread.user-id); }
+                                    }
+                                }
                             }
                         }
                     }
@@ -171,11 +330,329 @@ export component SystemView inherits Rectangle {
                             }
                         }
                     }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "FRIENDS"; }
+                            Text {
+                                text: "Real friendships now live on the server instead of only in local pins.";
+                                color: VxTheme.text-secondary;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: root.favorite-friends-count + " total";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
+                                }
+                                VxStatusPill {
+                                    label: root.unread-direct-messages-count + " unread";
+                                    tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                    fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: root.online-friends-count + " online";
+                                    tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                    fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: root.live-friends-count + " in voice";
+                                    tone: root.live-friends-count > 0 ? VxTheme.warning : VxTheme.text-muted;
+                                    fill: root.live-friends-count > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                                }
+                            }
+                            if root.favorite-friends.length > 0 : VerticalLayout {
+                                spacing: 8px;
+                                SectionLabel { text: "FRIENDS"; }
+                                for friend in root.favorite-friends : Rectangle {
+                                    border-radius: VxTheme.radius-card;
+                                    background: VxTheme.bg-soft;
+                                    border-color: friend.is-in-voice ? VxTheme.speaking-border :
+                                                  friend.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
+                                    border-width: 1px;
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 8px;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: center;
+                                            VxAvatar {
+                                                avatar-size: 28px;
+                                                initial: friend.initial;
+                                                color-index: friend.color-index;
+                                                show-status: true;
+                                                is-online: friend.is-online;
+                                                is-speaking: friend.is-in-voice;
+                                            }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                horizontal-stretch: 1;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: friend.name;
+                                                    color: VxTheme.text-primary;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                }
+                                                Text {
+                                                    text: friend.detail;
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                    overflow: elide;
+                                                }
+                                            }
+                                            VxStatusPill {
+                                                label: friend.status-label;
+                                                tone: friend.is-in-voice ? VxTheme.success :
+                                                      friend.is-online ? VxTheme.text-secondary : VxTheme.text-muted;
+                                                fill: friend.is-in-voice ? VxTheme.success-dim :
+                                                      friend.is-online ? VxTheme.bg-panel : VxTheme.bg-soft;
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            VxButton {
+                                                label: "Message";
+                                                small: true;
+                                                accent: true;
+                                                horizontal-stretch: 1;
+                                                clicked => { root.open-direct-message(friend.user-id); }
+                                            }
+                                            VxButton {
+                                                label: "Remove";
+                                                small: true;
+                                                soft: true;
+                                                horizontal-stretch: 1;
+                                                clicked => { root.remove-friend(friend.user-id); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if root.incoming-friend-requests.length == 0 && root.outgoing-friend-requests.length == 0 : Text {
+                                text: "No pending requests right now. Add people from any member list and they will land here.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            if root.incoming-friend-requests.length > 0 : VerticalLayout {
+                                spacing: 8px;
+                                SectionLabel { text: "INCOMING"; }
+                                for request in root.incoming-friend-requests : Rectangle {
+                                    border-radius: VxTheme.radius-card;
+                                    background: VxTheme.bg-soft;
+                                    border-color: VxTheme.border-subtle;
+                                    border-width: 1px;
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 8px;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: center;
+                                            VxAvatar {
+                                                avatar-size: 28px;
+                                                initial: request.initial;
+                                                color-index: request.color-index;
+                                                show-status: false;
+                                            }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                horizontal-stretch: 1;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: request.name;
+                                                    color: VxTheme.text-primary;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                }
+                                                Text {
+                                                    text: request.detail;
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            VxButton {
+                                                label: "Accept";
+                                                small: true;
+                                                accent: true;
+                                                horizontal-stretch: 1;
+                                                clicked => { root.accept-friend-request(request.user-id); }
+                                            }
+                                            VxButton {
+                                                label: "Decline";
+                                                small: true;
+                                                soft: true;
+                                                horizontal-stretch: 1;
+                                                clicked => { root.decline-friend-request(request.user-id); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if root.outgoing-friend-requests.length > 0 : VerticalLayout {
+                                spacing: 8px;
+                                SectionLabel { text: "OUTGOING"; }
+                                for request in root.outgoing-friend-requests : Rectangle {
+                                    border-radius: VxTheme.radius-card;
+                                    background: VxTheme.bg-soft;
+                                    border-color: VxTheme.border-subtle;
+                                    border-width: 1px;
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 8px;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: center;
+                                            VxAvatar {
+                                                avatar-size: 28px;
+                                                initial: request.initial;
+                                                color-index: request.color-index;
+                                                show-status: false;
+                                            }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                horizontal-stretch: 1;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: request.name;
+                                                    color: VxTheme.text-primary;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                }
+                                                Text {
+                                                    text: request.detail;
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                }
+                                            }
+                                            VxStatusPill {
+                                                label: "Pending";
+                                                tone: VxTheme.text-secondary;
+                                                fill: VxTheme.bg-panel;
+                                            }
+                                        }
+                                        VxButton {
+                                            label: "Cancel request";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.cancel-friend-request(request.user-id); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "POP-OUT"; }
+                            Text {
+                                text: "Friend widget";
+                                color: VxTheme.text-primary;
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.favorite-friends-count > 0
+                                    ? "Your friends stay in a tiny always-on-top window. Live status appears anywhere on the server, and cached last-seen details remain when they drop offline."
+                                    : (root.current-space-name != ""
+                                        ? "Add people from " + root.current-space-name + " and keep them in a tiny always-on-top window. It only updates when friend or presence state changes."
+                                        : "Open a tiny always-on-top friends window. It stays idle until you add someone.");
+                                color: VxTheme.text-secondary;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxStatusPill {
+                                    label: root.member-widget-visible ? "Pop-out live" : "Pop-out hidden";
+                                    tone: root.member-widget-visible ? VxTheme.success : VxTheme.text-muted;
+                                    fill: root.member-widget-visible ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
+                                VxStatusPill {
+                                    label: root.favorite-friends-count > 0 ? root.favorite-friends-count + " friends" :
+                                          root.current-space-name != "" ? root.current-space-name : "No friends yet";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
+                                }
+                            }
+                            VxButton {
+                                label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                                accent: !root.member-widget-visible;
+                                soft: root.member-widget-visible;
+                                horizontal-stretch: 1;
+                                clicked => { root.toggle-member-widget(); }
+                            }
+                        }
+                    }
                 }
             }
 
             if !root.wide : VerticalLayout {
                 spacing: 18px;
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "QUICK ACTIONS"; }
+                        Text {
+                            text: root.room-code != ""
+                                ? "Resume the live room, jump to settings, or keep the friend pop-out nearby."
+                                : "Jump to settings or keep the friend pop-out nearby without leaving the control deck.";
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        if root.room-code != "" : VxButton {
+                            label: "Resume room";
+                            accent: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.navigate(1); }
+                        }
+                        VxButton {
+                            label: "Audio settings";
+                            soft: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.navigate(2); }
+                        }
+                        VxButton {
+                            label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                            accent: !root.member-widget-visible;
+                            soft: root.member-widget-visible;
+                            horizontal-stretch: 1;
+                            clicked => { root.toggle-member-widget(); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.unread-direct-messages-count > 0
+                                    ? root.unread-direct-messages-count + " unread"
+                                    : "Inbox clear";
+                                tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                            }
+                            VxStatusPill {
+                                label: root.favorite-friends-count > 0
+                                    ? root.online-friends-count + " online"
+                                    : "No friends yet";
+                                tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                            }
+                        }
+                    }
+                }
+
                 VxCard {
                     VerticalLayout {
                         padding: 18px;
@@ -192,6 +669,241 @@ export component SystemView inherits Rectangle {
                             metric-value: round(root.perf.memory-mb * 10) / 10 + " MB";
                             indicator-color: root.perf.memory-mb < 100 ? VxTheme.success :
                                              root.perf.memory-mb < 250 ? VxTheme.warning : VxTheme.danger;
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "CONVERSATIONS"; }
+                        if root.direct-message-threads.length == 0 : Text {
+                            text: "Recent direct messages will appear here.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                        }
+                        for thread in root.direct-message-threads : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-soft;
+                            border-color: thread.unread-count > 0 ? VxTheme.accent-border : VxTheme.border-subtle;
+                            border-width: 1px;
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+                                Text {
+                                    text: thread.name;
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: thread.preview;
+                                    color: VxTheme.text-secondary;
+                                    font-size: 9px;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    if thread.unread-count > 0 : VxStatusPill {
+                                        label: thread.unread-count + " unread";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                    VxButton {
+                                        label: "Open";
+                                        small: true;
+                                        accent: true;
+                                        horizontal-stretch: 1;
+                                        clicked => { root.open-direct-message(thread.user-id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "FRIENDS"; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.favorite-friends-count + " total";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                            VxStatusPill {
+                                label: root.incoming-friend-requests.length + " incoming";
+                                tone: root.incoming-friend-requests.length > 0 ? VxTheme.warning : VxTheme.text-muted;
+                                fill: root.incoming-friend-requests.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                            }
+                        }
+                        if root.favorite-friends.length > 0 : VerticalLayout {
+                            spacing: 8px;
+                            for friend in root.favorite-friends : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: friend.is-in-voice ? VxTheme.speaking-border :
+                                              friend.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: friend.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: friend.detail;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        VxButton {
+                                            label: "Message";
+                                            small: true;
+                                            accent: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.open-direct-message(friend.user-id); }
+                                        }
+                                        VxButton {
+                                            label: "Remove";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.remove-friend(friend.user-id); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if root.incoming-friend-requests.length == 0 && root.outgoing-friend-requests.length == 0 : Text {
+                            text: "No pending requests right now.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                        }
+                        if root.incoming-friend-requests.length > 0 : VerticalLayout {
+                            spacing: 8px;
+                            for request in root.incoming-friend-requests : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: request.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: request.detail;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        VxButton {
+                                            label: "Accept";
+                                            small: true;
+                                            accent: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.accept-friend-request(request.user-id); }
+                                        }
+                                        VxButton {
+                                            label: "Decline";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.decline-friend-request(request.user-id); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if root.outgoing-friend-requests.length > 0 : VerticalLayout {
+                            spacing: 8px;
+                            for request in root.outgoing-friend-requests : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: request.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: request.detail;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                    VxButton {
+                                        label: "Cancel request";
+                                        small: true;
+                                        soft: true;
+                                        horizontal-stretch: 1;
+                                        clicked => { root.cancel-friend-request(request.user-id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "POP-OUT"; }
+                        Text {
+                            text: "Friend widget";
+                            color: VxTheme.text-primary;
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.favorite-friends-count > 0
+                                ? "Friends stay in the pop-out between spaces. Live status appears anywhere on the server."
+                                : (root.current-space-name != ""
+                                    ? "Add people from " + root.current-space-name + " and keep them in a tiny always-on-top window."
+                                    : "Open a tiny always-on-top friends window. It stays idle until you add someone.");
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.member-widget-visible ? "Pop-out live" : "Pop-out hidden";
+                                tone: root.member-widget-visible ? VxTheme.success : VxTheme.text-muted;
+                                fill: root.member-widget-visible ? VxTheme.success-dim : VxTheme.bg-soft;
+                            }
+                            VxStatusPill {
+                                label: root.favorite-friends-count > 0 ? root.favorite-friends-count + " friends" :
+                                      root.current-space-name != "" ? root.current-space-name : "No friends yet";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                        }
+                        VxButton {
+                            label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                            accent: !root.member-widget-visible;
+                            soft: root.member-widget-visible;
+                            horizontal-stretch: 1;
+                            clicked => { root.toggle-member-widget(); }
                         }
                     }
                 }

@@ -35,6 +35,10 @@ export struct ChatMessage {
     content: string,
     timestamp: string,
     is-self: bool,
+    mentions-self: bool,
+    reply-sender-name: string,
+    reply-preview: string,
+    is-pinned: bool,
     color-index: int,
     message-id: string,
     edited: bool,
@@ -52,12 +56,56 @@ export struct ChannelData {
 
 export struct MemberData {
     id: string,
+    user-id: string,
     name: string,
     initial: string,
     channel-name: string,
+    is-online: bool,
     is-in-voice: bool,
     color-index: int,
     is-server-muted: bool,
+    is-friend: bool,
+    has-incoming-request: bool,
+    has-outgoing-request: bool,
+    is-self: bool,
+}
+
+export struct FriendData {
+    user-id: string,
+    name: string,
+    initial: string,
+    detail: string,
+    status-label: string,
+    is-online: bool,
+    is-in-voice: bool,
+    color-index: int,
+    is-friend: bool,
+}
+
+export struct FriendRequestData {
+    user-id: string,
+    name: string,
+    initial: string,
+    detail: string,
+    color-index: int,
+}
+
+export struct DirectMessageThreadData {
+    user-id: string,
+    name: string,
+    initial: string,
+    preview: string,
+    meta: string,
+    unread-count: int,
+    is-online: bool,
+    is-in-voice: bool,
+    color-index: int,
+}
+
+export struct ShareSourceData {
+    label: string,
+    detail: string,
+    kind-label: string,
 }
 
 // ─── Design Tokens — Voxlink ───

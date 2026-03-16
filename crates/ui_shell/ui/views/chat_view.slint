@@ -6,15 +6,33 @@ export component ChatView inherits Rectangle {
     in property <bool> wide: false;
     in property <string> current-space-name: "";
     in property <string> chat-channel-name: "";
+    in property <bool> chat-is-direct-message: false;
+    in property <string> chat-context-subtitle: "";
+    in property <int> chat-back-view: 4;
     in property <[ChatMessage]> chat-messages: [];
+    in property <[ChatMessage]> chat-pinned-messages: [];
     in-out property <string> chat-input: "";
+    in property <string> chat-typing-text: "";
     in-out property <string> editing-message-id: "";
     in-out property <string> editing-original-content: "";
+    in-out property <string> reply-target-message-id: "";
+    in-out property <string> reply-target-sender-name: "";
+    in-out property <string> reply-target-preview: "";
+    property <bool> typing-active: false;
+    changed chat-input => {
+        let next = root.chat-input != "";
+        if next != root.typing-active {
+            root.typing-active = next;
+            root.chat-typing-activity(next);
+        }
+    }
     callback navigate(int);
+    callback chat-typing-activity(bool);
     callback send-text-message();
     callback edit-text-message(string, string);
     callback delete-text-message(string);
     callback react-to-message(string, string);
+    callback toggle-pin-message(string, bool);
 
     background: transparent;
 
@@ -30,13 +48,17 @@ export component ChatView inherits Rectangle {
                 alignment: center;
                 spacing: 4px;
                 Text {
-                    text: "# " + root.chat-channel-name;
+                    text: root.chat-is-direct-message ? root.chat-channel-name : "# " + root.chat-channel-name;
                     color: VxTheme.text-primary;
                     font-size: 24px;
                     font-weight: 700;
                 }
                 Text {
-                    text: root.current-space-name != "" ? root.current-space-name : "Text chat";
+                    text: root.chat-context-subtitle != ""
+                        ? root.chat-context-subtitle
+                        : (root.chat-is-direct-message
+                            ? "Direct message"
+                            : (root.current-space-name != "" ? root.current-space-name : "Text chat"));
                     color: VxTheme.text-muted;
                     font-size: 10px;
                 }
@@ -47,12 +69,60 @@ export component ChatView inherits Rectangle {
                 VxButton {
                     label: "Back";
                     soft: true;
-                    clicked => { root.navigate(4); }
+                    clicked => { root.navigate(root.chat-back-view); }
                 }
                 VxStatusPill {
                     label: root.chat-messages.length + " messages";
                     tone: VxTheme.accent;
                     fill: VxTheme.accent-subtle;
+                }
+            }
+        }
+
+        Rectangle {
+            border-radius: VxTheme.radius-card;
+            background: VxTheme.bg-soft;
+            border-color: VxTheme.border-subtle;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    VxStatusPill {
+                        label: root.chat-is-direct-message ? "Private" : "Channel";
+                        tone: root.chat-is-direct-message ? VxTheme.accent : VxTheme.text-secondary;
+                        fill: root.chat-is-direct-message ? VxTheme.accent-subtle : VxTheme.bg-panel;
+                    }
+                    if !root.chat-is-direct-message : VxStatusPill {
+                        label: root.chat-pinned-messages.length + " pinned";
+                        tone: root.chat-pinned-messages.length > 0 ? VxTheme.warning : VxTheme.text-muted;
+                        fill: root.chat-pinned-messages.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                    }
+                    if root.reply-target-message-id != "" : VxStatusPill {
+                        label: "Reply ready";
+                        tone: VxTheme.accent;
+                        fill: VxTheme.accent-subtle;
+                    }
+                    if root.chat-typing-text != "" : VxStatusPill {
+                        label: "Typing";
+                        tone: VxTheme.success;
+                        fill: VxTheme.success-dim;
+                    }
+                }
+
+                Text {
+                    text: root.chat-is-direct-message
+                        ? "Direct messages stay focused and quiet. Use replies when context matters."
+                        : "Use replies to keep context tight and @name to pull people back into the channel.";
+                    color: VxTheme.text-muted;
+                    font-size: 10px;
+                    wrap: word-wrap;
                 }
             }
         }
@@ -96,6 +166,52 @@ export component ChatView inherits Rectangle {
 
                 Divider {}
 
+                if !root.chat-is-direct-message && root.chat-pinned-messages.length > 0 : Rectangle {
+                    background: VxTheme.bg-soft;
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            SectionLabel { text: "PINNED"; }
+                            VxStatusPill {
+                                label: root.chat-pinned-messages.length + " saved";
+                                tone: VxTheme.warning;
+                                fill: VxTheme.warning-soft;
+                            }
+                        }
+
+                        for pinned in root.chat-pinned-messages : Rectangle {
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.bg-panel;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 4px;
+                                Text {
+                                    text: pinned.sender-name;
+                                    color: VxTheme.text-primary;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: pinned.content;
+                                    color: VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                    max-height: 28px;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 ScrollView {
                     vertical-stretch: 1;
 
@@ -110,25 +226,49 @@ export component ChatView inherits Rectangle {
                             border-width: 1px;
                             VerticalLayout {
                                 padding: 18px;
-                                spacing: 6px;
+                                spacing: 8px;
                                 Text {
-                                    text: "No messages yet";
+                                    text: root.chat-is-direct-message ? "No direct messages yet" : "No messages yet";
                                     color: VxTheme.text-primary;
                                     font-size: 13px;
                                     font-weight: 700;
                                 }
                                 Text {
-                                    text: "Start the channel with a clean first message.";
+                                    text: root.chat-is-direct-message
+                                        ? "Start the conversation with a simple first message."
+                                        : "Start the channel with a clean first message.";
                                     color: VxTheme.text-muted;
                                     font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VxStatusPill {
+                                        label: root.chat-is-direct-message ? "Private thread" : "Fresh channel";
+                                        tone: root.chat-is-direct-message ? VxTheme.accent : VxTheme.text-secondary;
+                                        fill: root.chat-is-direct-message ? VxTheme.accent-subtle : VxTheme.bg-panel;
+                                    }
+                                    VxStatusPill {
+                                        label: "Enter sends";
+                                        tone: VxTheme.text-secondary;
+                                        fill: VxTheme.bg-panel;
+                                    }
+                                    if !root.chat-is-direct-message : VxStatusPill {
+                                        label: "@name mentions";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
                                 }
                             }
                         }
 
                         for msg in root.chat-messages : Rectangle {
                             border-radius: VxTheme.radius-card;
-                            background: msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
-                            border-color: root.editing-message-id == msg.message-id ? VxTheme.accent-border : VxTheme.border-subtle;
+                            background: msg.mentions-self && !msg.is-self ? VxTheme.accent-subtle :
+                                        msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
+                            border-color: root.editing-message-id == msg.message-id || (msg.mentions-self && !msg.is-self)
+                                ? VxTheme.accent-border
+                                : VxTheme.border-subtle;
                             border-width: 1px;
 
                             HorizontalLayout {
@@ -161,6 +301,16 @@ export component ChatView inherits Rectangle {
                                             color: VxTheme.text-muted;
                                             font-size: 9px;
                                         }
+                                        if msg.is-pinned : VxStatusPill {
+                                            label: "Pinned";
+                                            tone: VxTheme.warning;
+                                            fill: VxTheme.warning-soft;
+                                        }
+                                        if msg.mentions-self && !msg.is-self : VxStatusPill {
+                                            label: "Mentions you";
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
                                         if msg.edited : Text {
                                             text: "edited";
                                             color: VxTheme.text-muted;
@@ -168,7 +318,7 @@ export component ChatView inherits Rectangle {
                                             font-weight: 700;
                                         }
                                         Rectangle { horizontal-stretch: 1; }
-                                        HorizontalLayout {
+                                        if !root.chat-is-direct-message : HorizontalLayout {
                                             spacing: 6px;
                                             for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}"] : Rectangle {
                                                 height: 22px;
@@ -192,23 +342,67 @@ export component ChatView inherits Rectangle {
                                                     }
                                                 }
                                             }
-
-                                            if msg.is-self : VxButton {
-                                                label: "Edit";
-                                                small: true;
-                                                ghost: true;
-                                                clicked => {
-                                                    root.editing-message-id = msg.message-id;
-                                                    root.editing-original-content = msg.content;
-                                                    root.chat-input = msg.content;
-                                                }
+                                        }
+                                        VxButton {
+                                            label: "Reply";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => {
+                                                root.editing-message-id = "";
+                                                root.editing-original-content = "";
+                                                root.reply-target-message-id = msg.message-id;
+                                                root.reply-target-sender-name = msg.sender-name;
+                                                root.reply-target-preview = msg.content;
                                             }
+                                        }
 
-                                            if msg.is-self : VxButton {
-                                                label: "Delete";
-                                                small: true;
-                                                ghost: true;
-                                                clicked => { root.delete-text-message(msg.message-id); }
+                                        if !root.chat-is-direct-message : VxButton {
+                                            label: msg.is-pinned ? "Unpin" : "Pin";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
+                                        }
+
+                                        if msg.is-self : VxButton {
+                                            label: "Edit";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => {
+                                                root.editing-message-id = msg.message-id;
+                                                root.editing-original-content = msg.content;
+                                                root.chat-input = msg.content;
+                                            }
+                                        }
+
+                                        if msg.is-self : VxButton {
+                                            label: "Delete";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => { root.delete-text-message(msg.message-id); }
+                                        }
+                                    }
+
+                                    if msg.reply-sender-name != "" : Rectangle {
+                                        border-radius: VxTheme.radius-control;
+                                        background: VxTheme.bg-soft;
+                                        border-color: VxTheme.accent-subtle;
+                                        border-width: 1px;
+
+                                        VerticalLayout {
+                                            padding: 8px;
+                                            spacing: 2px;
+                                            Text {
+                                                text: "Replying to " + msg.reply-sender-name;
+                                                color: VxTheme.accent;
+                                                font-size: 9px;
+                                                font-weight: 700;
+                                            }
+                                            Text {
+                                                text: msg.reply-preview;
+                                                color: VxTheme.text-secondary;
+                                                font-size: 9px;
+                                                wrap: word-wrap;
+                                                max-height: 24px;
                                             }
                                         }
                                     }
@@ -233,21 +427,105 @@ export component ChatView inherits Rectangle {
 
                 Divider {}
 
+                if root.chat-typing-text != "" : Rectangle {
+                    background: VxTheme.accent-subtle;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        Text {
+                            text: root.chat-typing-text;
+                            color: VxTheme.accent;
+                            font-size: 10px;
+                            font-weight: 600;
+                        }
+                    }
+                }
+
                 Rectangle {
                     background: VxTheme.bg-panel;
-                    HorizontalLayout {
+                    VerticalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
                         padding-top: 14px;
                         padding-bottom: 14px;
                         spacing: 10px;
 
-                        VxInput {
-                            text <=> root.chat-input;
-                            placeholder: root.editing-message-id != "" ? "Edit message" : "Message #" + root.chat-channel-name;
-                            horizontal-stretch: 1;
-                            accepted => {
-                                if root.chat-input != "" {
+                        if root.reply-target-message-id != "" : Rectangle {
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.accent-subtle;
+                            border-color: VxTheme.accent-border;
+                            border-width: 1px;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                padding-top: 10px;
+                                padding-bottom: 10px;
+                                spacing: 10px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Replying to " + root.reply-target-sender-name;
+                                        color: VxTheme.accent;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: root.reply-target-preview;
+                                        color: VxTheme.text-secondary;
+                                        font-size: 9px;
+                                        wrap: word-wrap;
+                                        max-height: 24px;
+                                    }
+                                }
+                                VxButton {
+                                    label: "Cancel";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => {
+                                        root.reply-target-message-id = "";
+                                        root.reply-target-sender-name = "";
+                                        root.reply-target-preview = "";
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+
+                            VxInput {
+                                text <=> root.chat-input;
+                                placeholder: root.editing-message-id != "" ? "Edit message" :
+                                             root.reply-target-message-id != "" ? (root.chat-is-direct-message ? "Reply to " + root.chat-channel-name : "Reply in #" + root.chat-channel-name) :
+                                             (root.chat-is-direct-message ? "Message " + root.chat-channel-name : "Message #" + root.chat-channel-name);
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if root.chat-input != "" {
+                                        if root.editing-message-id != "" {
+                                            root.edit-text-message(root.editing-message-id, root.chat-input);
+                                            root.editing-message-id = "";
+                                            root.editing-original-content = "";
+                                            root.chat-input = "";
+                                        } else {
+                                            root.send-text-message();
+                                            root.reply-target-message-id = "";
+                                            root.reply-target-sender-name = "";
+                                            root.reply-target-preview = "";
+                                        }
+                                    }
+                                }
+                            }
+
+                            VxButton {
+                                label: root.editing-message-id != "" ? "Save" :
+                                       root.reply-target-message-id != "" ? "Reply" : "Send";
+                                accent: true;
+                                enabled: root.chat-input != "";
+                                clicked => {
                                     if root.editing-message-id != "" {
                                         root.edit-text-message(root.editing-message-id, root.chat-input);
                                         root.editing-message-id = "";
@@ -255,25 +533,25 @@ export component ChatView inherits Rectangle {
                                         root.chat-input = "";
                                     } else {
                                         root.send-text-message();
+                                        root.reply-target-message-id = "";
+                                        root.reply-target-sender-name = "";
+                                        root.reply-target-preview = "";
                                     }
                                 }
                             }
                         }
 
-                        VxButton {
-                            label: root.editing-message-id != "" ? "Save" : "Send";
-                            accent: true;
-                            enabled: root.chat-input != "";
-                            clicked => {
-                                if root.editing-message-id != "" {
-                                    root.edit-text-message(root.editing-message-id, root.chat-input);
-                                    root.editing-message-id = "";
-                                    root.editing-original-content = "";
-                                    root.chat-input = "";
-                                } else {
-                                    root.send-text-message();
-                                }
-                            }
+                        Text {
+                            text: root.editing-message-id != ""
+                                ? "Save replaces only the selected message."
+                                : (root.reply-target-message-id != ""
+                                    ? "Reply keeps the original message context attached."
+                                    : (root.chat-is-direct-message
+                                        ? "Private thread. Enter sends immediately."
+                                        : "Enter sends immediately. Use @name to pull people into the channel."));
+                            color: VxTheme.text-muted;
+                            font-size: 9px;
+                            wrap: word-wrap;
                         }
                     }
                 }

@@ -19,7 +19,9 @@ pub struct AudioContext {
     pub audio_started: Rc<RefCell<bool>>,
     pub audio: Arc<TokioMutex<audio_core::AudioEngine>>,
     pub media: Arc<TokioMutex<media_transport::MediaSession>>,
+    pub network: Arc<TokioMutex<net_control::NetworkClient>>,
     pub audio_active_flag: Arc<AtomicBool>,
+    pub screen_share: Arc<crate::screen_share::ScreenShareController>,
     pub rt_handle: tokio::runtime::Handle,
     pub saved_input_device: Rc<RefCell<Option<String>>>,
     pub saved_output_device: Rc<RefCell<Option<String>>>,
@@ -61,6 +63,16 @@ pub fn process_signals(
                 is_deafened,
             } => {
                 room::handle_peer_deafen_changed(w, state, peer_id, *is_deafened);
+            }
+            SignalMessage::ScreenShareStarted {
+                sharer_id,
+                sharer_name,
+                is_self,
+            } => {
+                room::handle_screen_share_started(w, state, sharer_id, sharer_name, *is_self, ctx);
+            }
+            SignalMessage::ScreenShareStopped { sharer_id } => {
+                room::handle_screen_share_stopped(w, state, sharer_id, ctx);
             }
             SignalMessage::Error { message } => {
                 log::error!("Server error: {message}");
@@ -125,18 +137,64 @@ pub fn process_signals(
             } => {
                 chat::handle_text_channel_selected(w, state, channel_id, channel_name, history);
             }
+            SignalMessage::DirectMessageSelected {
+                user_id,
+                user_name,
+                history,
+            } => {
+                chat::handle_direct_message_selected(w, state, user_id, user_name, history);
+            }
             SignalMessage::TextMessage {
                 channel_id,
                 message,
             } => {
                 chat::handle_text_message(w, state, channel_id, message);
             }
+            SignalMessage::DirectMessage { user_id, message } => {
+                chat::handle_direct_message(w, state, user_id, message);
+            }
+            SignalMessage::TypingState {
+                channel_id,
+                user_name,
+                is_typing,
+            } => {
+                chat::handle_typing_state(w, state, channel_id, user_name, *is_typing);
+            }
+            SignalMessage::DirectTypingState {
+                user_id,
+                user_name,
+                is_typing,
+            } => {
+                chat::handle_direct_typing_state(w, state, user_id, user_name, *is_typing);
+            }
             // Auth (Milestone 4)
             SignalMessage::Authenticated { token, user_id } => {
                 log::info!("Authenticated as {user_id}");
+                state.borrow_mut().self_user_id = Some(user_id.clone());
                 if !token.is_empty() {
                     crate::helpers::save_auth_token_async(token.clone());
                 }
+                crate::friends::sync_presence_subscription(state, &ctx.network, &ctx.rt_handle);
+            }
+            SignalMessage::FriendSnapshot {
+                friends,
+                incoming_requests,
+                outgoing_requests,
+            } => {
+                crate::friends::handle_friend_snapshot(
+                    w,
+                    state,
+                    friends,
+                    incoming_requests,
+                    outgoing_requests,
+                );
+                crate::friends::sync_presence_subscription(state, &ctx.network, &ctx.rt_handle);
+            }
+            SignalMessage::FriendPresenceSnapshot { presences } => {
+                crate::friends::handle_presence_snapshot(w, state, presences);
+            }
+            SignalMessage::FriendPresenceChanged { presence } => {
+                crate::friends::handle_presence_changed(w, state, presence);
             }
             // Chat improvements (Milestone 5)
             SignalMessage::TextMessageEdited {
@@ -146,11 +204,24 @@ pub fn process_signals(
             } => {
                 chat::handle_text_message_edited(w, channel_id, message_id, new_content);
             }
+            SignalMessage::DirectMessageEdited {
+                user_id,
+                message_id,
+                new_content,
+            } => {
+                chat::handle_direct_message_edited(w, state, user_id, message_id, new_content);
+            }
             SignalMessage::TextMessageDeleted {
                 channel_id,
                 message_id,
             } => {
                 chat::handle_text_message_deleted(w, channel_id, message_id);
+            }
+            SignalMessage::DirectMessageDeleted {
+                user_id,
+                message_id,
+            } => {
+                chat::handle_direct_message_deleted(w, state, user_id, message_id);
             }
             SignalMessage::MessageReaction {
                 channel_id,
@@ -160,6 +231,13 @@ pub fn process_signals(
             } => {
                 chat::handle_message_reaction(w, channel_id, message_id, emoji, user_name);
             }
+            SignalMessage::MessagePinned {
+                channel_id,
+                message_id,
+                pinned,
+            } => {
+                chat::handle_message_pinned(w, channel_id, message_id, *pinned);
+            }
             // Moderation (Milestone 6)
             SignalMessage::Kicked { reason } => {
                 log::warn!("Kicked: {reason}");
@@ -168,6 +246,8 @@ pub fn process_signals(
                     let mut s = state.borrow_mut();
                     s.room = Default::default();
                     s.space = None;
+                    s.active_direct_message_user_id = None;
+                    s.direct_typing_users.clear();
                     s.current_view = shared_types::AppView::Home;
                 }
                 w.set_current_view(0);
@@ -180,17 +260,37 @@ pub fn process_signals(
                 w.set_visible_members(0);
                 w.set_chat_channel_id(slint::SharedString::default());
                 w.set_chat_channel_name(slint::SharedString::default());
+                w.set_chat_is_direct_message(false);
+                w.set_chat_context_subtitle(slint::SharedString::default());
+                w.set_chat_back_view(ui_shell::view_to_index(shared_types::AppView::Space));
                 w.set_chat_input(slint::SharedString::default());
+                w.set_chat_pinned_messages(
+                    std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new()))
+                        .into(),
+                );
+                w.set_chat_typing_text(slint::SharedString::default());
                 w.set_editing_message_id(slint::SharedString::default());
                 w.set_editing_original_content(slint::SharedString::default());
+                w.set_reply_target_message_id(slint::SharedString::default());
+                w.set_reply_target_sender_name(slint::SharedString::default());
+                w.set_reply_target_preview(slint::SharedString::default());
                 w.set_is_space_owner(false);
                 w.set_in_space_channel(false);
                 w.set_room_code(slint::SharedString::default());
                 w.set_is_muted(false);
                 w.set_is_deafened(false);
                 w.set_status_text(reason.clone().into());
+                w.set_has_screen_share(false);
+                w.set_is_sharing_screen(false);
+                w.set_screen_share_owner_name(slint::SharedString::default());
+                w.set_screen_share_owner_id(slint::SharedString::default());
+                w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+                    slint::Rgba8Pixel,
+                >::new(1, 1)));
                 ui_shell::set_channels(w, &[]);
                 ui_shell::set_members(w, &[]);
+                crate::friends::sync_ui(w, state);
+                ctx.screen_share.stop_capture();
                 if w.get_notifications_enabled() {
                     crate::helpers::send_notification("Voxlink", reason);
                 }

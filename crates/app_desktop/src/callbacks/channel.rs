@@ -93,6 +93,7 @@ pub fn setup_leave_channel(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
     audio_started: &Rc<RefCell<bool>>,
     audio_active_flag: &Arc<AtomicBool>,
+    screen_share: &Arc<crate::screen_share::ScreenShareController>,
     speaking_ticks: &Rc<RefCell<std::collections::HashMap<String, u64>>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
@@ -103,10 +104,12 @@ pub fn setup_leave_channel(
     let rt_handle = rt_handle.clone();
     let audio_active_flag = audio_active_flag.clone();
     let audio_started = audio_started.clone();
+    let screen_share = screen_share.clone();
     let voice = voice.clone();
     let speaking_ticks = speaking_ticks.clone();
     window.on_leave_channel(move || {
         log::info!("Leaving channel");
+        screen_share.stop_capture();
         voice.borrow_mut().reset();
         {
             let mut s = state.borrow_mut();
@@ -124,12 +127,7 @@ pub fn setup_leave_channel(
         };
 
         // Restore channel/member list before switching view
-        {
-            let s = state.borrow();
-            if let Some(ref space) = s.space {
-                ui_shell::render_space(&w, space, &w.get_space_search_query().to_string());
-            }
-        }
+        crate::friends::sync_ui(&w, &state);
 
         w.set_current_view(ui_shell::view_to_index(AppView::Space));
         w.set_room_code(slint::SharedString::default());
@@ -143,6 +141,13 @@ pub fn setup_leave_channel(
         w.set_reconnect_attempts(0);
         w.set_dropped_frames_baseline(w.get_dropped_frames_total());
         w.set_dropped_frames(0);
+        w.set_has_screen_share(false);
+        w.set_is_sharing_screen(false);
+        w.set_screen_share_owner_name(slint::SharedString::default());
+        w.set_screen_share_owner_id(slint::SharedString::default());
+        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+            slint::Rgba8Pixel,
+        >::new(1, 1)));
 
         let network = network.clone();
         let audio = audio.clone();

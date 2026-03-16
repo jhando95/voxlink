@@ -1,4 +1,4 @@
-import { ChatMessage, ChannelData, MemberData, ParticipantData, PerfData, SpaceData, VxTheme } from "theme.slint";
+import { ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
 import { BottomNav, TopBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
@@ -10,6 +10,8 @@ import { SystemView } from "views/system_view.slint";
 import "../../../assets/fonts/Inter-Regular.ttf";
 import "../../../assets/fonts/Inter-SemiBold.ttf";
 import "../../../assets/fonts/Inter-Bold.ttf";
+
+export { MemberWidgetWindow } from "member_widget.slint";
 
 export component MainWindow inherits Window {
     in-out property <string> window-title: "Voxlink";
@@ -65,6 +67,27 @@ export component MainWindow inherits Window {
     in-out property <int> dropped-frames: 0;
     in-out property <int> dropped-frames-total: 0;
     in-out property <int> dropped-frames-baseline: 0;
+    in-out property <bool> has-screen-share: false;
+    in-out property <bool> is-sharing-screen: false;
+    in-out property <string> screen-share-owner-name: "";
+    in-out property <string> screen-share-owner-id: "";
+    in-out property <image> screen-share-image;
+    in-out property <[ShareSourceData]> screen-share-sources: [];
+    in-out property <int> selected-screen-share-source: -1;
+    in-out property <int> selected-screen-share-profile: 0;
+    in-out property <string> screen-share-source-label: "";
+    in-out property <string> screen-share-source-detail: "";
+    in-out property <string> screen-share-quality-label: "Efficient";
+    in-out property <string> screen-share-quality-detail: "";
+    in-out property <bool> member-widget-visible: false;
+    in-out property <int> favorite-friends-count: 0;
+    in-out property <int> online-friends-count: 0;
+    in-out property <int> live-friends-count: 0;
+    in-out property <[FriendData]> favorite-friends: [];
+    in-out property <[FriendRequestData]> incoming-friend-requests: [];
+    in-out property <[FriendRequestData]> outgoing-friend-requests: [];
+    in-out property <[DirectMessageThreadData]> direct-message-threads: [];
+    in-out property <int> unread-direct-messages-count: 0;
 
     // Space state
     in-out property <[SpaceData]> spaces: [];
@@ -87,15 +110,30 @@ export component MainWindow inherits Window {
 
     // Text chat
     in-out property <[ChatMessage]> chat-messages: [];
+    in-out property <[ChatMessage]> chat-pinned-messages: [];
     in-out property <string> chat-channel-id: "";
     in-out property <string> chat-channel-name: "";
+    in-out property <bool> chat-is-direct-message: false;
+    in-out property <string> chat-context-subtitle: "";
+    in-out property <int> chat-back-view: 4;
     in-out property <string> chat-input: "";
+    in-out property <string> chat-typing-text: "";
     in-out property <string> editing-message-id: "";
     in-out property <string> editing-original-content: "";
+    in-out property <string> reply-target-message-id: "";
+    in-out property <string> reply-target-sender-name: "";
+    in-out property <string> reply-target-preview: "";
 
     // Notifications
     in-out property <bool> notifications-enabled: true;
     callback toggle-notifications();
+    callback toggle-member-widget();
+    callback send-friend-request(string);
+    callback accept-friend-request(string);
+    callback decline-friend-request(string);
+    callback cancel-friend-request(string);
+    callback remove-friend(string);
+    callback open-direct-message(string);
 
     // Update banner
     in-out property <bool> update-available: false;
@@ -122,13 +160,14 @@ export component MainWindow inherits Window {
         current-view == 2 ? "Settings" :
         current-view == 3 ? "System" :
         current-view == 4 ? current-space-name :
-        chat-channel-name != "" ? "# " + chat-channel-name : "Text chat";
+        chat-channel-name != "" ? (chat-is-direct-message ? chat-channel-name : "# " + chat-channel-name) : "Text chat";
     property <string> context-subtitle:
         current-view == 0 ? "Connect fast, build spaces, or jump into a room." :
         current-view == 1 ? (room-code != "" ? "Room " + room-code : status-text) :
         current-view == 2 ? "Devices, keybinds, sound, and capture mode." :
         current-view == 3 ? "Performance, session health, and runtime posture." :
         current-view == 4 ? "Channels and members in one workspace." :
+        chat-context-subtitle != "" ? chat-context-subtitle :
         current-space-name != "" ? current-space-name : "Persistent channel chat.";
 
     // Callbacks
@@ -138,6 +177,10 @@ export component MainWindow inherits Window {
     callback toggle-mute();
     callback toggle-deafen();
     callback toggle-mic-mode();
+    callback toggle-screen-share();
+    callback refresh-screen-share-sources();
+    callback select-screen-share-source(int);
+    callback select-screen-share-profile(int);
     callback navigate(int);
     callback refresh-devices();
     callback connect-server();
@@ -166,10 +209,12 @@ export component MainWindow inherits Window {
     callback toggle-mic-preview();
     callback play-speaker-test();
     callback select-text-channel(string);
+    callback chat-typing-activity(bool);
     callback send-text-message();
     callback edit-text-message(string, string);
     callback delete-text-message(string);
     callback react-to-message(string, string);
+    callback toggle-pin-message(string, bool);
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
@@ -193,6 +238,10 @@ export component MainWindow inherits Window {
                 current-space-id: root.current-space-id;
                 members: root.members;
                 show-members: root.current-view == 4 || root.current-view == 5;
+                room-code: root.room-code;
+                unread-direct-messages-count: root.unread-direct-messages-count;
+                favorite-friends-count: root.favorite-friends-count;
+                online-friends-count: root.online-friends-count;
                 navigate(view-index) => {
                     root.navigate(view-index);
                     if !root.desktop-layout {
@@ -220,6 +269,8 @@ export component MainWindow inherits Window {
                         subtitle: root.context-subtitle;
                         is-connected: root.is-connected;
                         ping-ms: root.ping-ms;
+                        room-code: root.room-code;
+                        unread-direct-messages-count: root.unread-direct-messages-count;
                         show-nav-button: !root.desktop-layout;
                         in-call: root.current-view == 1;
                         is-muted: root.is-muted;
@@ -273,6 +324,17 @@ export component MainWindow inherits Window {
                             dropped-frames: root.dropped-frames;
                             in-space-channel: root.in-space-channel;
                             current-space-name: root.current-space-name;
+                            has-screen-share: root.has-screen-share;
+                            is-sharing-screen: root.is-sharing-screen;
+                            screen-share-owner-name: root.screen-share-owner-name;
+                            screen-share-image: root.screen-share-image;
+                            screen-share-sources: root.screen-share-sources;
+                            selected-screen-share-source: root.selected-screen-share-source;
+                            selected-screen-share-profile: root.selected-screen-share-profile;
+                            screen-share-source-label: root.screen-share-source-label;
+                            screen-share-source-detail: root.screen-share-source-detail;
+                            screen-share-quality-label: root.screen-share-quality-label;
+                            screen-share-quality-detail: root.screen-share-quality-detail;
                             show-copied <=> root.show-copied;
                             copy-room-code => { root.copy-room-code(); }
                             leave-room => { root.leave-room(); }
@@ -280,6 +342,10 @@ export component MainWindow inherits Window {
                             toggle-mute => { root.toggle-mute(); }
                             toggle-deafen => { root.toggle-deafen(); }
                             toggle-mic-mode => { root.toggle-mic-mode(); }
+                            toggle-screen-share => { root.toggle-screen-share(); }
+                            refresh-screen-share-sources => { root.refresh-screen-share-sources(); }
+                            select-screen-share-source(source-index) => { root.select-screen-share-source(source-index); }
+                            select-screen-share-profile(profile-index) => { root.select-screen-share-profile(profile-index); }
                             volume-changed(peer-id, level) => { root.volume-changed(peer-id, level); }
                             navigate(view-index) => { root.navigate(view-index); }
                         }
@@ -345,21 +411,37 @@ export component MainWindow inherits Window {
                             kick-member(member-id) => { root.kick-member(member-id); }
                             ban-member(member-id) => { root.ban-member(member-id); }
                             server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
+                            send-friend-request(user-id) => { root.send-friend-request(user-id); }
+                            accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
+                            decline-friend-request(user-id) => { root.decline-friend-request(user-id); }
+                            cancel-friend-request(user-id) => { root.cancel-friend-request(user-id); }
+                            remove-friend(user-id) => { root.remove-friend(user-id); }
+                            open-direct-message(user-id) => { root.open-direct-message(user-id); }
                         }
 
                         if root.current-view == 5 : ChatView {
                             wide: root.desktop-layout;
                             current-space-name: root.current-space-name;
                             chat-channel-name: root.chat-channel-name;
+                            chat-is-direct-message: root.chat-is-direct-message;
+                            chat-context-subtitle: root.chat-context-subtitle;
+                            chat-back-view: root.chat-back-view;
                             chat-messages: root.chat-messages;
+                            chat-pinned-messages: root.chat-pinned-messages;
                             chat-input <=> root.chat-input;
+                            chat-typing-text: root.chat-typing-text;
                             editing-message-id <=> root.editing-message-id;
                             editing-original-content <=> root.editing-original-content;
+                            reply-target-message-id <=> root.reply-target-message-id;
+                            reply-target-sender-name <=> root.reply-target-sender-name;
+                            reply-target-preview <=> root.reply-target-preview;
                             navigate(view-index) => { root.navigate(view-index); }
+                            chat-typing-activity(is-typing) => { root.chat-typing-activity(is-typing); }
                             send-text-message => { root.send-text-message(); }
                             edit-text-message(message-id, content) => { root.edit-text-message(message-id, content); }
                             delete-text-message(message-id) => { root.delete-text-message(message-id); }
                             react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
+                            toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
                         }
 
                         if root.current-view == 3 : SystemView {
@@ -371,11 +453,29 @@ export component MainWindow inherits Window {
                             participants: root.participants;
                             is-open-mic: root.is-open-mic;
                             ping-ms: root.ping-ms;
+                            current-space-name: root.current-space-name;
+                            member-widget-visible: root.member-widget-visible;
+                            favorite-friends-count: root.favorite-friends-count;
+                            online-friends-count: root.online-friends-count;
+                            live-friends-count: root.live-friends-count;
+                            favorite-friends: root.favorite-friends;
+                            incoming-friend-requests: root.incoming-friend-requests;
+                            outgoing-friend-requests: root.outgoing-friend-requests;
+                            direct-message-threads: root.direct-message-threads;
+                            unread-direct-messages-count: root.unread-direct-messages-count;
+                            navigate(view-index) => { root.navigate(view-index); }
+                            toggle-member-widget => { root.toggle-member-widget(); }
+                            accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
+                            decline-friend-request(user-id) => { root.decline-friend-request(user-id); }
+                            cancel-friend-request(user-id) => { root.cancel-friend-request(user-id); }
+                            remove-friend(user-id) => { root.remove-friend(user-id); }
+                            open-direct-message(user-id) => { root.open-direct-message(user-id); }
                         }
                     }
 
                     if !root.desktop-layout && root.current-view != 1 && root.current-view != 4 && root.current-view != 5 : BottomNav {
                         current-view: root.current-view;
+                        unread-direct-messages-count: root.unread-direct-messages-count;
                         navigate(view-index) => { root.navigate(view-index); }
                     }
                 }

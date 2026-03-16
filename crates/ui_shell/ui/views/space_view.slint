@@ -29,6 +29,12 @@ export component SpaceView inherits Rectangle {
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
+    callback send-friend-request(string);
+    callback accept-friend-request(string);
+    callback decline-friend-request(string);
+    callback cancel-friend-request(string);
+    callback remove-friend(string);
+    callback open-direct-message(string);
 
     background: transparent;
 
@@ -479,7 +485,7 @@ export component SpaceView inherits Rectangle {
                                             initial: member.initial;
                                             color-index: member.color-index;
                                             show-status: true;
-                                            is-online: member.is-in-voice;
+                                            is-online: member.is-online;
                                         }
 
                                         VerticalLayout {
@@ -504,6 +510,66 @@ export component SpaceView inherits Rectangle {
                                             label: "Muted";
                                             tone: VxTheme.danger;
                                             fill: VxTheme.mute-badge-bg;
+                                        }
+                                        if member.is-self : VxStatusPill {
+                                            label: "You";
+                                            tone: VxTheme.text-secondary;
+                                            fill: VxTheme.bg-panel;
+                                        }
+                                        if member.is-friend : VxStatusPill {
+                                            label: "Friend";
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                        if !member.is-friend && member.has-incoming-request : VxStatusPill {
+                                            label: "Incoming";
+                                            tone: VxTheme.warning;
+                                            fill: VxTheme.warning-soft;
+                                        }
+                                        if !member.is-friend && !member.has-incoming-request && member.has-outgoing-request : VxStatusPill {
+                                            label: "Pending";
+                                            tone: VxTheme.text-secondary;
+                                            fill: VxTheme.bg-panel;
+                                        }
+                                    }
+
+                                    if !member.is-self : HorizontalLayout {
+                                        spacing: 8px;
+                                        if member.is-friend : VxButton {
+                                            label: "Message";
+                                            small: true;
+                                            accent: true;
+                                            clicked => { root.open-direct-message(member.user-id); }
+                                        }
+                                        if member.has-incoming-request : VxButton {
+                                            label: "Accept";
+                                            small: true;
+                                            accent: true;
+                                            clicked => { root.accept-friend-request(member.user-id); }
+                                        }
+                                        if member.has-incoming-request : VxButton {
+                                            label: "Decline";
+                                            small: true;
+                                            soft: true;
+                                            clicked => { root.decline-friend-request(member.user-id); }
+                                        }
+                                        if !member.has-incoming-request && member.has-outgoing-request : VxButton {
+                                            label: "Cancel request";
+                                            small: true;
+                                            soft: true;
+                                            clicked => { root.cancel-friend-request(member.user-id); }
+                                        }
+                                        if !member.has-incoming-request && !member.has-outgoing-request && member.is-friend : VxButton {
+                                            label: "Remove friend";
+                                            small: true;
+                                            soft: true;
+                                            clicked => { root.remove-friend(member.user-id); }
+                                        }
+                                        if !member.has-incoming-request && !member.has-outgoing-request && !member.is-friend : VxButton {
+                                            label: "Add friend";
+                                            small: true;
+                                            accent: true;
+                                            clicked => { root.send-friend-request(member.user-id); }
                                         }
                                     }
 

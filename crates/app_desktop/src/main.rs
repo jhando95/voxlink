@@ -3,7 +3,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod callbacks;
+mod direct_messages;
+mod friends;
 mod helpers;
+mod screen_share;
 mod signal_handler;
 mod tick_loop;
 
@@ -15,7 +18,7 @@ use std::sync::Arc;
 use shared_types::MicMode;
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
-use ui_shell::MainWindow;
+use ui_shell::{MainWindow, MemberWidgetWindow};
 
 fn main() {
     // #18: Set up logging — stderr + log file
@@ -67,8 +70,90 @@ fn main() {
         network.clone(),
         perf.borrow().dropped_frames.clone(),
     )));
+    let screen_share = Arc::new(screen_share::ScreenShareController::new());
 
     let window = MainWindow::new().unwrap();
+    let member_widget = MemberWidgetWindow::new().unwrap();
+    ui_shell::register_member_widget(&member_widget);
+    ui_shell::sync_member_widget_theme(config.dark_mode.unwrap_or(true));
+    friends::load_from_config(&window, &state, config.favorite_friends.clone());
+    direct_messages::load_from_config(&window, &state, config.recent_direct_messages.clone());
+    if let (Some(x), Some(y)) = (config.member_widget_x, config.member_widget_y) {
+        member_widget
+            .window()
+            .set_position(slint::PhysicalPosition::new(x, y));
+    }
+    if config.member_widget_visible {
+        let _ = member_widget.show();
+    }
+    window.set_member_widget_visible(config.member_widget_visible);
+
+    let widget_window_weak = window.as_weak();
+    let widget_network = network.clone();
+    let widget_rt_handle = rt_handle.clone();
+    member_widget.on_send_friend_request(move |user_id| {
+        let Some(window) = widget_window_weak.upgrade() else {
+            return;
+        };
+        let user_id = user_id.to_string();
+        if user_id.trim().is_empty() {
+            return;
+        }
+        window.set_status_text("Friend request sent".into());
+        let network = widget_network.clone();
+        widget_rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::SendFriendRequest { user_id })
+                .await;
+        });
+    });
+
+    let widget_window_weak = window.as_weak();
+    let widget_network = network.clone();
+    let widget_rt_handle = rt_handle.clone();
+    member_widget.on_remove_friend(move |user_id| {
+        let Some(window) = widget_window_weak.upgrade() else {
+            return;
+        };
+        let user_id = user_id.to_string();
+        if user_id.trim().is_empty() {
+            return;
+        }
+        window.set_status_text("Friend removed".into());
+        let network = widget_network.clone();
+        widget_rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::RemoveFriend { user_id })
+                .await;
+        });
+    });
+
+    let widget_window_weak = window.as_weak();
+    member_widget.on_open_direct_message(move |user_id| {
+        let Some(window) = widget_window_weak.upgrade() else {
+            return;
+        };
+        let user_id = user_id.to_string();
+        if user_id.trim().is_empty() {
+            return;
+        }
+        window.invoke_open_direct_message(user_id.into());
+    });
+
+    let window_weak = window.as_weak();
+    let member_widget_weak = member_widget.as_weak();
+    member_widget.window().on_close_requested(move || {
+        if let Some(window) = window_weak.upgrade() {
+            window.set_member_widget_visible(false);
+        }
+        if let Some(widget) = member_widget_weak.upgrade() {
+            let position = widget.window().position();
+            helpers::save_member_widget_state_async(false, Some((position.x, position.y)));
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
 
     // #13: Restore saved window size
     if let (Some(w), Some(h)) = (config.window_width, config.window_height) {
@@ -125,6 +210,7 @@ fn main() {
         &perf,
         &audio_started,
         &audio_active_flag,
+        &screen_share,
         &speaking_ticks,
         &rt_handle,
         &ptt_key,
@@ -147,6 +233,7 @@ fn main() {
         &audio_started,
         &audio_active_flag,
         &network_flag,
+        &screen_share,
         &speaking_ticks,
         saved_input_device,
         saved_output_device,
@@ -166,10 +253,16 @@ fn main() {
     // #13: Save window size on exit
     let size = window.window().size();
     helpers::save_window_size(size.width, size.height);
+    let member_widget_position = member_widget.window().position();
+    helpers::save_member_widget_state_async(
+        window.get_member_widget_visible(),
+        Some((member_widget_position.x, member_widget_position.y)),
+    );
 
     // Cleanup with timeout — prevents freeze if tasks are stuck
     let cleanup_done = rt.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            screen_share.stop_capture();
             let mut aud = audio.lock().await;
             aud.stop_capture();
             aud.stop_playback();

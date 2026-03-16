@@ -23,11 +23,14 @@ pub fn handle_space_created(
         active_channel_id: None,
         selected_text_channel_id: remembered_text_channel(space, channels),
         unread_text_channels: Default::default(),
+        typing_users: Default::default(),
     };
 
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
+        s.active_direct_message_user_id = None;
+        s.direct_typing_users.clear();
         s.current_view = AppView::Space;
     }
 
@@ -37,14 +40,27 @@ pub fn handle_space_created(
     w.set_space_search_query(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
     w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_is_direct_message(false);
+    w.set_chat_context_subtitle(slint::SharedString::default());
+    w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
     w.set_chat_input(slint::SharedString::default());
+    w.set_chat_pinned_messages(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    w.set_chat_typing_text(slint::SharedString::default());
     w.set_editing_message_id(slint::SharedString::default());
     w.set_editing_original_content(slint::SharedString::default());
+    w.set_reply_target_message_id(slint::SharedString::default());
+    w.set_reply_target_sender_name(slint::SharedString::default());
+    w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
     {
-        let s = state.borrow();
-        if let Some(ref space) = s.space {
-            ui_shell::render_space(w, space, "");
+        let mut s = state.borrow_mut();
+        let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
+        drop(s);
+        crate::friends::sync_ui(w, state);
+        if favorites_changed {
+            crate::friends::persist(state);
         }
     }
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
@@ -72,11 +88,14 @@ pub fn handle_space_joined(
         active_channel_id: None,
         selected_text_channel_id: remembered_text_channel(space, channels),
         unread_text_channels: Default::default(),
+        typing_users: Default::default(),
     };
 
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
+        s.active_direct_message_user_id = None;
+        s.direct_typing_users.clear();
         s.current_view = AppView::Space;
     }
 
@@ -86,14 +105,27 @@ pub fn handle_space_joined(
     w.set_space_search_query(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
     w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_is_direct_message(false);
+    w.set_chat_context_subtitle(slint::SharedString::default());
+    w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
     w.set_chat_input(slint::SharedString::default());
+    w.set_chat_pinned_messages(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    w.set_chat_typing_text(slint::SharedString::default());
     w.set_editing_message_id(slint::SharedString::default());
     w.set_editing_original_content(slint::SharedString::default());
+    w.set_reply_target_message_id(slint::SharedString::default());
+    w.set_reply_target_sender_name(slint::SharedString::default());
+    w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
     {
-        let s = state.borrow();
-        if let Some(ref space) = s.space {
-            ui_shell::render_space(w, space, "");
+        let mut s = state.borrow_mut();
+        let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
+        drop(s);
+        crate::friends::sync_ui(w, state);
+        if favorites_changed {
+            crate::friends::persist(state);
         }
     }
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
@@ -113,6 +145,8 @@ pub fn handle_space_deleted(
         let mut s = state.borrow_mut();
         s.room = Default::default();
         s.space = None;
+        s.active_direct_message_user_id = None;
+        s.direct_typing_users.clear();
         s.current_view = AppView::Home;
     }
     *ctx.audio_started.borrow_mut() = false;
@@ -128,9 +162,19 @@ pub fn handle_space_deleted(
     w.set_visible_members(0);
     w.set_chat_channel_id(slint::SharedString::default());
     w.set_chat_channel_name(slint::SharedString::default());
+    w.set_chat_is_direct_message(false);
+    w.set_chat_context_subtitle(slint::SharedString::default());
+    w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
     w.set_chat_input(slint::SharedString::default());
+    w.set_chat_pinned_messages(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    w.set_chat_typing_text(slint::SharedString::default());
     w.set_editing_message_id(slint::SharedString::default());
     w.set_editing_original_content(slint::SharedString::default());
+    w.set_reply_target_message_id(slint::SharedString::default());
+    w.set_reply_target_sender_name(slint::SharedString::default());
+    w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_muted(false);
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
@@ -140,6 +184,7 @@ pub fn handle_space_deleted(
     w.set_status_text("Space was deleted".into());
     ui_shell::set_channels(w, &[]);
     ui_shell::set_members(w, &[]);
+    crate::friends::sync_ui(w, state);
 
     let audio = ctx.audio.clone();
     let flag = ctx.audio_active_flag.clone();

@@ -6,23 +6,25 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
 type WsTx = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
 
 /// Max queued audio frames before dropping oldest. At 50fps, 200 = ~4 seconds.
 /// Prevents unbounded memory growth if consumer falls behind.
 const AUDIO_QUEUE_CAPACITY: usize = 200;
+const SCREEN_QUEUE_CAPACITY: usize = 2;
 
 pub struct NetworkClient {
     ws_tx: Arc<Mutex<Option<WsTx>>>,
     signal_rx: mpsc::UnboundedReceiver<SignalMessage>,
     /// Raw binary audio frames — bounded channel to prevent OOM on slow consumers.
     audio_rx: mpsc::Receiver<Vec<u8>>,
+    /// Raw binary screen frames — bounded to keep only near-latest data.
+    screen_rx: mpsc::Receiver<Vec<u8>>,
     signal_tx_internal: mpsc::UnboundedSender<SignalMessage>,
     audio_tx_internal: mpsc::Sender<Vec<u8>>,
+    screen_tx_internal: mpsc::Sender<Vec<u8>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
     server_url: Arc<Mutex<Option<String>>>,
     /// Last measured round-trip time in milliseconds (-1 = unknown).
@@ -41,12 +43,15 @@ impl NetworkClient {
     pub fn new() -> Self {
         let (sig_tx, sig_rx) = mpsc::unbounded_channel();
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
+        let (screen_tx, screen_rx) = mpsc::channel(SCREEN_QUEUE_CAPACITY);
         Self {
             ws_tx: Arc::new(Mutex::new(None)),
             signal_rx: sig_rx,
             audio_rx,
+            screen_rx,
             signal_tx_internal: sig_tx,
             audio_tx_internal: audio_tx,
+            screen_tx_internal: screen_tx,
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             server_url: Arc::new(Mutex::new(None)),
             last_ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
@@ -81,6 +86,7 @@ impl NetworkClient {
 
         let sig_tx = self.signal_tx_internal.clone();
         let audio_tx = self.audio_tx_internal.clone();
+        let screen_tx = self.screen_tx_internal.clone();
         let connected = self.connected.clone();
         let last_ping_ms_rx = self.last_ping_ms.clone();
         let ping_sent_at_rx = self.ping_sent_at.clone();
@@ -94,12 +100,23 @@ impl NetworkClient {
                         }
                     }
                     Ok(Message::Binary(data)) => {
-                        // Validate header, then pass raw bytes through bounded channel.
-                        // try_send drops frames when consumer falls behind, preventing OOM.
-                        if data.len() >= 2 {
-                            let id_len = data[0] as usize;
-                            if data.len() > 1 + id_len {
-                                let _ = audio_tx.try_send(data.into());
+                        // Validate header, then pass media through bounded channels.
+                        // try_send drops frames when consumers fall behind, preventing OOM.
+                        if data.len() >= 3 {
+                            match data[0] {
+                                shared_types::MEDIA_PACKET_AUDIO => {
+                                    let id_len = data[1] as usize;
+                                    if data.len() > 2 + id_len {
+                                        let _ = audio_tx.try_send(data.into());
+                                    }
+                                }
+                                shared_types::MEDIA_PACKET_SCREEN => {
+                                    let id_len = data[1] as usize;
+                                    if data.len() > 2 + id_len {
+                                        let _ = screen_tx.try_send(data.into());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -149,7 +166,20 @@ impl NetworkClient {
 
     pub async fn send_audio(&self, data: &[u8]) -> Result<()> {
         if let Some(tx) = self.ws_tx.lock().await.as_mut() {
-            tx.send(Message::Binary(data.to_vec().into())).await?;
+            let mut packet = Vec::with_capacity(data.len() + 1);
+            packet.push(shared_types::MEDIA_PACKET_AUDIO);
+            packet.extend_from_slice(data);
+            tx.send(Message::Binary(packet.into())).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn send_screen_frame(&self, data: &[u8]) -> Result<()> {
+        if let Some(tx) = self.ws_tx.lock().await.as_mut() {
+            let mut packet = Vec::with_capacity(data.len() + 1);
+            packet.push(shared_types::MEDIA_PACKET_SCREEN);
+            packet.extend_from_slice(data);
+            tx.send(Message::Binary(packet.into())).await?;
         }
         Ok(())
     }
@@ -162,6 +192,10 @@ impl NetworkClient {
     /// sender_id and audio data as zero-copy slices.
     pub fn try_recv_audio(&mut self) -> Option<Vec<u8>> {
         self.audio_rx.try_recv().ok()
+    }
+
+    pub fn try_recv_screen_frame(&mut self) -> Option<Vec<u8>> {
+        self.screen_rx.try_recv().ok()
     }
 
     /// Send a WebSocket Ping to measure latency. Call `ping_ms()` to read the result.
@@ -190,16 +224,30 @@ impl NetworkClient {
 /// Zero-allocation: returns references into the original buffer.
 #[inline]
 pub fn parse_audio_frame(raw: &[u8]) -> Option<(&str, &[u8])> {
-    if raw.len() < 2 {
+    if raw.len() < 3 || raw[0] != shared_types::MEDIA_PACKET_AUDIO {
         return None;
     }
-    let id_len = raw[0] as usize;
-    if raw.len() <= 1 + id_len {
+    let id_len = raw[1] as usize;
+    if raw.len() <= 2 + id_len {
         return None;
     }
-    let sender_id = std::str::from_utf8(&raw[1..1 + id_len]).ok()?;
-    let audio_data = &raw[1 + id_len..];
+    let sender_id = std::str::from_utf8(&raw[2..2 + id_len]).ok()?;
+    let audio_data = &raw[2 + id_len..];
     Some((sender_id, audio_data))
+}
+
+#[inline]
+pub fn parse_screen_frame(raw: &[u8]) -> Option<(&str, &[u8])> {
+    if raw.len() < 3 || raw[0] != shared_types::MEDIA_PACKET_SCREEN {
+        return None;
+    }
+    let id_len = raw[1] as usize;
+    if raw.len() <= 2 + id_len {
+        return None;
+    }
+    let sender_id = std::str::from_utf8(&raw[2..2 + id_len]).ok()?;
+    let frame_data = &raw[2 + id_len..];
+    Some((sender_id, frame_data))
 }
 
 /// Discover a Voxlink server on the local network via UDP broadcast.
@@ -226,8 +274,7 @@ pub async fn discover_lan_server() -> Option<String> {
     {
         Ok(Ok((len, _src))) => {
             let msg = std::str::from_utf8(&buf[..len]).ok()?;
-            msg.strip_prefix("VOXLINK_SERVER:")
-                .map(|s| s.to_string())
+            msg.strip_prefix("VOXLINK_SERVER:").map(|s| s.to_string())
         }
         _ => None,
     }
