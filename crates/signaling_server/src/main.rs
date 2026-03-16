@@ -399,6 +399,23 @@ async fn main() {
                 if removed > 0 {
                     log::info!("Cleaned up {removed} stale room(s)");
                 }
+
+                // Also clean stale member_ids that reference disconnected peers
+                let connected_ids: std::collections::HashSet<String> =
+                    s.peers.keys().cloned().collect();
+                for space in s.spaces.values_mut() {
+                    let before_members = space.member_ids.len();
+                    space
+                        .member_ids
+                        .retain(|mid| connected_ids.contains(mid.as_str()));
+                    let removed_members = before_members - space.member_ids.len();
+                    if removed_members > 0 {
+                        log::info!(
+                            "Removed {removed_members} stale member(s) from space {}",
+                            space.name
+                        );
+                    }
+                }
             }
         });
     }

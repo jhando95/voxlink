@@ -86,6 +86,15 @@ pub struct DirectMessageRow {
 }
 
 impl Database {
+    /// Lock the DB connection, recovering from poisoned mutex (a prior panic in a
+    /// spawn_blocking task). This prevents a single DB error from crashing all future ops.
+    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+        match self.conn.lock() {
+            Ok(guard) => Ok(guard),
+            Err(poisoned) => Ok(poisoned.into_inner()),
+        }
+    }
+
     pub fn open(path: &Path) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
@@ -102,7 +111,7 @@ impl Database {
 
     fn init_tables(&self) -> Result<(), String> {
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.lock_conn()?;
             conn.execute_batch(
                 "CREATE TABLE IF NOT EXISTS spaces (
                     id TEXT PRIMARY KEY,
@@ -193,7 +202,7 @@ impl Database {
     }
 
     fn ensure_message_column(&self, column: &str, definition: &str) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let sql = format!("ALTER TABLE messages ADD COLUMN {column} {definition}");
         match conn.execute(&sql, []) {
             Ok(_) => Ok(()),
@@ -209,7 +218,7 @@ impl Database {
     // ─── Spaces ───
 
     pub fn load_all_spaces(&self) -> Result<Vec<SpaceRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT id, name, invite_code, owner_id, created_at FROM spaces")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -229,7 +238,7 @@ impl Database {
     }
 
     pub fn save_space(&self, space: &SpaceRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO spaces (id, name, invite_code, owner_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![space.id, space.name, space.invite_code, space.owner_id, space.created_at],
@@ -239,7 +248,7 @@ impl Database {
     }
 
     pub fn delete_space(&self, space_id: &str) -> Result<(), String> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction()
             .map_err(|e| format!("Failed to begin delete transaction: {e}"))?;
@@ -265,7 +274,7 @@ impl Database {
     // ─── Channels ───
 
     pub fn load_channels_for_space(&self, space_id: &str) -> Result<Vec<ChannelRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT id, space_id, name, room_key, channel_type FROM channels WHERE space_id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -285,7 +294,7 @@ impl Database {
     }
 
     pub fn save_channel(&self, ch: &ChannelRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type],
@@ -295,7 +304,7 @@ impl Database {
     }
 
     pub fn delete_channel(&self, channel_id: &str) -> Result<(), String> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction()
             .map_err(|e| format!("Failed to begin channel delete transaction: {e}"))?;
@@ -318,7 +327,7 @@ impl Database {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<MessageRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, channel_id, sender_id, sender_name, content, timestamp, edited,
@@ -351,7 +360,7 @@ impl Database {
     }
 
     pub fn save_message(&self, msg: &MessageRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO messages (
                 id, channel_id, sender_id, sender_name, content, timestamp, edited,
@@ -376,7 +385,7 @@ impl Database {
     }
 
     pub fn update_message(&self, message_id: &str, new_content: &str) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "UPDATE messages SET content = ?2, edited = 1 WHERE id = ?1",
@@ -387,7 +396,7 @@ impl Database {
     }
 
     pub fn set_message_pinned(&self, message_id: &str, pinned: bool) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "UPDATE messages SET pinned = ?2 WHERE id = ?1",
@@ -398,7 +407,7 @@ impl Database {
     }
 
     pub fn delete_message(&self, message_id: &str) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute("DELETE FROM messages WHERE id = ?1", params![message_id])
             .map_err(|e| format!("Delete error: {e}"))?;
@@ -406,7 +415,7 @@ impl Database {
     }
 
     pub fn get_message_sender(&self, message_id: &str) -> Result<Option<String>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT sender_id FROM messages WHERE id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -417,7 +426,7 @@ impl Database {
     // ─── Users / Auth ───
 
     pub fn save_user(&self, user: &UserRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO users (user_id, token, display_name, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![user.user_id, user.token, user.display_name, user.created_at],
@@ -427,7 +436,7 @@ impl Database {
     }
 
     pub fn find_user_by_token(&self, token: &str) -> Result<Option<UserRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT user_id, token, display_name, created_at FROM users WHERE token = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -445,7 +454,7 @@ impl Database {
     }
 
     pub fn find_user_by_id(&self, user_id: &str) -> Result<Option<UserRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT user_id, token, display_name, created_at FROM users WHERE user_id = ?1",
@@ -465,7 +474,7 @@ impl Database {
     }
 
     pub fn update_user_name(&self, user_id: &str, name: &str) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "UPDATE users SET display_name = ?2 WHERE user_id = ?1",
             params![user_id, name],
@@ -477,7 +486,7 @@ impl Database {
     // ─── Friends ───
 
     pub fn save_friend_request(&self, request: &FriendRequestRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO friend_requests (requester_id, addressee_id, created_at)
              VALUES (?1, ?2, ?3)",
@@ -496,7 +505,7 @@ impl Database {
         requester_id: &str,
         addressee_id: &str,
     ) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "DELETE FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2",
@@ -511,7 +520,7 @@ impl Database {
         requester_id: &str,
         addressee_id: &str,
     ) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT 1 FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -525,7 +534,7 @@ impl Database {
         &self,
         user_id: &str,
     ) -> Result<Vec<FriendRequestRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT requester_id, addressee_id, created_at
@@ -549,7 +558,7 @@ impl Database {
         &self,
         user_id: &str,
     ) -> Result<Vec<FriendRequestRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT requester_id, addressee_id, created_at
@@ -570,7 +579,7 @@ impl Database {
     }
 
     pub fn save_friendship(&self, friendship: &FriendshipRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO friendships (user_low_id, user_high_id, created_at)
              VALUES (?1, ?2, ?3)",
@@ -586,7 +595,7 @@ impl Database {
 
     pub fn delete_friendship(&self, user_a: &str, user_b: &str) -> Result<bool, String> {
         let (low, high) = ordered_friend_pair(user_a, user_b);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "DELETE FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2",
@@ -598,7 +607,7 @@ impl Database {
 
     pub fn friendship_exists(&self, user_a: &str, user_b: &str) -> Result<bool, String> {
         let (low, high) = ordered_friend_pair(user_a, user_b);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT 1 FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -607,7 +616,7 @@ impl Database {
     }
 
     pub fn load_friendships_for_user(&self, user_id: &str) -> Result<Vec<FriendshipRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT user_low_id, user_high_id, created_at
@@ -636,7 +645,7 @@ impl Database {
         limit: usize,
     ) -> Result<Vec<DirectMessageRow>, String> {
         let (low, high) = ordered_friend_pair(user_a, user_b);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, user_low_id, user_high_id, sender_user_id, sender_name, content,
@@ -671,7 +680,7 @@ impl Database {
     }
 
     pub fn save_direct_message(&self, msg: &DirectMessageRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO direct_messages (
                 id, user_low_id, user_high_id, sender_user_id, sender_name, content, timestamp,
@@ -700,7 +709,7 @@ impl Database {
         message_id: &str,
         new_content: &str,
     ) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "UPDATE direct_messages SET content = ?2, edited = 1 WHERE id = ?1",
@@ -711,7 +720,7 @@ impl Database {
     }
 
     pub fn delete_direct_message(&self, message_id: &str) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let rows = conn
             .execute(
                 "DELETE FROM direct_messages WHERE id = ?1",
@@ -722,7 +731,7 @@ impl Database {
     }
 
     pub fn get_direct_message(&self, message_id: &str) -> Result<Option<DirectMessageRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, user_low_id, user_high_id, sender_user_id, sender_name, content,
@@ -753,7 +762,7 @@ impl Database {
     // ─── Bans ───
 
     pub fn save_ban(&self, ban: &BanRow) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO bans (space_id, user_id, banned_at) VALUES (?1, ?2, ?3)",
             params![ban.space_id, ban.user_id, ban.banned_at],
@@ -763,7 +772,7 @@ impl Database {
     }
 
     pub fn is_banned(&self, space_id: &str, user_id: &str) -> Result<bool, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT 1 FROM bans WHERE space_id = ?1 AND user_id = ?2")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -774,7 +783,7 @@ impl Database {
     }
 
     pub fn load_bans_for_space(&self, space_id: &str) -> Result<Vec<BanRow>, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT space_id, user_id, banned_at FROM bans WHERE space_id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
@@ -793,7 +802,7 @@ impl Database {
 
     /// Get the highest numeric suffix from space/channel/message IDs to restore allocators.
     pub fn max_id_suffix(&self, table: &str, col: &str) -> Result<u64, String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         // table and col are controlled internally, not from user input
         let query = format!("SELECT {col} FROM {table}");
         let mut stmt = conn

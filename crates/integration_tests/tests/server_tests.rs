@@ -2402,3 +2402,501 @@ async fn test_mute_member() {
         other => panic!("Expected MemberMuted, got: {:?}", other),
     }
 }
+
+// ─── Stress Tests: Space Networking ───
+
+/// Test: multiple users join the same space rapidly.
+/// Verifies no crash, correct member counts, and all MemberOnline broadcasts.
+#[tokio::test]
+async fn test_stress_many_users_join_space() {
+    let server = TestServer::start().await;
+
+    // Alice creates the space
+    let mut alice = server.connect().await;
+    let (space, _channels) = create_space(&mut alice, "Stress Space", "Alice").await;
+
+    // 8 users join rapidly
+    let mut joiners = Vec::new();
+    for i in 0..8 {
+        let mut client = server.connect().await;
+        let name = format!("User{i}");
+        let (joined_space, _channels, members) =
+            join_space(&mut client, &space.invite_code, &name).await;
+        assert_eq!(joined_space.id, space.id);
+        // Each joiner should see existing members (including Alice + prior joiners)
+        assert!(
+            !members.is_empty(),
+            "User{i} should see at least 1 member (Alice)"
+        );
+        joiners.push(client);
+    }
+
+    // Alice should have received 8 MemberOnline messages
+    for i in 0..8 {
+        match alice.recv_signal().await {
+            SignalMessage::MemberOnline { member } => {
+                assert!(
+                    !member.name.is_empty(),
+                    "MemberOnline #{i} should have a name"
+                );
+            }
+            other => panic!("Expected MemberOnline #{i}, got: {:?}", other),
+        }
+    }
+}
+
+/// Test: users join and leave a space rapidly, verifying cleanup.
+#[tokio::test]
+async fn test_stress_join_leave_churn() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, _) = create_space(&mut alice, "Churn Space", "Alice").await;
+
+    // 5 users join then immediately leave (drop connection)
+    for i in 0..5 {
+        let mut client = server.connect().await;
+        let (_sp, _ch, _members) =
+            join_space(&mut client, &space.invite_code, &format!("Temp{i}")).await;
+        // Drop client — triggers disconnect and MemberOffline
+        drop(client);
+        // Small delay for disconnect to propagate
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Drain Alice's notifications (MemberOnline + MemberOffline pairs)
+    let mut online_count = 0;
+    let mut offline_count = 0;
+    loop {
+        match alice
+            .recv_signal_timeout(Duration::from_millis(500))
+            .await
+        {
+            Some(SignalMessage::MemberOnline { .. }) => online_count += 1,
+            Some(SignalMessage::MemberOffline { .. }) => offline_count += 1,
+            _ => break,
+        }
+    }
+    assert_eq!(online_count, 5, "Should have 5 join notifications");
+    assert_eq!(offline_count, 5, "Should have 5 leave notifications");
+
+    // Now join one more user and verify they see only Alice + themselves (no ghosts)
+    let mut bob = server.connect().await;
+    let (_sp, _ch, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+    // Should be Alice + Bob (joiner is included in member list)
+    assert_eq!(
+        members.len(),
+        2,
+        "Should see Alice + Bob, got {} members: {:?}",
+        members.len(),
+        members.iter().map(|m| &m.name).collect::<Vec<_>>()
+    );
+    let names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+    assert!(names.contains(&"Alice"), "Alice should be in members");
+    assert!(names.contains(&"Bob"), "Bob should be in members");
+}
+
+/// Test: authenticated user reconnects to same space.
+/// Old stale member entry should be removed, no duplicate members.
+#[tokio::test]
+async fn test_stress_reconnect_same_space() {
+    let server = TestServer::start().await;
+
+    // Alice creates space
+    let mut alice = server.connect().await;
+    let (_alice_token, _alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let (space, _) = create_space(&mut alice, "Reconnect Space", "Alice").await;
+
+    // Bob authenticates, joins space
+    let mut bob = server.connect().await;
+    let (bob_token, _bob_uid) = authenticate(&mut bob, "Bob", None).await;
+    let (_sp, _ch, _members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    // Alice should get MemberOnline for Bob
+    match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => {
+            assert_eq!(member.name, "Bob");
+        }
+        other => panic!("Expected MemberOnline for Bob, got: {:?}", other),
+    }
+
+    // Bob disconnects (simulating network drop)
+    drop(bob);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Alice should get MemberOffline
+    match alice.recv_signal().await {
+        SignalMessage::MemberOffline { .. } => {}
+        other => panic!("Expected MemberOffline, got: {:?}", other),
+    }
+
+    // Bob reconnects with same token
+    let mut bob2 = server.connect().await;
+    let (_bob_token2, _bob_uid2) = authenticate(&mut bob2, "Bob", Some(bob_token)).await;
+    let (_sp2, _ch2, members) = join_space(&mut bob2, &space.invite_code, "Bob").await;
+
+    // Members should include Alice (and Bob2 will be added after join)
+    // No duplicate entries for Bob
+    let bob_count = members.iter().filter(|m| m.name == "Bob").count();
+    assert!(
+        bob_count <= 1,
+        "Bob should appear at most once in member list, found {bob_count}"
+    );
+
+    // Alice gets MemberOnline for Bob's new connection
+    match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => {
+            assert_eq!(member.name, "Bob");
+        }
+        other => panic!("Expected MemberOnline for Bob reconnect, got: {:?}", other),
+    }
+
+    // Verify no duplicate — Alice creates a fresh view by asking for space info
+    // (not directly possible, so we have a 3rd user join and check member list)
+    let mut charlie = server.connect().await;
+    let (_sp3, _ch3, members3) =
+        join_space(&mut charlie, &space.invite_code, "Charlie").await;
+    let bob_entries: Vec<_> = members3.iter().filter(|m| m.name == "Bob").collect();
+    assert_eq!(
+        bob_entries.len(),
+        1,
+        "Charlie should see exactly 1 Bob, got {}: {:?}",
+        bob_entries.len(),
+        bob_entries
+    );
+}
+
+/// Test: rapid channel join/leave within a space.
+#[tokio::test]
+async fn test_stress_channel_join_leave() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, channels) = create_space(&mut alice, "Channel Stress", "Alice").await;
+    let channel_id = channels[0].id.clone();
+
+    // Alice joins the voice channel
+    alice
+        .send_signal(&SignalMessage::JoinChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::ChannelJoined { .. } => {}
+        other => panic!("Expected ChannelJoined, got: {:?}", other),
+    }
+    // Drain MemberChannelChanged for self
+    alice.recv_signal().await;
+
+    // Bob joins space, joins and leaves channel 5 times rapidly
+    let mut bob = server.connect().await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    // Drain alice's MemberOnline
+    alice.recv_signal().await;
+
+    for _ in 0..5 {
+        bob.send_signal(&SignalMessage::JoinChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+        // Drain until ChannelJoined (may get MemberChannelChanged, PeerJoined first)
+        loop {
+            match bob.recv_signal().await {
+                SignalMessage::ChannelJoined { .. } => break,
+                _ => continue,
+            }
+        }
+
+        bob.send_signal(&SignalMessage::LeaveChannel).await;
+        // Drain until ChannelLeft (may get MemberChannelChanged, PeerLeft first)
+        loop {
+            match bob.recv_signal().await {
+                SignalMessage::ChannelLeft => break,
+                _ => continue,
+            }
+        }
+    }
+
+    // Alice should still be connected and functional — send a ping to verify
+    alice
+        .send_signal(&SignalMessage::JoinChannel {
+            channel_id: channel_id.clone(),
+        })
+        .await;
+    // Drain all accumulated messages, look for ChannelJoined
+    loop {
+        match alice.recv_signal().await {
+            SignalMessage::ChannelJoined { .. } => break,
+            _ => continue, // Skip PeerJoined/PeerLeft/MemberChannelChanged
+        }
+    }
+}
+
+/// Test: concurrent space operations (create, join, delete channel).
+/// Verifies no server panic from TOCTOU races.
+#[tokio::test]
+async fn test_stress_concurrent_space_operations() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, channels) = create_space(&mut alice, "Concurrent Ops", "Alice").await;
+
+    // Alice creates 3 additional channels
+    for i in 0..3 {
+        alice
+            .send_signal(&SignalMessage::CreateChannel {
+                channel_name: format!("Extra-{i}"),
+                channel_type: shared_types::ChannelType::Voice,
+            })
+            .await;
+        match alice.recv_signal().await {
+            SignalMessage::ChannelCreated { .. } => {}
+            other => panic!("Expected ChannelCreated, got: {:?}", other),
+        }
+    }
+
+    // Bob and Charlie join the space concurrently
+    let mut bob = server.connect().await;
+    let mut charlie = server.connect().await;
+
+    // Both join at the same time (parallel sends)
+    bob.send_signal(&SignalMessage::JoinSpace {
+        invite_code: space.invite_code.clone(),
+        user_name: "Bob".to_string(),
+    })
+    .await;
+    charlie
+        .send_signal(&SignalMessage::JoinSpace {
+            invite_code: space.invite_code.clone(),
+            user_name: "Charlie".to_string(),
+        })
+        .await;
+
+    // Both should get SpaceJoined
+    match bob.recv_signal().await {
+        SignalMessage::SpaceJoined { channels, .. } => {
+            assert_eq!(
+                channels.len(),
+                4,
+                "Bob should see 4 channels (1 default + 3 extra)"
+            );
+        }
+        other => panic!("Expected SpaceJoined for Bob, got: {:?}", other),
+    }
+    match charlie.recv_signal().await {
+        SignalMessage::SpaceJoined { channels, .. } => {
+            assert_eq!(
+                channels.len(),
+                4,
+                "Charlie should see 4 channels (1 default + 3 extra)"
+            );
+        }
+        other => panic!("Expected SpaceJoined for Charlie, got: {:?}", other),
+    }
+
+    // Now Alice deletes a channel while Bob is trying to join it
+    // This tests the TOCTOU fix — should not crash the server
+    let extra_channel_id = channels[0].id.clone(); // default channel
+
+    // Alice deletes the extra channel concurrently
+    alice
+        .send_signal(&SignalMessage::DeleteChannel {
+            channel_id: extra_channel_id.clone(),
+        })
+        .await;
+    // Bob tries to join it (may already be deleted)
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: extra_channel_id.clone(),
+    })
+    .await;
+
+    // We don't assert specific ordering — just that neither crashes.
+    // Drain messages from all clients to verify server is still alive.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Server still alive? Alice can create another channel.
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "Post-Stress".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    // Should get ChannelCreated (possibly after some other messages)
+    loop {
+        match alice
+            .recv_signal_timeout(Duration::from_secs(3))
+            .await
+        {
+            Some(SignalMessage::ChannelCreated { channel }) => {
+                assert_eq!(channel.name, "Post-Stress");
+                break;
+            }
+            Some(_) => continue, // Skip other messages
+            None => panic!("Server stopped responding after stress test"),
+        }
+    }
+}
+
+/// Test: disconnect during space join — verifies no orphaned state.
+#[tokio::test]
+async fn test_stress_disconnect_during_join() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, _) = create_space(&mut alice, "Disconnect Join", "Alice").await;
+
+    // 10 clients connect, send JoinSpace, then immediately drop
+    for i in 0..10 {
+        let mut client = server.connect().await;
+        client
+            .send_signal(&SignalMessage::JoinSpace {
+                invite_code: space.invite_code.clone(),
+                user_name: format!("Phantom{i}"),
+            })
+            .await;
+        // Drop immediately — may or may not have received SpaceJoined
+        drop(client);
+    }
+
+    // Wait for all disconnects to process
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Drain all of Alice's accumulated messages
+    loop {
+        if alice
+            .recv_signal_timeout(Duration::from_millis(200))
+            .await
+            .is_none()
+        {
+            break;
+        }
+    }
+
+    // New user joins and verifies clean state
+    let mut bob = server.connect().await;
+    let (_sp, _ch, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    // Should only be Alice (all phantoms disconnected)
+    let non_bob: Vec<_> = members
+        .iter()
+        .filter(|m| m.name != "Bob")
+        .collect();
+    assert_eq!(
+        non_bob.len(),
+        1,
+        "Should only see Alice, got: {:?}",
+        non_bob.iter().map(|m| &m.name).collect::<Vec<_>>()
+    );
+    assert_eq!(non_bob[0].name, "Alice");
+}
+
+/// Test: rapid message sending to a text channel.
+#[tokio::test]
+async fn test_stress_rapid_text_messages() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (space, channels) = create_space(&mut alice, "Chat Stress", "Alice").await;
+
+    // Create a text channel
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat-stress".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let text_channel_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    // Bob joins and selects text channel
+    let mut bob = server.connect().await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    // Drain MemberOnline from Alice
+    alice.recv_signal().await;
+
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+        channel_id: text_channel_id.clone(),
+    })
+    .await;
+    // Drain ChatHistory
+    bob.recv_signal().await;
+
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: text_channel_id.clone(),
+        })
+        .await;
+    alice.recv_signal().await; // ChatHistory
+
+    // Alice sends 50 messages rapidly
+    for i in 0..50 {
+        alice
+            .send_signal(&SignalMessage::SendTextMessage {
+                channel_id: text_channel_id.clone(),
+                content: format!("Stress message #{i}"),
+                reply_to_message_id: None,
+            })
+            .await;
+    }
+
+    // Bob should receive all 50 messages (drain them)
+    let mut received = 0;
+    loop {
+        match bob
+            .recv_signal_timeout(Duration::from_secs(3))
+            .await
+        {
+            Some(SignalMessage::TextMessage { .. }) => received += 1,
+            Some(_) => continue, // Skip typing indicators etc.
+            None => break,
+        }
+    }
+    assert_eq!(received, 50, "Bob should receive all 50 messages");
+}
+
+/// Test: multiple spaces created and deleted.
+#[tokio::test]
+async fn test_stress_multiple_spaces() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+
+    // Create 10 spaces
+    let mut spaces = Vec::new();
+    for i in 0..10 {
+        let (space, _) = create_space(&mut alice, &format!("Space-{i}"), "Alice").await;
+        spaces.push(space);
+    }
+
+    // Bob joins all 10 spaces one at a time (leave + join)
+    let mut bob = server.connect().await;
+    for (i, space) in spaces.iter().enumerate() {
+        // Leave previous space if not first (LeaveSpace has no response, just wait briefly)
+        if i > 0 {
+            bob.send_signal(&SignalMessage::LeaveSpace).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let (_sp, _ch, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
+        assert!(
+            !members.is_empty(),
+            "Space-{i} should have Alice as a member"
+        );
+    }
+
+    // Alice is now in Space-9 (the last one she created).
+    // Delete it to verify delete works after heavy space creation.
+    alice.send_signal(&SignalMessage::DeleteSpace).await;
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::SpaceDeleted) => break,
+            Some(_) => continue,
+            None => panic!("Expected SpaceDeleted"),
+        }
+    }
+
+    // Server should still be alive
+    let (new_space, _) = create_space(&mut alice, "Still Alive", "Alice").await;
+    assert!(!new_space.id.is_empty());
+}
