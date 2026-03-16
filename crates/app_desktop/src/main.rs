@@ -73,87 +73,26 @@ fn main() {
     let screen_share = Arc::new(screen_share::ScreenShareController::new());
 
     let window = MainWindow::new().unwrap();
-    let member_widget = MemberWidgetWindow::new().unwrap();
-    ui_shell::register_member_widget(&member_widget);
-    ui_shell::sync_member_widget_theme(config.dark_mode.unwrap_or(true));
+    let member_widget = Rc::new(RefCell::new(None::<MemberWidgetWindow>));
+    register_member_widget_initializer(
+        &window,
+        &network,
+        &rt_handle,
+        &member_widget,
+        config.member_widget_x.zip(config.member_widget_y),
+    );
     friends::load_from_config(&window, &state, config.favorite_friends.clone());
     direct_messages::load_from_config(&window, &state, config.recent_direct_messages.clone());
-    if let (Some(x), Some(y)) = (config.member_widget_x, config.member_widget_y) {
-        member_widget
-            .window()
-            .set_position(slint::PhysicalPosition::new(x, y));
-    }
     if config.member_widget_visible {
-        let _ = member_widget.show();
+        let _ = ui_shell::ensure_member_widget();
+        {
+            let state = state.borrow();
+            ui_shell::sync_member_widget(state.space.as_ref(), &state.favorite_friends);
+        }
+        ui_shell::sync_member_widget_theme(config.dark_mode.unwrap_or(true));
+        let _ = ui_shell::set_member_widget_visible(true);
     }
     window.set_member_widget_visible(config.member_widget_visible);
-
-    let widget_window_weak = window.as_weak();
-    let widget_network = network.clone();
-    let widget_rt_handle = rt_handle.clone();
-    member_widget.on_send_friend_request(move |user_id| {
-        let Some(window) = widget_window_weak.upgrade() else {
-            return;
-        };
-        let user_id = user_id.to_string();
-        if user_id.trim().is_empty() {
-            return;
-        }
-        window.set_status_text("Friend request sent".into());
-        let network = widget_network.clone();
-        widget_rt_handle.spawn(async move {
-            let net = network.lock().await;
-            let _ = net
-                .send_signal(&shared_types::SignalMessage::SendFriendRequest { user_id })
-                .await;
-        });
-    });
-
-    let widget_window_weak = window.as_weak();
-    let widget_network = network.clone();
-    let widget_rt_handle = rt_handle.clone();
-    member_widget.on_remove_friend(move |user_id| {
-        let Some(window) = widget_window_weak.upgrade() else {
-            return;
-        };
-        let user_id = user_id.to_string();
-        if user_id.trim().is_empty() {
-            return;
-        }
-        window.set_status_text("Friend removed".into());
-        let network = widget_network.clone();
-        widget_rt_handle.spawn(async move {
-            let net = network.lock().await;
-            let _ = net
-                .send_signal(&shared_types::SignalMessage::RemoveFriend { user_id })
-                .await;
-        });
-    });
-
-    let widget_window_weak = window.as_weak();
-    member_widget.on_open_direct_message(move |user_id| {
-        let Some(window) = widget_window_weak.upgrade() else {
-            return;
-        };
-        let user_id = user_id.to_string();
-        if user_id.trim().is_empty() {
-            return;
-        }
-        window.invoke_open_direct_message(user_id.into());
-    });
-
-    let window_weak = window.as_weak();
-    let member_widget_weak = member_widget.as_weak();
-    member_widget.window().on_close_requested(move || {
-        if let Some(window) = window_weak.upgrade() {
-            window.set_member_widget_visible(false);
-        }
-        if let Some(widget) = member_widget_weak.upgrade() {
-            let position = widget.window().position();
-            helpers::save_member_widget_state_async(false, Some((position.x, position.y)));
-        }
-        slint::CloseRequestResponse::HideWindow
-    });
 
     // #13: Restore saved window size
     if let (Some(w), Some(h)) = (config.window_width, config.window_height) {
@@ -253,10 +192,13 @@ fn main() {
     // #13: Save window size on exit
     let size = window.window().size();
     helpers::save_window_size(size.width, size.height);
-    let member_widget_position = member_widget.window().position();
+    let member_widget_position = member_widget.borrow().as_ref().map(|widget| {
+        let position = widget.window().position();
+        (position.x, position.y)
+    });
     helpers::save_member_widget_state_async(
         window.get_member_widget_visible(),
-        Some((member_widget_position.x, member_widget_position.y)),
+        member_widget_position,
     );
 
     // Cleanup with timeout — prevents freeze if tasks are stuck
@@ -308,6 +250,103 @@ fn populate_devices(
 
     ui_shell::set_device_lists(window, &inputs, &outputs);
     (input_idx as i32, output_idx as i32)
+}
+
+fn register_member_widget_initializer(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+    member_widget_slot: &Rc<RefCell<Option<MemberWidgetWindow>>>,
+    initial_position: Option<(i32, i32)>,
+) {
+    let member_widget_slot = member_widget_slot.clone();
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+
+    ui_shell::register_member_widget_initializer(move || {
+        if member_widget_slot.borrow().is_some() {
+            return;
+        }
+
+        let member_widget = MemberWidgetWindow::new().unwrap();
+        if let Some((x, y)) = initial_position {
+            member_widget
+                .window()
+                .set_position(slint::PhysicalPosition::new(x, y));
+        }
+        ui_shell::register_member_widget(&member_widget);
+
+        let widget_window_weak = window_weak.clone();
+        let widget_network = network.clone();
+        let widget_rt_handle = rt_handle.clone();
+        member_widget.on_send_friend_request(move |user_id| {
+            let Some(window) = widget_window_weak.upgrade() else {
+                return;
+            };
+            let user_id = user_id.to_string();
+            if user_id.trim().is_empty() {
+                return;
+            }
+            window.set_status_text("Friend request sent".into());
+            let network = widget_network.clone();
+            widget_rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::SendFriendRequest { user_id })
+                    .await;
+            });
+        });
+
+        let widget_window_weak = window_weak.clone();
+        let widget_network = network.clone();
+        let widget_rt_handle = rt_handle.clone();
+        member_widget.on_remove_friend(move |user_id| {
+            let Some(window) = widget_window_weak.upgrade() else {
+                return;
+            };
+            let user_id = user_id.to_string();
+            if user_id.trim().is_empty() {
+                return;
+            }
+            window.set_status_text("Friend removed".into());
+            let network = widget_network.clone();
+            widget_rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::RemoveFriend { user_id })
+                    .await;
+            });
+        });
+
+        let widget_window_weak = window_weak.clone();
+        member_widget.on_open_direct_message(move |user_id| {
+            let Some(window) = widget_window_weak.upgrade() else {
+                return;
+            };
+            let user_id = user_id.to_string();
+            if user_id.trim().is_empty() {
+                return;
+            }
+            window.invoke_open_direct_message(user_id.into());
+        });
+
+        let close_window_weak = window_weak.clone();
+        let member_widget_weak = member_widget.as_weak();
+        member_widget.window().on_close_requested(move || {
+            if let Some(window) = close_window_weak.upgrade() {
+                window.set_member_widget_visible(false);
+            }
+            let _ = ui_shell::set_member_widget_visible(false);
+            if let Some(widget) = member_widget_weak.upgrade() {
+                let position = widget.window().position();
+                helpers::save_member_widget_state_async(false, Some((position.x, position.y)));
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+
+        *member_widget_slot.borrow_mut() = Some(member_widget);
+    });
 }
 
 fn apply_config(

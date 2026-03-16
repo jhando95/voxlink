@@ -16,6 +16,7 @@ export component SpaceView inherits Rectangle {
     in-out property <string> new-channel-name: "";
     in-out property <bool> new-channel-is-voice: true;
     in-out property <bool> confirm-delete-visible: false;
+    in-out property <string> confirm-delete-channel-id: "";
     changed search-query => { root.search-changed(root.search-query); }
     callback navigate(int);
     callback copy-invite-code();
@@ -24,6 +25,7 @@ export component SpaceView inherits Rectangle {
     callback select-text-channel(string);
     callback join-channel(string);
     callback create-channel();
+    callback delete-channel(string);
     callback leave-space();
     callback delete-space();
     callback kick-member(string);
@@ -218,6 +220,20 @@ export component SpaceView inherits Rectangle {
                                         tone: channel.is-active ? VxTheme.success : VxTheme.accent;
                                         fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
                                     }
+                                    if root.is-space-owner : VxButton {
+                                        label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                        small: true;
+                                        danger: root.confirm-delete-channel-id == channel.id;
+                                        soft: root.confirm-delete-channel-id != channel.id;
+                                        clicked => {
+                                            if root.confirm-delete-channel-id == channel.id {
+                                                root.confirm-delete-channel-id = "";
+                                                root.delete-channel(channel.id);
+                                            } else {
+                                                root.confirm-delete-channel-id = channel.id;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -309,6 +325,20 @@ export component SpaceView inherits Rectangle {
                                         label: channel.peer-count + " live";
                                         tone: VxTheme.success;
                                         fill: VxTheme.success-dim;
+                                    }
+                                    if root.is-space-owner : VxButton {
+                                        label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                        small: true;
+                                        danger: root.confirm-delete-channel-id == channel.id;
+                                        soft: root.confirm-delete-channel-id != channel.id;
+                                        clicked => {
+                                            if root.confirm-delete-channel-id == channel.id {
+                                                root.confirm-delete-channel-id = "";
+                                                root.delete-channel(channel.id);
+                                            } else {
+                                                root.confirm-delete-channel-id = channel.id;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -613,7 +643,7 @@ export component SpaceView inherits Rectangle {
                                 horizontal-stretch: 1;
                                 clicked => { root.leave-space(); }
                             }
-                            VxButton {
+                            if root.is-space-owner : VxButton {
                                 label: root.confirm-delete-visible ? "Confirm delete" : "Delete space";
                                 danger: true;
                                 horizontal-stretch: 1;
@@ -626,9 +656,15 @@ export component SpaceView inherits Rectangle {
                                     }
                                 }
                             }
-                            if root.confirm-delete-visible : Text {
+                            if root.is-space-owner && root.confirm-delete-visible : Text {
                                 text: "Delete removes the space for everyone.";
                                 color: VxTheme.danger;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            if !root.is-space-owner : Text {
+                                text: "Only the space creator can delete the space or remove channels.";
+                                color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
                             }
@@ -739,6 +775,20 @@ export component SpaceView inherits Rectangle {
                                     color: VxTheme.text-muted;
                                     font-size: 10px;
                                     font-weight: 700;
+                                }
+                                if root.is-space-owner : VxButton {
+                                    label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                    small: true;
+                                    danger: root.confirm-delete-channel-id == channel.id;
+                                    soft: root.confirm-delete-channel-id != channel.id;
+                                    clicked => {
+                                        if root.confirm-delete-channel-id == channel.id {
+                                            root.confirm-delete-channel-id = "";
+                                            root.delete-channel(channel.id);
+                                        } else {
+                                            root.confirm-delete-channel-id = channel.id;
+                                        }
+                                    }
                                 }
                             }
                         }

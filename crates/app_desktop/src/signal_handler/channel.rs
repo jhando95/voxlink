@@ -87,6 +87,62 @@ pub fn handle_channel_joined(
     );
 }
 
+pub fn handle_channel_deleted(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    channel_id: &str,
+) {
+    log::info!("Channel deleted: {channel_id}");
+
+    let (space_id, cleared_selected_text_channel) = {
+        let mut s = state.borrow_mut();
+        let mut space_id = None;
+        let mut cleared_selected_text_channel = false;
+        if let Some(ref mut space) = s.space {
+            space_id = Some(space.id.clone());
+            space.channels.retain(|channel| channel.id != channel_id);
+            space.unread_text_channels.remove(channel_id);
+            space.typing_users.remove(channel_id);
+            if space.active_channel_id.as_deref() == Some(channel_id) {
+                space.active_channel_id = None;
+            }
+            if space.selected_text_channel_id.as_deref() == Some(channel_id) {
+                space.selected_text_channel_id = None;
+                cleared_selected_text_channel = true;
+            }
+        }
+        (space_id, cleared_selected_text_channel)
+    };
+
+    if let Some(space_id) = space_id {
+        crate::helpers::clear_deleted_channel_async(space_id, channel_id.to_string());
+    }
+
+    if cleared_selected_text_channel && !w.get_chat_is_direct_message() {
+        let should_return_to_space = state.borrow().current_view == AppView::TextChat;
+        w.set_chat_channel_id(slint::SharedString::default());
+        w.set_chat_channel_name(slint::SharedString::default());
+        w.set_chat_context_subtitle(slint::SharedString::default());
+        w.set_chat_input(slint::SharedString::default());
+        w.set_chat_typing_text(slint::SharedString::default());
+        w.set_editing_message_id(slint::SharedString::default());
+        w.set_editing_original_content(slint::SharedString::default());
+        w.set_reply_target_message_id(slint::SharedString::default());
+        w.set_reply_target_sender_name(slint::SharedString::default());
+        w.set_reply_target_preview(slint::SharedString::default());
+        w.set_chat_pinned_messages(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+        if should_return_to_space {
+            state.borrow_mut().current_view = AppView::Space;
+            w.set_current_view(ui_shell::view_to_index(AppView::Space));
+        }
+    }
+
+    w.set_confirm_delete_channel_id(slint::SharedString::default());
+    crate::friends::sync_ui(w, state);
+}
+
 pub fn handle_channel_left(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,

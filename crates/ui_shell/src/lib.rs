@@ -8,6 +8,8 @@ use slint::ComponentHandle;
 
 thread_local! {
     static MEMBER_WIDGET: RefCell<Option<slint::Weak<MemberWidgetWindow>>> = const { RefCell::new(None) };
+    static MEMBER_WIDGET_VISIBLE: RefCell<bool> = const { RefCell::new(false) };
+    static MEMBER_WIDGET_INITIALIZER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
 pub fn view_to_index(view: AppView) -> i32 {
@@ -62,7 +64,32 @@ pub fn register_member_widget(widget: &MemberWidgetWindow) {
     });
 }
 
+pub fn register_member_widget_initializer(f: impl Fn() + 'static) {
+    MEMBER_WIDGET_INITIALIZER.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(f));
+    });
+}
+
+pub fn ensure_member_widget() -> bool {
+    if with_member_widget(|_| ()).is_some() {
+        return true;
+    }
+    MEMBER_WIDGET_INITIALIZER.with(|slot| {
+        if let Some(initializer) = slot.borrow().as_ref() {
+            initializer();
+        }
+    });
+    with_member_widget(|_| ()).is_some()
+}
+
 pub fn set_member_widget_visible(visible: bool) -> bool {
+    if visible && !ensure_member_widget() {
+        MEMBER_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = false;
+        });
+        return false;
+    }
+
     with_member_widget(|widget| {
         let result = if visible {
             widget.show()
@@ -73,9 +100,17 @@ pub fn set_member_widget_visible(visible: bool) -> bool {
             log::warn!("Failed to change member widget visibility: {err}");
             return false;
         }
+        MEMBER_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = visible;
+        });
         true
     })
-    .unwrap_or(false)
+    .unwrap_or_else(|| {
+        MEMBER_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = false;
+        });
+        false
+    })
 }
 
 pub fn sync_member_widget_theme(dark_mode: bool) {
@@ -88,6 +123,10 @@ pub fn sync_member_widget(
     space: Option<&shared_types::SpaceState>,
     favorites: &[shared_types::FavoriteFriend],
 ) {
+    let is_visible = MEMBER_WIDGET_VISIBLE.with(|slot| *slot.borrow());
+    if !is_visible {
+        return;
+    }
     with_member_widget(|widget| match space {
         Some(space) => {
             let friends = member_widget_entries(Some(space), favorites);

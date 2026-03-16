@@ -174,6 +174,50 @@ pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
     });
 }
 
+pub fn remove_saved_space_async(space_id: String) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        cfg.saved_spaces.retain(|space| space.id != space_id);
+        if cfg.last_space_id.as_deref() == Some(space_id.as_str()) {
+            cfg.last_space_id = None;
+            cfg.last_channel_id = None;
+        }
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn clear_deleted_channel_async(space_id: String, channel_id: String) {
+    std::thread::spawn(move || {
+        let mut cfg = config_store::load_config();
+        if cfg.last_space_id.as_deref() == Some(space_id.as_str())
+            && cfg.last_channel_id.as_deref() == Some(channel_id.as_str())
+        {
+            cfg.last_channel_id = None;
+            let _ = config_store::save_config(&cfg);
+        }
+    });
+}
+
+pub fn sync_saved_spaces_ui(window: &MainWindow, exclude_space_id: Option<&str>) {
+    let mut cfg = config_store::load_config();
+    if let Some(space_id) = exclude_space_id {
+        cfg.saved_spaces.retain(|space| space.id != space_id);
+    }
+    let spaces = cfg
+        .saved_spaces
+        .iter()
+        .map(|space| shared_types::SpaceInfo {
+            id: space.id.clone(),
+            name: space.name.clone(),
+            invite_code: space.invite_code.clone(),
+            member_count: 0,
+            channel_count: 0,
+            is_owner: false,
+        })
+        .collect::<Vec<_>>();
+    ui_shell::set_spaces(window, &spaces);
+}
+
 pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)>) {
     std::thread::spawn(move || {
         let mut cfg = config_store::load_config();

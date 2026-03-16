@@ -369,6 +369,10 @@ pub fn setup_toggle_member_widget(
         };
         let next_visible = !w.get_member_widget_visible();
         if next_visible {
+            if !ui_shell::ensure_member_widget() {
+                w.set_status_text("Member pop-out could not open".into());
+                return;
+            }
             let state = state.borrow();
             ui_shell::sync_member_widget(state.space.as_ref(), &state.favorite_friends);
             ui_shell::sync_member_widget_theme(w.get_dark_mode());

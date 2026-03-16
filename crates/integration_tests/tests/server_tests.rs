@@ -1126,6 +1126,52 @@ async fn test_leave_space() {
 }
 
 #[tokio::test]
+async fn test_restore_identity_can_delete_legacy_owned_space() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    let (token, user_id) = authenticate(&mut alice, "Alice", None).await;
+    let (space, _) = create_space(&mut alice, "Legacy Space", "Alice").await;
+
+    drop(alice);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let mut restored = server.connect().await;
+    let (restored_token, restored_user_id) =
+        authenticate(&mut restored, "Alice", Some(token.clone())).await;
+    assert_eq!(restored_token, token);
+    assert_eq!(restored_user_id, user_id);
+
+    let (joined_space, _, _) = join_space(&mut restored, &space.invite_code, "Alice").await;
+    assert!(
+        joined_space.is_owner,
+        "Restored owner should keep delete access"
+    );
+
+    restored.send_signal(&SignalMessage::DeleteSpace).await;
+    match restored.recv_signal().await {
+        SignalMessage::SpaceDeleted => {}
+        other => panic!("Expected SpaceDeleted, got: {:?}", other),
+    }
+
+    let mut bob = server.connect().await;
+    bob.send_signal(&SignalMessage::JoinSpace {
+        invite_code: space.invite_code.clone(),
+        user_name: "Bob".to_string(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("invite"),
+                "Error should mention invite code: {message}"
+            );
+        }
+        other => panic!("Expected Error after deleted space join, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
 async fn test_create_voice_channel() {
     let server = TestServer::start().await;
     let mut alice = server.connect().await;
@@ -1211,6 +1257,99 @@ async fn test_channel_created_broadcast() {
             assert_eq!(channel.name, "Music");
         }
         other => panic!("Bob expected ChannelCreated, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_owner_can_delete_channel_and_non_owner_cannot() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (space, _) = create_space(&mut alice, "Delete Channel Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    let _ = alice.recv_signal().await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "notes".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+
+    let deleted_channel_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated for Alice, got: {:?}", other),
+    };
+    match bob.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => {
+            assert_eq!(channel.id, deleted_channel_id);
+        }
+        other => panic!("Expected ChannelCreated for Bob, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::DeleteChannel {
+        channel_id: deleted_channel_id.clone(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("creator") || message.contains("owner"),
+                "Error should mention ownership: {message}"
+            );
+        }
+        other => panic!("Expected Error for non-owner delete, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::DeleteChannel {
+            channel_id: deleted_channel_id.clone(),
+        })
+        .await;
+
+    for msg in [alice.recv_signal().await, bob.recv_signal().await] {
+        match msg {
+            SignalMessage::ChannelDeleted { channel_id } => {
+                assert_eq!(channel_id, deleted_channel_id);
+            }
+            other => panic!("Expected ChannelDeleted, got: {:?}", other),
+        }
+    }
+
+    let mut charlie = server.connect().await;
+    let (_joined_space, channels, _) =
+        join_space(&mut charlie, &space.invite_code, "Charlie").await;
+    assert!(
+        channels
+            .iter()
+            .all(|channel| channel.id != deleted_channel_id),
+        "Deleted channel should not reappear for later joins"
+    );
+}
+
+#[tokio::test]
+async fn test_cannot_delete_last_channel() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    let (_space, channels) = create_space(&mut alice, "Single Channel Space", "Alice").await;
+    let general_id = channels[0].id.clone();
+
+    alice
+        .send_signal(&SignalMessage::DeleteChannel {
+            channel_id: general_id,
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("at least one channel"),
+                "Error should explain the last-channel guard: {message}"
+            );
+        }
+        other => panic!("Expected Error for last channel delete, got: {:?}", other),
     }
 }
 

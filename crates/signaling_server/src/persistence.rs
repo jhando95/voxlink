@@ -239,9 +239,26 @@ impl Database {
     }
 
     pub fn delete_space(&self, space_id: &str) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM spaces WHERE id = ?1", params![space_id])
-            .map_err(|e| format!("Delete error: {e}"))?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin delete transaction: {e}"))?;
+        tx.execute(
+            "DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE space_id = ?1)",
+            params![space_id],
+        )
+        .map_err(|e| format!("Delete messages error: {e}"))?;
+        tx.execute(
+            "DELETE FROM channels WHERE space_id = ?1",
+            params![space_id],
+        )
+        .map_err(|e| format!("Delete channels error: {e}"))?;
+        tx.execute("DELETE FROM bans WHERE space_id = ?1", params![space_id])
+            .map_err(|e| format!("Delete bans error: {e}"))?;
+        tx.execute("DELETE FROM spaces WHERE id = ?1", params![space_id])
+            .map_err(|e| format!("Delete space error: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("Failed to commit delete transaction: {e}"))?;
         Ok(())
     }
 
@@ -274,6 +291,23 @@ impl Database {
             params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_channel(&self, channel_id: &str) -> Result<(), String> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin channel delete transaction: {e}"))?;
+        tx.execute(
+            "DELETE FROM messages WHERE channel_id = ?1",
+            params![channel_id],
+        )
+        .map_err(|e| format!("Delete channel messages error: {e}"))?;
+        tx.execute("DELETE FROM channels WHERE id = ?1", params![channel_id])
+            .map_err(|e| format!("Delete channel error: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("Failed to commit channel delete transaction: {e}"))?;
         Ok(())
     }
 
@@ -829,6 +863,97 @@ mod tests {
     }
 
     #[test]
+    fn delete_space_cascades_space_data() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "Alpha".into(),
+            invite_code: "ALPHA123".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+        db.save_space(&SpaceRow {
+            id: "s2".into(),
+            name: "Beta".into(),
+            invite_code: "BETA1234".into(),
+            owner_id: "p2".into(),
+            created_at: 1,
+        })
+        .unwrap();
+        db.save_channel(&ChannelRow {
+            id: "c1".into(),
+            space_id: "s1".into(),
+            name: "general".into(),
+            room_key: "sp:s1:ch:c1".into(),
+            channel_type: "text".into(),
+        })
+        .unwrap();
+        db.save_channel(&ChannelRow {
+            id: "c2".into(),
+            space_id: "s2".into(),
+            name: "general".into(),
+            room_key: "sp:s2:ch:c2".into(),
+            channel_type: "text".into(),
+        })
+        .unwrap();
+        db.save_message(&MessageRow {
+            id: "m1".into(),
+            channel_id: "c1".into(),
+            sender_id: "p1".into(),
+            sender_name: "Alice".into(),
+            content: "hello".into(),
+            timestamp: 10,
+            edited: false,
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+        })
+        .unwrap();
+        db.save_message(&MessageRow {
+            id: "m2".into(),
+            channel_id: "c2".into(),
+            sender_id: "p2".into(),
+            sender_name: "Bob".into(),
+            content: "still here".into(),
+            timestamp: 11,
+            edited: false,
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+        })
+        .unwrap();
+        db.save_ban(&BanRow {
+            space_id: "s1".into(),
+            user_id: "u1".into(),
+            banned_at: 12,
+        })
+        .unwrap();
+        db.save_ban(&BanRow {
+            space_id: "s2".into(),
+            user_id: "u2".into(),
+            banned_at: 13,
+        })
+        .unwrap();
+
+        db.delete_space("s1").unwrap();
+
+        let spaces = db.load_all_spaces().unwrap();
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0].id, "s2");
+        assert!(db.load_channels_for_space("s1").unwrap().is_empty());
+        assert!(db.load_messages_for_channel("c1", 50).unwrap().is_empty());
+        assert!(!db.is_banned("s1", "u1").unwrap());
+        assert_eq!(db.load_channels_for_space("s2").unwrap().len(), 1);
+        assert_eq!(db.load_messages_for_channel("c2", 50).unwrap().len(), 1);
+        assert!(db.is_banned("s2", "u2").unwrap());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn channel_round_trip() {
         let (db, path) = temp_db();
         db.save_space(&SpaceRow {
@@ -850,6 +975,57 @@ mod tests {
         let channels = db.load_channels_for_space("s1").unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].name, "General");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn delete_channel_removes_messages_only_for_target() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+        for (id, name) in [("c1", "General"), ("c2", "Side")] {
+            db.save_channel(&ChannelRow {
+                id: id.into(),
+                space_id: "s1".into(),
+                name: name.into(),
+                room_key: format!("sp:s1:ch:{id}"),
+                channel_type: "text".into(),
+            })
+            .unwrap();
+        }
+        for (id, channel_id, content) in [("m1", "c1", "remove me"), ("m2", "c2", "keep me")] {
+            db.save_message(&MessageRow {
+                id: id.into(),
+                channel_id: channel_id.into(),
+                sender_id: "p1".into(),
+                sender_name: "Alice".into(),
+                content: content.into(),
+                timestamp: 100,
+                edited: false,
+                reply_to_message_id: None,
+                reply_to_sender_name: None,
+                reply_preview: None,
+                pinned: false,
+            })
+            .unwrap();
+        }
+
+        db.delete_channel("c1").unwrap();
+
+        let remaining_channels = db.load_channels_for_space("s1").unwrap();
+        assert_eq!(remaining_channels.len(), 1);
+        assert_eq!(remaining_channels[0].id, "c2");
+        assert!(db.load_messages_for_channel("c1", 50).unwrap().is_empty());
+        let remaining_messages = db.load_messages_for_channel("c2", 50).unwrap();
+        assert_eq!(remaining_messages.len(), 1);
+        assert_eq!(remaining_messages[0].content, "keep me");
+
         let _ = std::fs::remove_file(path);
     }
 

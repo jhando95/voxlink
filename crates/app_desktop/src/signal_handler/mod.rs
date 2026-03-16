@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use shared_types::SignalMessage;
+use shared_types::{AppView, SignalMessage};
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
@@ -75,6 +75,26 @@ pub fn process_signals(
                 room::handle_screen_share_stopped(w, state, sharer_id, ctx);
             }
             SignalMessage::Error { message } => {
+                let stale_saved_space = message.contains("Invalid invite code")
+                    && w.get_current_view() == ui_shell::view_to_index(AppView::Space)
+                    && state.borrow().space.is_none()
+                    && !w.get_current_space_id().is_empty();
+                if stale_saved_space {
+                    let space_id = w.get_current_space_id().to_string();
+                    crate::helpers::remove_saved_space_async(space_id.clone());
+                    crate::helpers::sync_saved_spaces_ui(w, Some(&space_id));
+                    state.borrow_mut().current_view = AppView::Home;
+                    w.set_current_view(ui_shell::view_to_index(AppView::Home));
+                    w.set_current_space_id(slint::SharedString::default());
+                    w.set_current_space_name(slint::SharedString::default());
+                    w.set_current_space_invite(slint::SharedString::default());
+                    w.set_space_search_query(slint::SharedString::default());
+                    w.set_confirm_delete_channel_id(slint::SharedString::default());
+                    ui_shell::set_channels(w, &[]);
+                    ui_shell::set_members(w, &[]);
+                    w.set_status_text("Saved space no longer exists on the server".into());
+                    continue;
+                }
                 log::error!("Server error: {message}");
                 w.set_status_text(format!("Error: {message}").into());
             }
@@ -90,6 +110,9 @@ pub fn process_signals(
             }
             SignalMessage::ChannelCreated { channel } => {
                 channel::handle_channel_created(w, state, channel);
+            }
+            SignalMessage::ChannelDeleted { channel_id } => {
+                channel::handle_channel_deleted(w, state, channel_id);
             }
             SignalMessage::ChannelJoined {
                 channel_id,

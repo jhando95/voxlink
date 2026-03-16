@@ -124,6 +124,120 @@ pub async fn handle_create_channel(
     }
 }
 
+pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: String, db: &Db) {
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+
+    let Some(space_id) = space_id else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+
+    let owner_identity = super::space::stable_peer_id(state, peer_id).await;
+    let (deleted_channel, member_ids, affected_voice_ids) = {
+        let mut s = state.write().await;
+        let Some((is_owner, member_ids, channel_count)) = s.spaces.get(&space_id).map(|space| {
+            (
+                space.owner_id == peer_id || space.owner_id == owner_identity,
+                space.member_ids.clone(),
+                space.channels.len(),
+            )
+        }) else {
+            send_error(state, peer_id, "Space not found").await;
+            return;
+        };
+
+        if !is_owner {
+            drop(s);
+            send_error(state, peer_id, "Only the space creator can delete channels").await;
+            return;
+        }
+        if channel_count <= 1 {
+            drop(s);
+            send_error(state, peer_id, "A space must keep at least one channel").await;
+            return;
+        }
+
+        let deleted_channel = {
+            let space = s.spaces.get_mut(&space_id).expect("space should exist");
+            let Some(index) = space
+                .channels
+                .iter()
+                .position(|channel| channel.id == channel_id)
+            else {
+                drop(s);
+                send_error(state, peer_id, "Channel not found").await;
+                return;
+            };
+            space.text_messages.remove(&channel_id);
+            space.channels.remove(index)
+        };
+        let affected_voice_ids = s
+            .rooms
+            .remove(&deleted_channel.room_key)
+            .map(|room| room.peer_ids)
+            .unwrap_or_default();
+        (deleted_channel, member_ids, affected_voice_ids)
+    };
+
+    let (member_peers, affected_voice_peers): (Vec<Arc<Peer>>, Vec<Arc<Peer>>) = {
+        let s = state.read().await;
+        (
+            member_ids
+                .iter()
+                .filter_map(|id| s.peers.get(id).cloned())
+                .collect(),
+            affected_voice_ids
+                .iter()
+                .filter_map(|id| s.peers.get(id).cloned())
+                .collect(),
+        )
+    };
+
+    let deleted_notify = SignalMessage::ChannelDeleted {
+        channel_id: channel_id.clone(),
+    };
+    for peer in &member_peers {
+        send_to(peer, &deleted_notify).await;
+    }
+
+    for peer in &affected_voice_peers {
+        peer.set_room_code(None).await;
+        send_to(peer, &SignalMessage::ChannelLeft).await;
+    }
+
+    for member_id in affected_voice_ids {
+        let notify = SignalMessage::MemberChannelChanged {
+            member_id,
+            channel_id: None,
+            channel_name: None,
+        };
+        for peer in &member_peers {
+            send_to(peer, &notify).await;
+        }
+    }
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let channel_id = channel_id.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.delete_channel(&channel_id) {
+                log::error!("Failed to delete channel: {e}");
+            }
+        });
+    }
+
+    log::info!(
+        "Channel {} deleted in space {space_id} by {peer_id}",
+        deleted_channel.id
+    );
+}
+
 pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: String) {
     let space_id = {
         let s = state.read().await;

@@ -737,6 +737,10 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db
             handlers::channel::handle_leave_channel(state, peer_id).await;
             handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
+        SignalMessage::DeleteChannel { channel_id } => {
+            handlers::channel::handle_delete_channel(state, peer_id, channel_id, db).await;
+            handlers::presence::notify_watchers_for_peer(state, peer_id).await;
+        }
         SignalMessage::DeleteSpace => {
             handlers::space::handle_delete_space(state, peer_id, db).await;
         }

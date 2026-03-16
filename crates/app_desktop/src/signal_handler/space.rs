@@ -38,6 +38,7 @@ pub fn handle_space_created(
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
     w.set_space_search_query(slint::SharedString::default());
+    w.set_confirm_delete_channel_id(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
     w.set_chat_channel_name(slint::SharedString::default());
     w.set_chat_is_direct_message(false);
@@ -103,6 +104,7 @@ pub fn handle_space_joined(
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
     w.set_space_search_query(slint::SharedString::default());
+    w.set_confirm_delete_channel_id(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
     w.set_chat_channel_name(slint::SharedString::default());
     w.set_chat_is_direct_message(false);
@@ -141,6 +143,13 @@ pub fn handle_space_deleted(
     ctx: &AudioContext,
 ) {
     log::info!("Space deleted by owner");
+    let deleted_space_id = state
+        .borrow()
+        .space
+        .as_ref()
+        .map(|space| space.id.clone())
+        .filter(|space_id| !space_id.is_empty())
+        .unwrap_or_else(|| w.get_current_space_id().to_string());
     {
         let mut s = state.borrow_mut();
         s.room = Default::default();
@@ -157,6 +166,7 @@ pub fn handle_space_deleted(
     w.set_current_space_name(slint::SharedString::default());
     w.set_current_space_invite(slint::SharedString::default());
     w.set_space_search_query(slint::SharedString::default());
+    w.set_confirm_delete_channel_id(slint::SharedString::default());
     w.set_visible_text_channels(0);
     w.set_visible_voice_channels(0);
     w.set_visible_members(0);
@@ -184,6 +194,12 @@ pub fn handle_space_deleted(
     w.set_status_text("Space was deleted".into());
     ui_shell::set_channels(w, &[]);
     ui_shell::set_members(w, &[]);
+    if !deleted_space_id.is_empty() {
+        crate::helpers::remove_saved_space_async(deleted_space_id.clone());
+        crate::helpers::sync_saved_spaces_ui(w, Some(&deleted_space_id));
+    } else {
+        crate::helpers::sync_saved_spaces_ui(w, None);
+    }
     crate::friends::sync_ui(w, state);
 
     let audio = ctx.audio.clone();

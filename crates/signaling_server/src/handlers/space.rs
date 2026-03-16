@@ -7,6 +7,22 @@ use std::time::Instant;
 use super::channel::handle_leave_channel;
 use super::presence::notify_watchers_for_user;
 
+pub async fn stable_peer_id(state: &State, peer_id: &str) -> String {
+    let peer = {
+        let s = state.read().await;
+        s.peers.get(peer_id).cloned()
+    };
+    match peer {
+        Some(peer) => peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer_id.to_string()),
+        None => peer_id.to_string(),
+    }
+}
+
 pub async fn broadcast_to_space(
     state: &State,
     space_id: &str,
@@ -44,6 +60,7 @@ pub async fn handle_create_space(
         return;
     }
 
+    let owner_id = stable_peer_id(state, peer_id).await;
     let mut s = state.write().await;
 
     let space_id = s.alloc_space_id();
@@ -79,7 +96,7 @@ pub async fn handle_create_space(
         id: space_id.clone(),
         name: name.clone(),
         invite_code: invite_code.clone(),
-        owner_id: peer_id.to_string(),
+        owner_id: owner_id.clone(),
         channels: vec![channel_meta],
         member_ids: vec![peer_id.to_string()],
         text_messages: std::collections::HashMap::new(),
@@ -127,7 +144,7 @@ pub async fn handle_create_space(
         let sid = space_id;
         let sname = name;
         let sinvite = invite_code;
-        let sowner = peer_id.to_string();
+        let sowner = owner_id;
         let cid = channel_id;
         let rk = room_key;
         tokio::task::spawn_blocking(move || {
@@ -214,6 +231,7 @@ pub async fn handle_join_space(
         }
     }
 
+    let owner_identity = stable_peer_id(state, peer_id).await;
     let mut s = state.write().await;
 
     // Set peer name and space_id
@@ -238,7 +256,7 @@ pub async fn handle_join_space(
             invite_code: space.invite_code.clone(),
             member_count: space.member_ids.len() as u32,
             channel_count: space.channels.len() as u32,
-            is_owner: space.owner_id == peer_id,
+            is_owner: space.owner_id == peer_id || space.owner_id == owner_identity,
         };
 
         let channels: Vec<ChannelInfo> = space
@@ -397,13 +415,15 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
         return;
     };
 
+    let owner_identity = stable_peer_id(state, peer_id).await;
+
     // Check ownership
     {
         let s = state.read().await;
         let is_owner = s
             .spaces
             .get(&space_id)
-            .map(|space| space.owner_id == peer_id)
+            .map(|space| space.owner_id == peer_id || space.owner_id == owner_identity)
             .unwrap_or(false);
         if !is_owner {
             drop(s);

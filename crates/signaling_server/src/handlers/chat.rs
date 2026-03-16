@@ -736,6 +736,7 @@ pub async fn handle_pin_message(
     pinned: bool,
     db: &Db,
 ) {
+    let owner_identity = super::space::stable_peer_id(state, peer_id).await;
     let space_id = {
         let s = state.read().await;
         match s.peers.get(peer_id) {
@@ -748,7 +749,7 @@ pub async fn handle_pin_message(
     let ok = {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
-            let is_owner = space.owner_id == peer_id;
+            let is_owner = space.owner_id == peer_id || space.owner_id == owner_identity;
             if let Some(messages) = space.text_messages.get_mut(&channel_id) {
                 if let Some(message) = messages.iter_mut().find(|msg| msg.message_id == message_id)
                 {
@@ -799,6 +800,7 @@ pub async fn handle_delete_text_message(
     message_id: String,
     db: &Db,
 ) {
+    let owner_identity = super::space::stable_peer_id(state, peer_id).await;
     let space_id = {
         let s = state.read().await;
         match s.peers.get(peer_id) {
@@ -812,7 +814,7 @@ pub async fn handle_delete_text_message(
     let ok = {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
-            let is_owner = space.owner_id == peer_id;
+            let is_owner = space.owner_id == peer_id || space.owner_id == owner_identity;
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(pos) = msgs.iter().position(|m| m.message_id == message_id) {
                     if msgs[pos].sender_id == peer_id || is_owner {

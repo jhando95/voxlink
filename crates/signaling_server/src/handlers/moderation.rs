@@ -7,11 +7,12 @@ use super::space::broadcast_to_space;
 
 /// Get the space_id of a peer and verify they are the space owner.
 async fn verify_owner(state: &State, peer_id: &str) -> Option<String> {
+    let owner_identity = super::space::stable_peer_id(state, peer_id).await;
     let s = state.read().await;
     let peer = s.peers.get(peer_id)?;
     let space_id = peer.space_id.lock().await.clone()?;
     let space = s.spaces.get(&space_id)?;
-    if space.owner_id == peer_id {
+    if space.owner_id == peer_id || space.owner_id == owner_identity {
         Some(space_id)
     } else {
         None

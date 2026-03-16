@@ -84,6 +84,39 @@ pub fn setup_join_channel(
     });
 }
 
+pub fn setup_delete_channel(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_delete_channel(move |channel_id| {
+        let channel_id = channel_id.trim().to_string();
+        if channel_id.is_empty() {
+            return;
+        }
+        if let Some(w) = window_weak.upgrade() {
+            w.set_status_text("Deleting channel...".into());
+        }
+        let network = network.clone();
+        let window_weak = window_weak.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            if let Err(e) = net
+                .send_signal(&SignalMessage::DeleteChannel { channel_id })
+                .await
+            {
+                log::error!("Failed to delete channel: {e}");
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_status_text("Failed to delete channel".into());
+                }
+            }
+        });
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn setup_leave_channel(
     window: &MainWindow,

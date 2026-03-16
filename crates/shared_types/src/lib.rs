@@ -269,6 +269,9 @@ pub enum SignalMessage {
         #[serde(default)]
         channel_type: ChannelType,
     },
+    DeleteChannel {
+        channel_id: String,
+    },
     JoinChannel {
         channel_id: String,
     },
@@ -343,6 +346,9 @@ pub enum SignalMessage {
     SpaceDeleted,
     ChannelCreated {
         channel: ChannelInfo,
+    },
+    ChannelDeleted {
+        channel_id: String,
     },
     ChannelJoined {
         channel_id: String,
@@ -769,6 +775,32 @@ mod tests {
                 assert_eq!(invite_code, "AbCd1234");
                 assert_eq!(user_name, "Bob");
             }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_delete_channel() {
+        let msg = SignalMessage::DeleteChannel {
+            channel_id: "c42".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::DeleteChannel { channel_id } => assert_eq!(channel_id, "c42"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_channel_deleted() {
+        let msg = SignalMessage::ChannelDeleted {
+            channel_id: "c42".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::ChannelDeleted { channel_id } => assert_eq!(channel_id, "c42"),
             _ => panic!("Wrong variant"),
         }
     }

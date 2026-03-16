@@ -90,6 +90,7 @@ pub fn setup(
 
     // Channel
     channel::setup_create_channel(window, network, rt_handle);
+    channel::setup_delete_channel(window, network, rt_handle);
     channel::setup_join_channel(window, network, rt_handle);
     channel::setup_leave_channel(
         window,

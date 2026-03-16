@@ -232,6 +232,7 @@ pub fn setup_leave_space(
         w.set_current_space_name(slint::SharedString::default());
         w.set_current_space_invite(slint::SharedString::default());
         w.set_space_search_query(slint::SharedString::default());
+        w.set_confirm_delete_channel_id(slint::SharedString::default());
         w.set_visible_text_channels(0);
         w.set_visible_voice_channels(0);
         w.set_visible_members(0);
@@ -268,23 +269,7 @@ pub fn setup_leave_space(
         ui_shell::set_members(&w, &[]);
         crate::friends::sync_ui(&w, &state);
 
-        // Repopulate saved spaces list so the space still shows on Home view
-        let cfg = config_store::load_config();
-        if !cfg.saved_spaces.is_empty() {
-            let space_infos: Vec<shared_types::SpaceInfo> = cfg
-                .saved_spaces
-                .iter()
-                .map(|s| shared_types::SpaceInfo {
-                    id: s.id.clone(),
-                    name: s.name.clone(),
-                    invite_code: s.invite_code.clone(),
-                    member_count: 0,
-                    channel_count: 0,
-                    is_owner: false,
-                })
-                .collect();
-            ui_shell::set_spaces(&w, &space_infos);
-        }
+        crate::helpers::sync_saved_spaces_ui(&w, None);
 
         let network = network.clone();
         let audio = audio.clone();
