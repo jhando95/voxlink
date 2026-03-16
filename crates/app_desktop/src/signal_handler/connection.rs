@@ -39,7 +39,7 @@ pub fn drain_audio_and_update_speaking(
 
     // Update speaking state with 250ms timeout (10 ticks at 40Hz)
     if got_audio || tick.is_multiple_of(10) {
-        let ticks = speaking_ticks.borrow();
+        let mut ticks = speaking_ticks.borrow_mut();
         let mut s = state.borrow_mut();
         let mut changed = false;
         for p in s.room.participants.iter_mut() {
@@ -54,6 +54,10 @@ pub fn drain_audio_and_update_speaking(
         }
         if changed {
             ui_shell::set_participants(w, &s.room.participants);
+        }
+        // Prune stale entries (>5s old) to prevent unbounded growth
+        if tick.is_multiple_of(200) {
+            ticks.retain(|_, &mut t| tick.saturating_sub(t) < 200);
         }
     }
 }

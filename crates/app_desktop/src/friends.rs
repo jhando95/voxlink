@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,8 +109,7 @@ pub fn handle_friend_snapshot(
 ) {
     {
         let mut app = state.borrow_mut();
-        let cached = app.favorite_friends.clone();
-        app.favorite_friends = merge_cached_friends(&cached, friends);
+        merge_cached_friends_in_place(&mut app.favorite_friends, friends);
         app.incoming_friend_requests = incoming_requests.to_vec();
         app.outgoing_friend_requests = outgoing_requests.to_vec();
         refresh_metadata_in_place(&mut app);
@@ -209,30 +208,39 @@ pub fn stable_member_id(member: &MemberInfo) -> String {
         .unwrap_or_else(|| member.id.clone())
 }
 
-fn merge_cached_friends(
-    cached: &[FavoriteFriend],
+/// Merge incoming friend list into the existing list in place, preserving
+/// cached offline metadata without cloning the entire Vec.
+fn merge_cached_friends_in_place(
+    existing: &mut Vec<FavoriteFriend>,
     incoming: &[FavoriteFriend],
-) -> Vec<FavoriteFriend> {
-    let mut merged = Vec::with_capacity(incoming.len());
+) {
+    // Extract cached offline metadata into owned HashMap before mutating
+    let cached_meta: HashMap<String, (String, String, String, u64)> = existing
+        .drain(..)
+        .map(|f| {
+            (
+                f.user_id,
+                (f.name, f.last_space_name, f.last_channel_name, f.last_seen_at),
+            )
+        })
+        .collect();
+
+    existing.reserve(incoming.len());
     for friend in incoming {
         let mut next = friend.clone();
-        if let Some(existing) = cached
-            .iter()
-            .find(|cached| cached.user_id == friend.user_id)
-        {
+        if let Some((name, space, channel, seen_at)) = cached_meta.get(&friend.user_id) {
             if next.name.is_empty() {
-                next.name = existing.name.clone();
+                next.name = name.clone();
             }
             if !next.is_online {
-                next.last_space_name = existing.last_space_name.clone();
-                next.last_channel_name = existing.last_channel_name.clone();
-                next.last_seen_at = existing.last_seen_at;
+                next.last_space_name = space.clone();
+                next.last_channel_name = channel.clone();
+                next.last_seen_at = *seen_at;
             }
         }
-        merged.push(next);
+        existing.push(next);
     }
-    merged.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    merged
+    existing.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
 }
 
 fn apply_presence(friend: &mut FavoriteFriend, presence: &FriendPresence, now: u64) {

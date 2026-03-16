@@ -36,19 +36,23 @@ pub fn persist(state: &Rc<RefCell<AppState>>) {
 }
 
 pub fn sync_threads_with_friends(app: &mut AppState) -> bool {
-    let friend_map = app
+    let friend_ids: std::collections::HashSet<&str> = app
         .favorite_friends
         .iter()
-        .cloned()
-        .map(|friend| (friend.user_id.clone(), friend))
-        .collect::<HashMap<_, _>>();
+        .map(|friend| friend.user_id.as_str())
+        .collect();
+    let friend_map: HashMap<&str, &FavoriteFriend> = app
+        .favorite_friends
+        .iter()
+        .map(|friend| (friend.user_id.as_str(), friend))
+        .collect();
     let original_len = app.direct_message_threads.len();
     app.direct_message_threads
-        .retain(|thread| friend_map.contains_key(&thread.user_id));
+        .retain(|thread| friend_ids.contains(thread.user_id.as_str()));
 
     let mut changed = original_len != app.direct_message_threads.len();
     for thread in &mut app.direct_message_threads {
-        if let Some(friend) = friend_map.get(&thread.user_id) {
+        if let Some(friend) = friend_map.get(thread.user_id.as_str()) {
             changed |= apply_friend_metadata(thread, friend);
         }
     }
@@ -252,7 +256,9 @@ fn apply_friend_metadata(thread: &mut DirectMessageThread, friend: &FavoriteFrie
     changed
 }
 
-fn sort_threads(threads: &mut [DirectMessageThread]) {
+const MAX_DM_THREADS: usize = 100;
+
+fn sort_threads(threads: &mut Vec<DirectMessageThread>) {
     threads.sort_by(|left, right| {
         right
             .last_message_at
@@ -264,6 +270,8 @@ fn sort_threads(threads: &mut [DirectMessageThread]) {
                     .cmp(&right.user_name.to_lowercase())
             })
     });
+    // Cap to prevent unbounded memory growth
+    threads.truncate(MAX_DM_THREADS);
 }
 
 fn preview_for(content: &str) -> String {
