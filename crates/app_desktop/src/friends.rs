@@ -210,17 +210,19 @@ pub fn stable_member_id(member: &MemberInfo) -> String {
 
 /// Merge incoming friend list into the existing list in place, preserving
 /// cached offline metadata without cloning the entire Vec.
-fn merge_cached_friends_in_place(
-    existing: &mut Vec<FavoriteFriend>,
-    incoming: &[FavoriteFriend],
-) {
+fn merge_cached_friends_in_place(existing: &mut Vec<FavoriteFriend>, incoming: &[FavoriteFriend]) {
     // Extract cached offline metadata into owned HashMap before mutating
     let cached_meta: HashMap<String, (String, String, String, u64)> = existing
         .drain(..)
         .map(|f| {
             (
                 f.user_id,
-                (f.name, f.last_space_name, f.last_channel_name, f.last_seen_at),
+                (
+                    f.name,
+                    f.last_space_name,
+                    f.last_channel_name,
+                    f.last_seen_at,
+                ),
             )
         })
         .collect();

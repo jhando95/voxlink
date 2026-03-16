@@ -119,16 +119,8 @@ pub async fn describe_user_presence(state: &State, user_id: &str) -> FriendPrese
             if !uid_match {
                 continue;
             }
-            let name = peer
-                .name
-                .try_lock()
-                .map(|n| n.clone())
-                .unwrap_or_default();
-            let space_id = peer
-                .space_id
-                .try_lock()
-                .ok()
-                .and_then(|s| s.clone());
+            let name = peer.name.try_lock().map(|n| n.clone()).unwrap_or_default();
+            let space_id = peer.space_id.try_lock().ok().and_then(|s| s.clone());
             let room_code = peer.cached_room_code();
             matches.push((peer.clone(), name, space_id, room_code));
         }

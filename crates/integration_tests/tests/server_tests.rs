@@ -2468,10 +2468,7 @@ async fn test_stress_join_leave_churn() {
     let mut online_count = 0;
     let mut offline_count = 0;
     loop {
-        match alice
-            .recv_signal_timeout(Duration::from_millis(500))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_millis(500)).await {
             Some(SignalMessage::MemberOnline { .. }) => online_count += 1,
             Some(SignalMessage::MemberOffline { .. }) => offline_count += 1,
             _ => break,
@@ -2554,8 +2551,7 @@ async fn test_stress_reconnect_same_space() {
     // Verify no duplicate — Alice creates a fresh view by asking for space info
     // (not directly possible, so we have a 3rd user join and check member list)
     let mut charlie = server.connect().await;
-    let (_sp3, _ch3, members3) =
-        join_space(&mut charlie, &space.invite_code, "Charlie").await;
+    let (_sp3, _ch3, members3) = join_space(&mut charlie, &space.invite_code, "Charlie").await;
     let bob_entries: Vec<_> = members3.iter().filter(|m| m.name == "Bob").collect();
     assert_eq!(
         bob_entries.len(),
@@ -2723,10 +2719,7 @@ async fn test_stress_concurrent_space_operations() {
         .await;
     // Should get ChannelCreated (possibly after some other messages)
     loop {
-        match alice
-            .recv_signal_timeout(Duration::from_secs(3))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
             Some(SignalMessage::ChannelCreated { channel }) => {
                 assert_eq!(channel.name, "Post-Stress");
                 break;
@@ -2777,10 +2770,7 @@ async fn test_stress_disconnect_during_join() {
     let (_sp, _ch, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
 
     // Should only be Alice (all phantoms disconnected)
-    let non_bob: Vec<_> = members
-        .iter()
-        .filter(|m| m.name != "Bob")
-        .collect();
+    let non_bob: Vec<_> = members.iter().filter(|m| m.name != "Bob").collect();
     assert_eq!(
         non_bob.len(),
         1,
@@ -2796,7 +2786,7 @@ async fn test_stress_rapid_text_messages() {
     let server = TestServer::start().await;
 
     let mut alice = server.connect().await;
-    let (space, channels) = create_space(&mut alice, "Chat Stress", "Alice").await;
+    let (space, _channels) = create_space(&mut alice, "Chat Stress", "Alice").await;
 
     // Create a text channel
     alice
@@ -2844,10 +2834,7 @@ async fn test_stress_rapid_text_messages() {
     // Bob should receive all 50 messages (drain them)
     let mut received = 0;
     loop {
-        match bob
-            .recv_signal_timeout(Duration::from_secs(3))
-            .await
-        {
+        match bob.recv_signal_timeout(Duration::from_secs(3)).await {
             Some(SignalMessage::TextMessage { .. }) => received += 1,
             Some(_) => continue, // Skip typing indicators etc.
             None => break,
@@ -3108,10 +3095,10 @@ async fn test_friend_request_lifecycle() {
     let server = TestServer::start().await;
 
     let mut alice = server.connect().await;
-    let (alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let (_alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
 
     let mut bob = server.connect().await;
-    let (bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
+    let (_bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
 
     // Alice sends friend request to Bob
     alice
@@ -3126,7 +3113,11 @@ async fn test_friend_request_lifecycle() {
         SignalMessage::FriendSnapshot {
             outgoing_requests, ..
         } => {
-            assert_eq!(outgoing_requests.len(), 1, "Alice should have 1 outgoing request");
+            assert_eq!(
+                outgoing_requests.len(),
+                1,
+                "Alice should have 1 outgoing request"
+            );
             assert_eq!(outgoing_requests[0].user_id, bob_uid);
         }
         other => panic!("Expected FriendSnapshot for Alice, got: {:?}", other),
@@ -3137,7 +3128,11 @@ async fn test_friend_request_lifecycle() {
         SignalMessage::FriendSnapshot {
             incoming_requests, ..
         } => {
-            assert_eq!(incoming_requests.len(), 1, "Bob should have 1 incoming request");
+            assert_eq!(
+                incoming_requests.len(),
+                1,
+                "Bob should have 1 incoming request"
+            );
             assert_eq!(incoming_requests[0].user_id, alice_uid);
         }
         other => panic!("Expected FriendSnapshot for Bob, got: {:?}", other),
@@ -3354,10 +3349,7 @@ async fn test_ban_prevents_rejoin() {
 
     match bob.recv_signal().await {
         SignalMessage::Error { message } => {
-            assert!(
-                message.contains("banned"),
-                "Should mention ban: {message}"
-            );
+            assert!(message.contains("banned"), "Should mention ban: {message}");
         }
         other => panic!("Expected Error (banned), got: {:?}", other),
     }
@@ -3397,7 +3389,10 @@ async fn test_kick_allows_rejoin() {
 
     // Bob can rejoin (kick != ban)
     let (_sp, _ch, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
-    assert!(!members.is_empty(), "Bob should be able to rejoin after kick");
+    assert!(
+        !members.is_empty(),
+        "Bob should be able to rejoin after kick"
+    );
 }
 
 /// Test: screen share mutual exclusion.
@@ -3421,9 +3416,7 @@ async fn test_screen_share_mutual_exclusion() {
     alice.recv_signal().await;
 
     // Alice starts screen share
-    alice
-        .send_signal(&SignalMessage::StartScreenShare)
-        .await;
+    alice.send_signal(&SignalMessage::StartScreenShare).await;
 
     // Both receive ScreenShareStarted
     match alice.recv_signal().await {
@@ -3518,10 +3511,7 @@ async fn test_screen_share_stops_on_disconnect() {
     let mut got_stopped = false;
     let mut got_left = false;
     for _ in 0..5 {
-        match alice
-            .recv_signal_timeout(Duration::from_secs(2))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_secs(2)).await {
             Some(SignalMessage::ScreenShareStopped { .. }) => got_stopped = true,
             Some(SignalMessage::PeerLeft { .. }) => got_left = true,
             _ => break,
@@ -3585,9 +3575,7 @@ async fn test_typing_indicators() {
         .await;
 
     match bob.recv_signal().await {
-        SignalMessage::TypingState {
-            is_typing, ..
-        } => {
+        SignalMessage::TypingState { is_typing, .. } => {
             assert!(!is_typing);
         }
         other => panic!("Expected TypingState (false), got: {:?}", other),
@@ -3707,10 +3695,7 @@ async fn test_space_delete_with_active_members() {
 
     // Alice should get SpaceDeleted
     loop {
-        match alice
-            .recv_signal_timeout(Duration::from_secs(3))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
             Some(SignalMessage::SpaceDeleted) => break,
             Some(_) => continue,
             None => panic!("Expected SpaceDeleted"),
@@ -3766,9 +3751,7 @@ async fn test_mute_deafen_broadcasts() {
     bob.send_signal(&SignalMessage::DeafenChanged { is_deafened: true })
         .await;
     match alice.recv_signal().await {
-        SignalMessage::PeerDeafenChanged {
-            is_deafened, ..
-        } => {
+        SignalMessage::PeerDeafenChanged { is_deafened, .. } => {
             assert!(is_deafened);
         }
         other => panic!("Expected PeerDeafenChanged, got: {:?}", other),
@@ -3967,10 +3950,7 @@ async fn test_concurrent_room_joins() {
     // Host should have 10 PeerJoined notifications
     let mut join_count = 0;
     loop {
-        match host
-            .recv_signal_timeout(Duration::from_secs(2))
-            .await
-        {
+        match host.recv_signal_timeout(Duration::from_secs(2)).await {
             Some(SignalMessage::PeerJoined { .. }) => join_count += 1,
             _ => break,
         }
@@ -4033,10 +4013,7 @@ async fn test_concurrent_message_edits() {
     let mut edit_count = 0;
     let mut last_content = String::new();
     loop {
-        match alice
-            .recv_signal_timeout(Duration::from_secs(2))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_secs(2)).await {
             Some(SignalMessage::TextMessageEdited { new_content, .. }) => {
                 last_content = new_content;
                 edit_count += 1;
@@ -4193,7 +4170,7 @@ async fn test_presence_updates_on_activity() {
     }
 
     // Bob joins a space — Alice should get presence change
-    let (space, channels) = create_space(&mut bob, "Bob Space", "Bob").await;
+    let (_space, channels) = create_space(&mut bob, "Bob Space", "Bob").await;
 
     match alice.recv_signal().await {
         SignalMessage::FriendPresenceChanged { presence } => {
@@ -4234,7 +4211,7 @@ async fn test_direct_message_persistence() {
     let server = TestServer::start().await;
 
     let mut alice = server.connect().await;
-    let (alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let (_alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
     let mut bob = server.connect().await;
     let (bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
 
@@ -4300,11 +4277,7 @@ async fn test_direct_message_persistence() {
     .await;
     match bob2.recv_signal().await {
         SignalMessage::DirectMessageSelected { history, .. } => {
-            assert_eq!(
-                history.len(),
-                3,
-                "Should see 3 DMs from DB after reconnect"
-            );
+            assert_eq!(history.len(), 3, "Should see 3 DMs from DB after reconnect");
             // Verify all 3 DMs are present (order may vary by DB query)
             let contents: Vec<&str> = history.iter().map(|m| m.content.as_str()).collect();
             assert!(contents.contains(&"DM #0"), "Missing DM #0: {:?}", contents);
@@ -4354,10 +4327,7 @@ async fn test_signal_rate_limiting() {
     // Count how many we actually received back
     let mut received = 0;
     loop {
-        match alice
-            .recv_signal_timeout(Duration::from_secs(2))
-            .await
-        {
+        match alice.recv_signal_timeout(Duration::from_secs(2)).await {
             Some(SignalMessage::TextMessage { .. }) => received += 1,
             Some(SignalMessage::Error { .. }) => break, // Rate limited
             Some(_) => continue,
@@ -4446,9 +4416,7 @@ async fn test_audio_after_leave_room() {
     }
 
     // Bob should NOT receive any audio (not in room)
-    let received = bob
-        .recv_binary_timeout(Duration::from_millis(500))
-        .await;
+    let received = bob.recv_binary_timeout(Duration::from_millis(500)).await;
     assert!(
         received.is_none(),
         "Bob should not receive audio after leaving"
@@ -4573,9 +4541,7 @@ async fn test_concurrent_room_join_leave() {
             }
 
             // Leave
-            client
-                .send_signal(&SignalMessage::LeaveRoom)
-                .await;
+            client.send_signal(&SignalMessage::LeaveRoom).await;
             let _ = client.recv_signal_timeout(Duration::from_millis(500)).await;
         });
         handles.push(handle);
@@ -4603,11 +4569,7 @@ async fn test_malformed_json_ignored() {
         .unwrap();
 
     // Send more garbage
-    client
-        .sink
-        .send(Message::Text("".into()))
-        .await
-        .unwrap();
+    client.sink.send(Message::Text("".into())).await.unwrap();
 
     // Send a valid unknown field — should be ignored gracefully
     client
@@ -4633,9 +4595,7 @@ async fn test_oversized_audio_frame_rejected() {
     let _ = listener
         .recv_signal_timeout(Duration::from_millis(300))
         .await;
-    let _ = host
-        .recv_signal_timeout(Duration::from_millis(300))
-        .await;
+    let _ = host.recv_signal_timeout(Duration::from_millis(300)).await;
 
     // Send a frame much larger than MAX_AUDIO_FRAME_SIZE (4096 bytes)
     let big_frame = vec![0u8; 10000];
@@ -4650,9 +4610,7 @@ async fn test_oversized_audio_frame_rejected() {
     // Normal-sized frame should still work
     let audio = generate_test_audio();
     host.send_binary(&audio).await;
-    let got = listener
-        .recv_binary_timeout(Duration::from_secs(2))
-        .await;
+    let got = listener.recv_binary_timeout(Duration::from_secs(2)).await;
     assert!(got.is_some(), "Normal frame should still be relayed");
 }
 
@@ -4669,10 +4627,8 @@ async fn test_stale_members_cleaned_on_join() {
     let mut bob = server.connect().await;
     let (_, _, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
     assert!(members.len() >= 1); // At least Alice
-    // drain MemberJoined from Alice
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+                                 // drain MemberJoined from Alice
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     drop(bob); // Abrupt disconnect
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -4736,9 +4692,7 @@ async fn test_message_after_kick_rejected() {
     let (_bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
     let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
     // drain MemberJoined from Alice
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     // Alice kicks Bob
     alice
@@ -4809,9 +4763,7 @@ async fn test_reconnect_same_token() {
         other => panic!("Expected Authenticated, got: {:?}", other),
     }
     // drain FriendSnapshot
-    let _ = alice2
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    let _ = alice2.recv_signal_timeout(Duration::from_millis(500)).await;
 }
 
 /// Test: creating many channels doesn't crash or slow down.
@@ -4858,12 +4810,8 @@ async fn test_room_cleaned_after_all_leave() {
     let room_code = create_room(&mut alice, "Alice").await;
 
     // Leave the room
-    alice
-        .send_signal(&SignalMessage::LeaveRoom)
-        .await;
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    alice.send_signal(&SignalMessage::LeaveRoom).await;
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     // Try to join the now-empty room — should fail
     let mut bob = server.connect().await;
@@ -4912,9 +4860,7 @@ async fn test_unicode_text_messages() {
     let mut bob = server.connect().await;
     let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
     // drain MemberJoined from Alice
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     // Select channel for Bob
     bob.send_signal(&SignalMessage::SelectTextChannel {
@@ -5042,9 +4988,7 @@ async fn test_concurrent_space_operations() {
                 .await;
 
             // Drain response
-            let _ = client
-                .recv_signal_timeout(Duration::from_millis(500))
-                .await;
+            let _ = client.recv_signal_timeout(Duration::from_millis(500)).await;
         });
         handles.push(handle);
     }
@@ -5092,7 +5036,10 @@ async fn test_very_long_username() {
         .await;
     match client2.recv_signal().await {
         SignalMessage::Error { message } => {
-            assert!(message.contains("too long"), "Expected 'too long' error: {message}");
+            assert!(
+                message.contains("too long"),
+                "Expected 'too long' error: {message}"
+            );
         }
         other => panic!("Expected Error for long name, got: {:?}", other),
     }
@@ -5110,9 +5057,7 @@ async fn test_audio_relay_burst() {
     let _ = listener
         .recv_signal_timeout(Duration::from_millis(300))
         .await;
-    let _ = host
-        .recv_signal_timeout(Duration::from_millis(300))
-        .await;
+    let _ = host.recv_signal_timeout(Duration::from_millis(300)).await;
 
     // Send 200 frames rapidly (simulates burst)
     let audio = generate_test_audio();
@@ -5184,9 +5129,7 @@ async fn test_delete_space_with_active_voice() {
     let mut bob = server.connect().await;
     let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
     // drain MemberJoined from Alice
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     // Bob joins voice channel
     bob.send_signal(&SignalMessage::JoinChannel {
@@ -5200,14 +5143,10 @@ async fn test_delete_space_with_active_voice() {
         }
     }
     // drain MemberChannelChanged from Alice
-    let _ = alice
-        .recv_signal_timeout(Duration::from_millis(500))
-        .await;
+    let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     // Alice deletes space
-    alice
-        .send_signal(&SignalMessage::DeleteSpace)
-        .await;
+    alice.send_signal(&SignalMessage::DeleteSpace).await;
 
     // Both should get SpaceDeleted
     loop {
