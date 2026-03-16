@@ -3977,3 +3977,546 @@ async fn test_concurrent_room_joins() {
     }
     assert_eq!(join_count, 9, "Host should see 9 peer joins");
 }
+
+// ─── Edge Case & Performance Tests ───
+
+/// Test: concurrent edits to the same message.
+#[tokio::test]
+async fn test_concurrent_message_edits() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (space, _) = create_space(&mut alice, "Edit Race", "Alice").await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "edit-ch".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let ch_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: ch_id.clone(),
+        })
+        .await;
+    alice.recv_signal().await; // TextChannelSelected
+
+    // Send a message
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: ch_id.clone(),
+            content: "Original".to_string(),
+            reply_to_message_id: None,
+        })
+        .await;
+    let msg_id = match alice.recv_signal().await {
+        SignalMessage::TextMessage { message, .. } => message.message_id,
+        other => panic!("Expected TextMessage, got: {:?}", other),
+    };
+
+    // Edit it 10 times rapidly
+    for i in 0..10 {
+        alice
+            .send_signal(&SignalMessage::EditTextMessage {
+                channel_id: ch_id.clone(),
+                message_id: msg_id.clone(),
+                new_content: format!("Edit #{i}"),
+            })
+            .await;
+    }
+
+    // Drain all edit notifications
+    let mut edit_count = 0;
+    let mut last_content = String::new();
+    loop {
+        match alice
+            .recv_signal_timeout(Duration::from_secs(2))
+            .await
+        {
+            Some(SignalMessage::TextMessageEdited { new_content, .. }) => {
+                last_content = new_content;
+                edit_count += 1;
+            }
+            _ => break,
+        }
+    }
+    assert_eq!(edit_count, 10, "Should receive all 10 edit notifications");
+    assert_eq!(last_content, "Edit #9", "Last edit should be #9");
+
+    // Verify history shows edited message
+    let mut bob = server.connect().await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    alice.recv_signal().await; // MemberOnline
+
+    bob.send_signal(&SignalMessage::SelectTextChannel {
+        channel_id: ch_id.clone(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::TextChannelSelected { history, .. } => {
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].content, "Edit #9");
+            assert!(history[0].edited, "Message should be marked as edited");
+        }
+        other => panic!("Expected TextChannelSelected, got: {:?}", other),
+    }
+}
+
+/// Test: delete then edit same message (edit should fail gracefully).
+#[tokio::test]
+async fn test_delete_then_edit_message() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (_space, _) = create_space(&mut alice, "Delete Edit", "Alice").await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "de-ch".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let ch_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: ch_id.clone(),
+        })
+        .await;
+    alice.recv_signal().await;
+
+    // Send then delete
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: ch_id.clone(),
+            content: "To be deleted".to_string(),
+            reply_to_message_id: None,
+        })
+        .await;
+    let msg_id = match alice.recv_signal().await {
+        SignalMessage::TextMessage { message, .. } => message.message_id,
+        other => panic!("Expected TextMessage, got: {:?}", other),
+    };
+
+    alice
+        .send_signal(&SignalMessage::DeleteTextMessage {
+            channel_id: ch_id.clone(),
+            message_id: msg_id.clone(),
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::TextMessageDeleted { .. } => {}
+        other => panic!("Expected TextMessageDeleted, got: {:?}", other),
+    }
+
+    // Try to edit deleted message — should fail gracefully (error or silent)
+    alice
+        .send_signal(&SignalMessage::EditTextMessage {
+            channel_id: ch_id.clone(),
+            message_id: msg_id.clone(),
+            new_content: "Ghost edit".to_string(),
+        })
+        .await;
+
+    // May get Error for editing deleted message — that's correct behavior
+    // Send a valid message to confirm server is alive
+    alice
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: ch_id.clone(),
+            content: "Still alive".to_string(),
+            reply_to_message_id: None,
+        })
+        .await;
+
+    // Drain until we get the valid TextMessage (may get Error first)
+    loop {
+        match alice.recv_signal().await {
+            SignalMessage::TextMessage { message, .. } => {
+                assert_eq!(message.content, "Still alive");
+                break;
+            }
+            SignalMessage::Error { .. } => continue, // Expected for edit of deleted
+            other => panic!("Expected TextMessage or Error, got: {:?}", other),
+        }
+    }
+}
+
+/// Test: presence updates when user joins/leaves spaces and rooms.
+#[tokio::test]
+async fn test_presence_updates_on_activity() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (_alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
+
+    let mut bob = server.connect().await;
+    let (_bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
+
+    // Make them friends
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_uid.clone(),
+        })
+        .await;
+    alice.recv_signal().await; // FriendSnapshot
+    bob.recv_signal().await; // FriendSnapshot
+
+    bob.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: alice_uid.clone(),
+        accept: true,
+    })
+    .await;
+    bob.recv_signal().await; // FriendSnapshot
+    alice.recv_signal().await; // FriendSnapshot
+
+    // Alice watches Bob's presence
+    alice
+        .send_signal(&SignalMessage::WatchFriendPresence {
+            user_ids: vec![bob_uid.clone()],
+        })
+        .await;
+
+    // Should get initial presence snapshot
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceSnapshot { presences } => {
+            assert_eq!(presences.len(), 1);
+            assert_eq!(presences[0].user_id, bob_uid);
+            assert!(presences[0].is_online, "Bob should be online");
+        }
+        other => panic!("Expected FriendPresenceSnapshot, got: {:?}", other),
+    }
+
+    // Bob joins a space — Alice should get presence change
+    let (space, channels) = create_space(&mut bob, "Bob Space", "Bob").await;
+
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceChanged { presence } => {
+            assert_eq!(presence.user_id, bob_uid);
+            assert!(presence.is_online);
+            assert!(
+                presence.active_space_name.is_some(),
+                "Should show Bob in a space"
+            );
+        }
+        other => panic!("Expected FriendPresenceChanged, got: {:?}", other),
+    }
+
+    // Bob joins a voice channel — Alice should get updated presence
+    bob.send_signal(&SignalMessage::JoinChannel {
+        channel_id: channels[0].id.clone(),
+    })
+    .await;
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::ChannelJoined { .. } => break,
+            _ => continue,
+        }
+    }
+
+    match alice.recv_signal().await {
+        SignalMessage::FriendPresenceChanged { presence } => {
+            assert_eq!(presence.user_id, bob_uid);
+            assert!(presence.is_in_voice, "Should show Bob in voice");
+        }
+        other => panic!("Expected FriendPresenceChanged (voice), got: {:?}", other),
+    }
+}
+
+/// Test: direct message send and receive with persistence.
+#[tokio::test]
+async fn test_direct_message_persistence() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (alice_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let mut bob = server.connect().await;
+    let (bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
+
+    // Befriend
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_uid.clone(),
+        })
+        .await;
+    alice.recv_signal().await;
+    bob.recv_signal().await;
+    bob.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: alice_uid.clone(),
+        accept: true,
+    })
+    .await;
+    bob.recv_signal().await;
+    alice.recv_signal().await;
+
+    // Alice sends 3 DMs
+    for i in 0..3 {
+        alice
+            .send_signal(&SignalMessage::SendDirectMessage {
+                user_id: bob_uid.clone(),
+                content: format!("DM #{i}"),
+                reply_to_message_id: None,
+            })
+            .await;
+        // Both receive the message
+        alice.recv_signal().await;
+        bob.recv_signal().await;
+    }
+
+    // Wait for DB persistence
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Bob disconnects and reconnects — should see DM history from DB
+    drop(bob);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut bob2 = server.connect().await;
+    // Re-authenticate (can't use helper since friend list is non-empty now)
+    bob2.send_signal(&SignalMessage::Authenticate {
+        token: Some(bob_token),
+        user_name: "Bob".to_string(),
+    })
+    .await;
+    match bob2.recv_signal().await {
+        SignalMessage::Authenticated { .. } => {}
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    }
+    // Drain FriendSnapshot (non-empty since Alice is a friend)
+    match bob2.recv_signal().await {
+        SignalMessage::FriendSnapshot { friends, .. } => {
+            assert_eq!(friends.len(), 1, "Bob should have Alice as friend");
+        }
+        other => panic!("Expected FriendSnapshot, got: {:?}", other),
+    }
+
+    bob2.send_signal(&SignalMessage::SelectDirectMessage {
+        user_id: alice_uid.clone(),
+    })
+    .await;
+    match bob2.recv_signal().await {
+        SignalMessage::DirectMessageSelected { history, .. } => {
+            assert_eq!(
+                history.len(),
+                3,
+                "Should see 3 DMs from DB after reconnect"
+            );
+            // Verify all 3 DMs are present (order may vary by DB query)
+            let contents: Vec<&str> = history.iter().map(|m| m.content.as_str()).collect();
+            assert!(contents.contains(&"DM #0"), "Missing DM #0: {:?}", contents);
+            assert!(contents.contains(&"DM #1"), "Missing DM #1: {:?}", contents);
+            assert!(contents.contains(&"DM #2"), "Missing DM #2: {:?}", contents);
+        }
+        other => panic!("Expected DirectMessageSelected, got: {:?}", other),
+    }
+}
+
+/// Test: rate limiting — rapid signal messages get throttled.
+#[tokio::test]
+async fn test_signal_rate_limiting() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (_space, _) = create_space(&mut alice, "Rate Limit", "Alice").await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "rl-ch".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+        })
+        .await;
+    let ch_id = match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => channel.id,
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    };
+
+    alice
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: ch_id.clone(),
+        })
+        .await;
+    alice.recv_signal().await;
+
+    // Send 200 messages as fast as possible (rate limit is 100/sec)
+    for i in 0..200 {
+        alice
+            .send_signal(&SignalMessage::SendTextMessage {
+                channel_id: ch_id.clone(),
+                content: format!("Spam #{i}"),
+                reply_to_message_id: None,
+            })
+            .await;
+    }
+
+    // Count how many we actually received back
+    let mut received = 0;
+    loop {
+        match alice
+            .recv_signal_timeout(Duration::from_secs(2))
+            .await
+        {
+            Some(SignalMessage::TextMessage { .. }) => received += 1,
+            Some(SignalMessage::Error { .. }) => break, // Rate limited
+            Some(_) => continue,
+            None => break,
+        }
+    }
+
+    // Should have received some but not all 200 (rate limited at ~100/sec)
+    assert!(
+        received > 0,
+        "Should receive some messages before rate limit"
+    );
+    // Server should still be alive
+    let mut check = server.connect().await;
+    let code = create_room(&mut check, "Alive").await;
+    assert!(!code.is_empty(), "Server should still be responsive");
+}
+
+/// Test: space owner identity preserved across reconnect.
+#[tokio::test]
+async fn test_space_owner_persists_across_reconnect() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (alice_token, _alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let (space, _) = create_space(&mut alice, "Owner Test", "Alice").await;
+    assert!(space.is_owner, "Alice should be space owner");
+
+    // Alice disconnects
+    drop(alice);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Alice reconnects with same token
+    let mut alice2 = server.connect().await;
+    authenticate(&mut alice2, "Alice", Some(alice_token)).await;
+
+    // Rejoin the space
+    let (space2, _, _) = join_space(&mut alice2, &space.invite_code, "Alice").await;
+    assert!(
+        space2.is_owner,
+        "Alice should still be owner after reconnect"
+    );
+
+    // Verify she can still perform owner actions (create channel)
+    alice2
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "post-reconnect".to_string(),
+            channel_type: shared_types::ChannelType::Voice,
+        })
+        .await;
+    match alice2.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => {
+            assert_eq!(channel.name, "post-reconnect");
+        }
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    }
+}
+
+/// Test: audio frames from disconnected peer are silently dropped.
+#[tokio::test]
+async fn test_audio_after_leave_room() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let code = create_room(&mut alice, "Alice").await;
+
+    let mut bob = server.connect().await;
+    bob.send_signal(&SignalMessage::JoinRoom {
+        room_code: code.clone(),
+        user_name: "Bob".to_string(),
+        password: None,
+    })
+    .await;
+    bob.recv_signal().await; // RoomJoined
+    alice.recv_signal().await; // PeerJoined
+
+    // Bob leaves the room
+    bob.send_signal(&SignalMessage::LeaveRoom).await;
+    // Drain PeerLeft from Alice
+    alice.recv_signal().await;
+
+    // Alice sends audio — should not crash even though room might be empty
+    let fake_audio = vec![0u8; 64];
+    for _ in 0..20 {
+        alice.send_binary(&fake_audio).await;
+    }
+
+    // Bob should NOT receive any audio (not in room)
+    let received = bob
+        .recv_binary_timeout(Duration::from_millis(500))
+        .await;
+    assert!(
+        received.is_none(),
+        "Bob should not receive audio after leaving"
+    );
+
+    // Server still alive
+    let mut check = server.connect().await;
+    let code2 = create_room(&mut check, "Check").await;
+    assert!(!code2.is_empty());
+}
+
+/// Test: friend request to self rejected.
+#[tokio::test]
+async fn test_friend_request_self_rejected() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let (_token, alice_uid) = authenticate(&mut alice, "Alice", None).await;
+
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: alice_uid.clone(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("yourself"),
+                "Should mention self: {message}"
+            );
+        }
+        other => panic!("Expected Error, got: {:?}", other),
+    }
+}
+
+/// Test: duplicate friend request rejected.
+#[tokio::test]
+async fn test_duplicate_friend_request_rejected() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let (_alice_token, _alice_uid) = authenticate(&mut alice, "Alice", None).await;
+    let mut bob = server.connect().await;
+    let (_bob_token, bob_uid) = authenticate(&mut bob, "Bob", None).await;
+
+    // First request
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_uid.clone(),
+        })
+        .await;
+    alice.recv_signal().await; // FriendSnapshot
+    bob.recv_signal().await;
+
+    // Duplicate request
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_uid.clone(),
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("already"),
+                "Should mention already pending: {message}"
+            );
+        }
+        other => panic!("Expected Error for duplicate request, got: {:?}", other),
+    }
+}

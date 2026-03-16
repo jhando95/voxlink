@@ -70,15 +70,20 @@ pub async fn notify_watchers_for_user(state: &State, user_id: &str) {
 }
 
 async fn watchers_for_user(state: &State, user_id: &str) -> Vec<Arc<Peer>> {
-    let peers = {
-        let s = state.read().await;
-        s.peers.values().cloned().collect::<Vec<_>>()
-    };
-
+    let s = state.read().await;
     let mut watchers = Vec::new();
-    for peer in peers {
-        if peer.watched_friend_ids.lock().await.contains(user_id) {
-            watchers.push(peer);
+    for peer in s.peers.values() {
+        // Use try_lock to avoid blocking: if the lock is held, skip this peer
+        // (they'll get the next presence update). This prevents O(n) awaits.
+        match peer.watched_friend_ids.try_lock() {
+            Ok(watched) => {
+                if watched.contains(user_id) {
+                    watchers.push(peer.clone());
+                }
+            }
+            Err(_) => {
+                // Lock contended — skip this peer for this update cycle
+            }
         }
     }
     watchers
@@ -101,29 +106,52 @@ fn better_presence_rank(presence: &FriendPresence) -> i32 {
 }
 
 pub async fn describe_user_presence(state: &State, user_id: &str) -> FriendPresence {
-    let s = state.read().await;
+    // Collect matching peers first to minimize time holding state read lock
+    let matching_peers: Vec<(Arc<Peer>, String, Option<String>, Option<String>)> = {
+        let s = state.read().await;
+        let mut matches = Vec::new();
+        for peer in s.peers.values() {
+            // Use try_lock to avoid blocking state read for all other peers
+            let uid_match = match peer.user_id.try_lock() {
+                Ok(uid) => uid.as_deref() == Some(user_id),
+                Err(_) => false,
+            };
+            if !uid_match {
+                continue;
+            }
+            let name = peer
+                .name
+                .try_lock()
+                .map(|n| n.clone())
+                .unwrap_or_default();
+            let space_id = peer
+                .space_id
+                .try_lock()
+                .ok()
+                .and_then(|s| s.clone());
+            let room_code = peer.cached_room_code();
+            matches.push((peer.clone(), name, space_id, room_code));
+        }
+        matches
+    };
+
     let mut best = FriendPresence {
         user_id: user_id.to_string(),
         ..FriendPresence::default()
     };
 
-    for peer in s.peers.values() {
-        if peer.user_id.lock().await.as_deref() != Some(user_id) {
-            continue;
-        }
-
+    // Now resolve space/channel info with a fresh read lock per candidate
+    let s = state.read().await;
+    for (_, name, space_id, room_code) in &matching_peers {
         let mut candidate = FriendPresence {
             user_id: user_id.to_string(),
-            name: peer.name.lock().await.clone(),
+            name: name.clone(),
             is_online: true,
             ..FriendPresence::default()
         };
 
-        let space_id = peer.space_id.lock().await.clone();
-        let room_code = peer.cached_room_code();
-
         if let Some(space_id) = space_id {
-            if let Some(space) = s.spaces.get(&space_id) {
+            if let Some(space) = s.spaces.get(space_id) {
                 candidate.active_space_name = Some(space.name.clone());
                 if let Some(room_key) = room_code.as_deref() {
                     if let Some(channel) = space

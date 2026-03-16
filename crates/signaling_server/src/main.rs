@@ -978,16 +978,16 @@ async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
         return;
     }
 
-    let frame = Arc::new(frame);
+    // Multi-peer path: clone frame per peer (Arc overhead not worth it for small frames)
     let futs: Vec<_> = others
         .into_iter()
         .map(|peer| {
-            let frame = frame.clone();
+            let frame_copy = frame.clone();
             let timeout_dur = send_timeout;
             async move {
                 let fut = async {
                     let mut tx = peer.tx.lock().await;
-                    let _ = tx.send(Message::Binary((*frame).clone().into())).await;
+                    let _ = tx.send(Message::Binary(frame_copy.into())).await;
                 };
                 let _ = tokio::time::timeout(timeout_dur, fut).await;
             }
@@ -1049,15 +1049,25 @@ async fn relay_screen(state: &State, sender_id: &str, data: &[u8]) {
     }
 
     let send_timeout = std::time::Duration::from_millis(300);
-    let frame = Arc::new(frame);
+
+    // Single-peer fast path: avoid clone overhead
+    if others.len() == 1 {
+        let fut = async {
+            let mut tx = others[0].tx.lock().await;
+            let _ = tx.send(Message::Binary(frame.into())).await;
+        };
+        let _ = tokio::time::timeout(send_timeout, fut).await;
+        return;
+    }
+
     let futs: Vec<_> = others
         .into_iter()
         .map(|peer| {
-            let frame = frame.clone();
+            let frame_copy = frame.clone();
             async move {
                 let fut = async {
                     let mut tx = peer.tx.lock().await;
-                    let _ = tx.send(Message::Binary((*frame).clone().into())).await;
+                    let _ = tx.send(Message::Binary(frame_copy.into())).await;
                 };
                 let _ = tokio::time::timeout(send_timeout, fut).await;
             }
