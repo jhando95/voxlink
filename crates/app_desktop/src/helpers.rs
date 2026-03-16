@@ -174,6 +174,46 @@ pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
     });
 }
 
+pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo) {
+    let mut cfg = config_store::load_config();
+    let server_address = cfg.server_address.clone();
+    if let Some(existing) = cfg
+        .saved_spaces
+        .iter_mut()
+        .find(|saved| saved.id == space.id)
+    {
+        existing.name = space.name.clone();
+        existing.invite_code = space.invite_code.clone();
+        existing.server_address = server_address.clone();
+    } else {
+        cfg.saved_spaces.push(config_store::SavedSpace {
+            id: space.id.clone(),
+            name: space.name.clone(),
+            invite_code: space.invite_code.clone(),
+            server_address,
+        });
+    }
+    cfg.last_space_id = Some(space.id.clone());
+
+    let spaces = cfg
+        .saved_spaces
+        .iter()
+        .map(|saved| shared_types::SpaceInfo {
+            id: saved.id.clone(),
+            name: saved.name.clone(),
+            invite_code: saved.invite_code.clone(),
+            member_count: 0,
+            channel_count: 0,
+            is_owner: false,
+        })
+        .collect::<Vec<_>>();
+    ui_shell::set_spaces(window, &spaces);
+
+    if let Err(err) = config_store::save_config(&cfg) {
+        log::warn!("Failed to persist saved space {}: {err}", space.id);
+    }
+}
+
 pub fn remove_saved_space_async(space_id: String) {
     std::thread::spawn(move || {
         let mut cfg = config_store::load_config();

@@ -68,7 +68,7 @@ pub fn handle_space_created(
     w.set_space_name(slint::SharedString::default());
     w.set_status_text("Space created".into());
 
-    save_space_async(space);
+    crate::helpers::remember_saved_space(w, space);
 }
 
 pub fn handle_space_joined(
@@ -134,7 +134,7 @@ pub fn handle_space_joined(
     w.set_space_invite_code(slint::SharedString::default());
     w.set_status_text("Joined space".into());
 
-    save_space_async(space);
+    crate::helpers::remember_saved_space(w, space);
 }
 
 pub fn handle_space_deleted(
@@ -226,26 +226,4 @@ fn remembered_text_channel(
             channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
         })
     })
-}
-
-fn save_space_async(space: &shared_types::SpaceInfo) {
-    let id = space.id.clone();
-    let name = space.name.clone();
-    let invite_code = space.invite_code.clone();
-    std::thread::spawn(move || {
-        let mut cfg = config_store::load_config();
-        if let Some(existing) = cfg.saved_spaces.iter_mut().find(|s| s.id == id) {
-            existing.name = name;
-            existing.invite_code = invite_code;
-        } else {
-            cfg.saved_spaces.push(config_store::SavedSpace {
-                id: id.clone(),
-                name,
-                invite_code,
-                server_address: cfg.server_address.clone(),
-            });
-        }
-        cfg.last_space_id = Some(id);
-        let _ = config_store::save_config(&cfg);
-    });
 }

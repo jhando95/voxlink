@@ -5,6 +5,8 @@ use shared_types::AppView;
 use slint::Model;
 use ui_shell::MainWindow;
 
+const MAX_CHAT_MESSAGES_IN_VIEW: usize = 250;
+
 pub fn handle_text_channel_selected(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
@@ -148,8 +150,6 @@ pub fn handle_text_message(
 
     let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
     push_chat_message(w, chat_msg);
-
-    sync_pinned_messages(w);
     sync_typing_text(w, state, channel_id);
 }
 
@@ -511,7 +511,7 @@ fn push_chat_message(w: &MainWindow, chat_msg: ui_shell::ChatMessage) {
         .as_any()
         .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
     {
-        while model.row_count() >= 500 {
+        while model.row_count() >= MAX_CHAT_MESSAGES_IN_VIEW {
             model.remove(0);
         }
         model.push(chat_msg);
