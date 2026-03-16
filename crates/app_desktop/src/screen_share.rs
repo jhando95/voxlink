@@ -167,6 +167,10 @@ enum CaptureTarget {
     Window(Window),
 }
 
+// SAFETY: Monitor/Window contain OS handles (HMONITOR, HWND) that are valid process-wide.
+// We only use them for read-only frame capture, which is safe across threads.
+unsafe impl Send for CaptureTarget {}
+
 #[derive(Clone, Debug)]
 struct CaptureSource {
     id: String,
