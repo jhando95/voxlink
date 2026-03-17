@@ -113,6 +113,7 @@ ExecStart=/opt/voxlink/signaling_server
 Environment=PV_ADDR=0.0.0.0:9090
 Environment=PV_DB_PATH=/var/lib/voxlink/voxlink.db
 Environment=RUST_LOG=info
+Environment=PV_ALLOW_INSECURE=1
 Restart=always
 RestartSec=5
 # Run as non-root for security
