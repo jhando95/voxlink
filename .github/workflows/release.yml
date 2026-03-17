@@ -46,6 +46,33 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\voxlink.iss
         shell: pwsh
 
+      - name: Sign binaries
+        if: env.CODESIGN_PFX != ''
+        env:
+          CODESIGN_PFX: ${{ secrets.CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          # Decode the base64-encoded PFX certificate
+          $pfxBytes = [Convert]::FromBase64String($env:CODESIGN_PFX)
+          $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+
+          # Find signtool
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "signtool.exe" | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          if (-not $signtool) {
+            Write-Error "signtool.exe not found"
+            exit 1
+          }
+
+          # Sign both binaries
+          & $signtool.FullName sign /f $pfxPath /p $env:CODESIGN_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 /d "Voxlink" "target\release\app_desktop.exe"
+          & $signtool.FullName sign /f $pfxPath /p $env:CODESIGN_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 /d "Voxlink Server" "target\release\signaling_server.exe"
+
+          # Clean up
+          Remove-Item $pfxPath -Force
+          Write-Host "Binaries signed successfully"
+        shell: pwsh
+
       - name: Create portable zip
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
@@ -70,6 +97,26 @@ jobs:
           For local testing, use: ws://127.0.0.1:9090
           "@ | Out-File -Encoding UTF8 "$outDir\README.txt"
           Compress-Archive -Path $outDir -DestinationPath "target\Voxlink-$version-portable.zip" -Force
+        shell: pwsh
+
+      - name: Sign installer
+        if: env.CODESIGN_PFX != ''
+        env:
+          CODESIGN_PFX: ${{ secrets.CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          $pfxBytes = [Convert]::FromBase64String($env:CODESIGN_PFX)
+          $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "signtool.exe" | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $installer = "target\installer\Voxlink-Setup-$version.exe"
+
+          & $signtool.FullName sign /f $pfxPath /p $env:CODESIGN_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 /d "Voxlink Setup" $installer
+
+          Remove-Item $pfxPath -Force
+          Write-Host "Installer signed successfully"
         shell: pwsh
 
       - name: Upload artifacts
