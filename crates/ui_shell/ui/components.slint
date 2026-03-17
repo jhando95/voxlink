@@ -11,9 +11,9 @@ export component VxButton inherits Rectangle {
     in property <bool> soft: false;
     callback clicked();
 
-    height: root.small ? 34px : 40px;
-    min-width: root.small ? 56px : 88px;
-    border-radius: root.small ? 10px : VxTheme.radius-control;
+    height: (root.small ? 34px : 40px) * VxTheme.s;
+    min-width: (root.small ? 56px : 88px) * VxTheme.s;
+    border-radius: root.small ? (10px * VxTheme.s) : VxTheme.radius-control;
     clip: true;
     background: root.ghost ? transparent :
                 !root.enabled ? VxTheme.bg-raised :
@@ -30,7 +30,7 @@ export component VxButton inherits Rectangle {
                   root.danger ? VxTheme.danger :
                   root.accent ? VxTheme.accent-border :
                   root.soft ? VxTheme.border-strong : VxTheme.border-subtle;
-    border-width: root.ghost ? 0px : 1px;
+    border-width: root.ghost ? 0px : VxTheme.btn-border-width;
 
     animate background { duration: 90ms; easing: ease-out; }
     animate border-color { duration: 90ms; easing: ease-out; }
@@ -62,9 +62,9 @@ export component VxButton inherits Rectangle {
             color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                    !root.enabled ? VxTheme.text-muted :
                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.text-primary;
-            font-size: root.small ? 11px : 12px;
+            font-size: (root.small ? 11px : 12px) * VxTheme.s;
             font-weight: root.accent || root.danger ? 700 : 600;
-            letter-spacing: root.small ? 0.1px : 0.15px;
+            letter-spacing: VxTheme.btn-uppercase ? 1.0px : (root.small ? 0.1px : 0.15px);
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -74,13 +74,13 @@ export component VxButton inherits Rectangle {
 export component VxCard inherits Rectangle {
     background: VxTheme.bg-card;
     border-radius: VxTheme.radius-card;
-    border-color: VxTheme.border-subtle;
-    border-width: 1px;
+    border-color: VxTheme.card-border;
+    border-width: VxTheme.btn-border-width;
     clip: true;
 
     Rectangle {
         width: parent.width;
-        height: 1px;
+        height: VxTheme.card-accent-height;
         background: @linear-gradient(90deg, transparent 0%, VxTheme.accent-border 20%, transparent 100%);
         opacity: 0.9;
     }
@@ -119,9 +119,9 @@ export component VxInput inherits Rectangle {
 
 export component SectionLabel inherits Text {
     color: VxTheme.text-muted;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.2px;
+    font-size: 10px * VxTheme.s;
+    font-weight: VxTheme.heading-weight;
+    letter-spacing: VxTheme.section-spacing;
 }
 
 export component FieldLabel inherits Text {
@@ -235,26 +235,26 @@ export component VxStatBlock inherits Rectangle {
     border-width: 1px;
 
     VerticalLayout {
-        padding: 14px;
+        padding: 14px * VxTheme.s;
         spacing: 3px;
         Text {
             text: root.label;
             color: VxTheme.text-muted;
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.8px;
+            font-size: 10px * VxTheme.s;
+            font-weight: VxTheme.heading-weight;
+            letter-spacing: VxTheme.section-spacing;
         }
         Text {
             text: root.value;
             color: root.tone;
-            font-size: 17px;
-            font-weight: 700;
+            font-size: 17px * VxTheme.s;
+            font-weight: VxTheme.heading-weight;
             wrap: word-wrap;
         }
         if root.detail != "" : Text {
             text: root.detail;
             color: VxTheme.text-secondary;
-            font-size: 10px;
+            font-size: 10px * VxTheme.s;
             wrap: word-wrap;
         }
     }
@@ -545,10 +545,10 @@ export component VxAvatar inherits Rectangle {
 
     width: root.avatar-size;
     height: root.avatar-size;
-    border-radius: root.avatar-size / 2;
+    border-radius: root.avatar-size * VxTheme.avatar-roundness;
     background: VxTheme.avatar-color(root.color-index);
     border-color: root.is-speaking ? VxTheme.speaking-border : VxTheme.bg-panel;
-    border-width: root.is-speaking ? 2px : 1px;
+    border-width: root.is-speaking ? (VxTheme.btn-border-width + 1px) : 1px;
     clip: true;
 
     animate border-color { duration: 180ms; }

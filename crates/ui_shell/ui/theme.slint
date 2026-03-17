@@ -431,11 +431,74 @@ export global VxTheme {
         is-arctic ? (dark-mode ? #1a3942 : #dceff4) :
         dark-mode ? #153043 : #dff1fb;
 
-    // Layout tokens
-    out property <length> radius-card:    16px;
-    out property <length> radius-control: 12px;
+    // ── Responsive scaling ──
+    // Set this from the window's width; everything else derives from it.
+    in-out property <float> ui-scale: 1.0;
+    // Scaled helper — multiply any base length by this
+    out property <float> s: ui-scale;
+
+    // ── Theme-specific layout tokens ──
+    out property <length> radius-card:
+        is-party ? 6px :   // Xbox 360: boxy angular panels
+        is-retro ? 4px :   // Retro-tech: sharp CRT corners
+        is-amber ? 3px :   // Amber CRT: hard rectangles
+        is-noir  ? 8px :   // Noir: subtle rounding
+        is-space ? 20px :  // Space: bubble-round
+        is-arctic ? 18px : // Arctic: soft frosted
+        16px;              // Voxlink default
+    out property <length> radius-control:
+        is-party ? 4px :
+        is-retro ? 2px :
+        is-amber ? 2px :
+        is-noir  ? 6px :
+        is-space ? 14px :
+        is-arctic ? 14px :
+        12px;
     out property <length> radius-pill:    999px;
-    out property <length> gutter:         18px;
+    out property <length> gutter:
+        18px * ui-scale;
+
+    // ── Theme-specific component styling ──
+    // Button border width — heavier for boxy themes
+    out property <length> btn-border-width:
+        is-party ? 2px :
+        is-retro ? 2px :
+        is-amber ? 2px :
+        1px;
+    // Card top accent bar height
+    out property <length> card-accent-height:
+        is-retro ? 3px :
+        is-amber ? 3px :
+        is-party ? 2px :
+        1px;
+    // Card border style
+    out property <color> card-border:
+        is-party ? accent.transparentize(0.6) :
+        is-retro ? accent.transparentize(0.5) :
+        is-amber ? accent.transparentize(0.5) :
+        border-subtle;
+    // Theme-specific button text style
+    out property <bool> btn-uppercase:
+        is-party || is-retro || is-amber;
+    // Theme font weight for headings
+    out property <int> heading-weight:
+        is-party ? 900 :
+        is-retro ? 800 :
+        is-amber ? 800 :
+        is-noir  ? 600 :
+        700;
+    // Section label letter spacing
+    out property <length> section-spacing:
+        is-party ? 2.0px :
+        is-retro ? 2.5px :
+        is-amber ? 3.0px :
+        1.2px;
+    // Avatar shape — squared for boxy themes
+    out property <float> avatar-roundness:
+        is-party ? 0.3 :   // squircle
+        is-retro ? 0.2 :   // nearly square
+        is-amber ? 0.15 :  // hard square
+        0.5;                // circle
 
     // Compatibility aliases for legacy components
     out property <color> bg-deep:                bg-canvas;

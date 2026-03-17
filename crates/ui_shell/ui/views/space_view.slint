@@ -51,8 +51,8 @@ export component SpaceView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: root.wide ? 22px : 14px;
-            spacing: 18px;
+            padding: (root.wide ? 22px : 14px) * VxTheme.s;
+            spacing: 18px * VxTheme.s;
 
             HorizontalLayout {
                 alignment: space-between;
@@ -961,6 +961,46 @@ export component SpaceView inherits Rectangle {
                                     font-size: 9px;
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Space actions (leave / delete)
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "SPACE ACTIONS"; }
+                        VxButton {
+                            label: "Leave space";
+                            soft: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.leave-space(); }
+                        }
+                        if root.is-space-owner : VxButton {
+                            label: root.confirm-delete-visible ? "Confirm delete" : "Delete space";
+                            danger: true;
+                            horizontal-stretch: 1;
+                            clicked => {
+                                if root.confirm-delete-visible {
+                                    root.confirm-delete-visible = false;
+                                    root.delete-space();
+                                } else {
+                                    root.confirm-delete-visible = true;
+                                }
+                            }
+                        }
+                        if root.is-space-owner && root.confirm-delete-visible : Text {
+                            text: "Delete removes the space for everyone.";
+                            color: VxTheme.danger;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        if !root.is-space-owner : Text {
+                            text: "Only the creator can delete the space.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
                         }
                     }
                 }

@@ -55,12 +55,12 @@ export component RoomView inherits Rectangle {
         root.participants.length <= 4 ? 2 :
         root.participants.length <= 9 ? 3 : 4;
     property <length> avatar-sz:
-        root.participants.length <= 2 ? 88px :
+        (root.participants.length <= 2 ? 88px :
         root.participants.length <= 4 ? 76px :
-        root.participants.length <= 9 ? 64px : 52px;
-    property <length> tile-w: root.avatar-sz + 24px;
-    property <length> tile-h: root.avatar-sz + 32px;
-    property <length> tile-gap: root.wide ? 16px : 10px;
+        root.participants.length <= 9 ? 64px : 52px) * VxTheme.s;
+    property <length> tile-w: root.avatar-sz + 24px * VxTheme.s;
+    property <length> tile-h: root.avatar-sz + 32px * VxTheme.s;
+    property <length> tile-gap: (root.wide ? 16px : 10px) * VxTheme.s;
     property <int> row-count: root.participants.length <= 0 ? 0 :
         (root.participants.length + root.cols - 1) / root.cols;
     property <length> grid-w: root.cols * root.tile-w + (root.cols - 1) * root.tile-gap;
@@ -73,7 +73,7 @@ export component RoomView inherits Rectangle {
         //  ZONE 1 — Header bar
         // ═══════════════════════════════════════════
         Rectangle {
-            height: 48px;
+            height: 48px * VxTheme.s;
             background: VxTheme.bg-card;
             border-color: VxTheme.border-subtle;
             border-width: 0px;
@@ -552,7 +552,7 @@ export component RoomView inherits Rectangle {
         }
 
         Rectangle {
-            height: 56px;
+            height: 56px * VxTheme.s;
             background: VxTheme.bg-card;
             border-color: VxTheme.border-subtle;
 

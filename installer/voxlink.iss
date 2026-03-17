@@ -3,7 +3,7 @@
 ; Bundles VC++ Runtime so end users need ZERO prerequisites
 
 #define MyAppName "Voxlink"
-#define MyAppVersion "0.3.9"
+#define MyAppVersion "0.4.0"
 #define MyAppPublisher "Voxlink"
 #define MyAppURL "https://github.com/voxlink"
 #define MyAppExeName "Voxlink.exe"

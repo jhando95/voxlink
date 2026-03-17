@@ -18,7 +18,7 @@ export component TopBar inherits Rectangle {
     in property <string> update-version: "";
     callback nav-toggle();
 
-    height: root.compact ? 64px : 72px;
+    height: (root.compact ? 64px : 72px) * VxTheme.s;
     background: VxTheme.bg-panel;
 
     AccentBar {

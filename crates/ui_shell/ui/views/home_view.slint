@@ -29,8 +29,8 @@ export component HomeView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: root.wide ? 22px : 14px;
-            spacing: 18px;
+            padding: (root.wide ? 22px : 14px) * VxTheme.s;
+            spacing: 18px * VxTheme.s;
 
             VxCard {
                 HorizontalLayout {
