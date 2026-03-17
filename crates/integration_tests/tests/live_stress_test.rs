@@ -811,7 +811,7 @@ async fn live_stress_chat_flood() {
         })
         .await;
 
-    let invite = loop {
+    let _invite = loop {
         match owner.recv().await {
             SignalMessage::SpaceCreated { space, .. } => break space.invite_code,
             _ => continue,

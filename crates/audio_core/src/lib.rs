@@ -672,8 +672,10 @@ impl AudioEngine {
             Err(_) => return false,
         };
 
-        let peer = get_or_create(&mut peers, sender_id, || Some(PeerPlayback::new()))
-            .expect("PeerPlayback::new() always succeeds");
+        let Some(peer) = get_or_create(&mut peers, sender_id, || Some(PeerPlayback::new())) else {
+            log::error!("Failed to create playback buffer for peer {sender_id}");
+            return false;
+        };
 
         let mut sum_sq: f32 = 0.0;
         for &sample in pcm_i16 {

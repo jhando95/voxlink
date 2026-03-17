@@ -198,6 +198,7 @@ fn thread_mut<'a>(
         return thread;
     }
 
+    let insert_at = app.direct_message_threads.len();
     app.direct_message_threads.push(DirectMessageThread {
         user_id: user_id.to_string(),
         user_name: friend
@@ -212,9 +213,7 @@ fn thread_mut<'a>(
             .map(|friend| friend.is_in_voice || friend.in_private_call)
             .unwrap_or(false),
     });
-    app.direct_message_threads
-        .last_mut()
-        .expect("direct message thread should exist after insert")
+    &mut app.direct_message_threads[insert_at]
 }
 
 fn update_last_message(thread: &mut DirectMessageThread, message: &TextMessageData) -> bool {

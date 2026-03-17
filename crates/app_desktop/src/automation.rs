@@ -1,4 +1,4 @@
-use net_control::{parse_audio_frame, NetworkClient};
+use net_control::{parse_audio_frame, parse_screen_frame, NetworkClient};
 use shared_types::{ChannelInfo, ChannelType, SignalMessage};
 use std::env;
 use std::fs;
@@ -9,6 +9,15 @@ use tokio::time::{sleep, Duration};
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const DEFAULT_HOLD_MS: u64 = 2200;
 const DEFAULT_INVITE_TIMEOUT_MS: u64 = 8000;
+const DEFAULT_MESSAGE_COUNT: usize = 24;
+const DEFAULT_SCREEN_FRAME_COUNT: usize = 24;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutomationScenario {
+    SpaceChannelSoak,
+    SpaceTextChatSoak,
+    SpaceScreenShareSoak,
+}
 
 #[derive(Clone, Copy, Debug)]
 enum AutomationRole {
@@ -18,6 +27,7 @@ enum AutomationRole {
 
 #[derive(Clone, Debug)]
 struct AutomationSpec {
+    scenario: AutomationScenario,
     role: AutomationRole,
     server_url: String,
     user_name: String,
@@ -29,6 +39,8 @@ struct AutomationSpec {
     expect_peers: usize,
     expect_audio: bool,
     send_audio: bool,
+    message_count: usize,
+    screen_frame_count: usize,
 }
 
 #[derive(Default)]
@@ -36,19 +48,28 @@ struct AutomationMetrics {
     authenticated: bool,
     space_ready: bool,
     channel_joined: bool,
+    text_channel_selected: bool,
+    screen_share_started: bool,
     self_channel_updates: u32,
     peer_join_events: u32,
     member_channel_updates: u32,
+    member_online_events: u32,
     audio_frames_sent: u32,
     audio_frames_recv: u32,
+    text_messages_sent: u32,
+    text_messages_recv: u32,
+    screen_frames_sent: u32,
+    screen_frames_recv: u32,
     last_status: String,
     failures: Vec<String>,
 }
 
 struct SharedJoinInfo {
     invite_code: String,
-    channel_id: String,
-    channel_name: String,
+    voice_channel_id: String,
+    voice_channel_name: String,
+    text_channel_id: String,
+    text_channel_name: String,
 }
 
 pub fn maybe_run_from_env() -> Option<i32> {
@@ -117,9 +138,12 @@ fn parse_spec_from_env() -> Result<Option<AutomationSpec>, String> {
     let Ok(scenario) = env::var("VOXLINK_AUTOMATION_SCENARIO") else {
         return Ok(None);
     };
-    if scenario != "space_channel_soak" {
-        return Err(format!("Unsupported automation scenario: {scenario}"));
-    }
+    let scenario = match scenario.as_str() {
+        "space_channel_soak" => AutomationScenario::SpaceChannelSoak,
+        "space_text_chat_soak" => AutomationScenario::SpaceTextChatSoak,
+        "space_screen_share_soak" => AutomationScenario::SpaceScreenShareSoak,
+        other => return Err(format!("Unsupported automation scenario: {other}")),
+    };
 
     let role = match env::var("VOXLINK_AUTOMATION_ROLE")
         .unwrap_or_else(|_| "participant".into())
@@ -135,6 +159,7 @@ fn parse_spec_from_env() -> Result<Option<AutomationSpec>, String> {
     let shared_path = PathBuf::from(env::var("VOXLINK_AUTOMATION_SHARED_PATH").unwrap_or_default());
     let report_path = PathBuf::from(env::var("VOXLINK_AUTOMATION_REPORT_PATH").unwrap_or_default());
     Ok(Some(AutomationSpec {
+        scenario,
         role,
         server_url,
         user_name,
@@ -148,6 +173,10 @@ fn parse_spec_from_env() -> Result<Option<AutomationSpec>, String> {
         expect_peers: env_u64("VOXLINK_AUTOMATION_EXPECT_PEERS").unwrap_or(0) as usize,
         expect_audio: env_bool("VOXLINK_AUTOMATION_EXPECT_AUDIO"),
         send_audio: env_bool("VOXLINK_AUTOMATION_SEND_AUDIO"),
+        message_count: env_u64("VOXLINK_AUTOMATION_MESSAGE_COUNT")
+            .unwrap_or(DEFAULT_MESSAGE_COUNT as u64) as usize,
+        screen_frame_count: env_u64("VOXLINK_AUTOMATION_SCREEN_FRAME_COUNT")
+            .unwrap_or(DEFAULT_SCREEN_FRAME_COUNT as u64) as usize,
     }))
 }
 
@@ -193,9 +222,25 @@ async fn run_automation(
 
     wait_for_authenticated(&mut network, metrics).await?;
 
-    match spec.role {
-        AutomationRole::Owner => run_owner(spec, &mut network, metrics).await?,
-        AutomationRole::Participant => run_participant(spec, &mut network, metrics).await?,
+    match (spec.scenario, spec.role) {
+        (AutomationScenario::SpaceChannelSoak, AutomationRole::Owner) => {
+            run_owner_audio(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceChannelSoak, AutomationRole::Participant) => {
+            run_participant_audio(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceTextChatSoak, AutomationRole::Owner) => {
+            run_owner_text(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceTextChatSoak, AutomationRole::Participant) => {
+            run_participant_text(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceScreenShareSoak, AutomationRole::Owner) => {
+            run_owner_screen(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceScreenShareSoak, AutomationRole::Participant) => {
+            run_participant_screen(spec, &mut network, metrics).await?
+        }
     }
 
     network.disconnect().await;
@@ -220,54 +265,21 @@ async fn wait_for_authenticated(
     }
 }
 
-async fn run_owner(
+async fn run_owner_audio(
     spec: &AutomationSpec,
     network: &mut NetworkClient,
     metrics: &mut AutomationMetrics,
 ) -> Result<(), String> {
-    network
-        .send_signal(&SignalMessage::CreateSpace {
-            name: spec.space_name.clone(),
-            user_name: spec.user_name.clone(),
-        })
-        .await
-        .map_err(|err| format!("Failed to create automation space: {err}"))?;
+    let shared = create_space_and_share(spec, network, metrics).await?;
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let shared = loop {
-        match recv_signal_until(network, deadline).await? {
-            SignalMessage::SpaceCreated { space, channels } => {
-                let channel = select_voice_channel(&channels)?;
-                let shared = SharedJoinInfo {
-                    invite_code: space.invite_code,
-                    channel_id: channel.id.clone(),
-                    channel_name: channel.name.clone(),
-                };
-                write_shared_info(&spec.shared_path, &shared)?;
-                metrics.space_ready = true;
-                metrics.last_status = "space-created".into();
-                break shared;
-            }
-            signal => handle_nonblocking_signal(signal, metrics)?,
-        }
-    };
-
-    join_channel(network, &shared.channel_id).await?;
-    wait_for_channel_join(network, metrics, &shared.channel_id).await?;
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
 
     let observe_deadline = Instant::now() + Duration::from_millis(spec.hold_ms);
     let mut audio_sent = false;
     while Instant::now() < observe_deadline {
         if let Some(signal) = network.try_recv_signal() {
-            match signal {
-                SignalMessage::PeerJoined { .. } => {
-                    metrics.peer_join_events += 1;
-                }
-                SignalMessage::MemberChannelChanged { .. } => {
-                    metrics.member_channel_updates += 1;
-                }
-                other => handle_nonblocking_signal(other, metrics)?,
-            }
+            handle_nonblocking_signal(signal, metrics)?;
         }
 
         if spec.send_audio && !audio_sent && metrics.peer_join_events as usize >= spec.expect_peers
@@ -306,34 +318,16 @@ async fn run_owner(
     Ok(())
 }
 
-async fn run_participant(
+async fn run_participant_audio(
     spec: &AutomationSpec,
     network: &mut NetworkClient,
     metrics: &mut AutomationMetrics,
 ) -> Result<(), String> {
     let shared = wait_for_shared_info(&spec.shared_path, spec.invite_timeout_ms).await?;
-    network
-        .send_signal(&SignalMessage::JoinSpace {
-            invite_code: shared.invite_code.clone(),
-            user_name: spec.user_name.clone(),
-        })
-        .await
-        .map_err(|err| format!("Failed to join automation space: {err}"))?;
+    join_space(spec, network, metrics, &shared).await?;
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match recv_signal_until(network, deadline).await? {
-            SignalMessage::SpaceJoined { .. } => {
-                metrics.space_ready = true;
-                metrics.last_status = "space-joined".into();
-                break;
-            }
-            signal => handle_nonblocking_signal(signal, metrics)?,
-        }
-    }
-
-    join_channel(network, &shared.channel_id).await?;
-    wait_for_channel_join(network, metrics, &shared.channel_id).await?;
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
 
     let observe_deadline = Instant::now() + Duration::from_millis(spec.hold_ms);
     while Instant::now() < observe_deadline {
@@ -345,15 +339,7 @@ async fn run_participant(
         }
 
         if let Some(signal) = network.try_recv_signal() {
-            match signal {
-                SignalMessage::PeerJoined { .. } => {
-                    metrics.peer_join_events += 1;
-                }
-                SignalMessage::MemberChannelChanged { .. } => {
-                    metrics.member_channel_updates += 1;
-                }
-                other => handle_nonblocking_signal(other, metrics)?,
-            }
+            handle_nonblocking_signal(signal, metrics)?;
         }
 
         if !network.is_connected() {
@@ -376,6 +362,272 @@ async fn run_participant(
     Ok(())
 }
 
+async fn run_owner_text(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = create_space_and_share(spec, network, metrics).await?;
+    wait_for_member_online_count(network, metrics, spec.expect_peers, spec.invite_timeout_ms).await?;
+
+    select_text_channel(network, &shared.text_channel_id).await?;
+    wait_for_text_channel_selected(network, metrics, &shared.text_channel_id).await?;
+
+    for idx in 0..spec.message_count {
+        let content = format!("automation-message-{}-{idx}", spec.user_name);
+        network
+            .send_signal(&SignalMessage::SendTextMessage {
+                channel_id: shared.text_channel_id.clone(),
+                content,
+                reply_to_message_id: None,
+            })
+            .await
+            .map_err(|err| format!("Failed to send automation text message: {err}"))?;
+        metrics.text_messages_sent += 1;
+        metrics.last_status = "text-message-sent".into();
+        sleep(Duration::from_millis(30)).await;
+    }
+
+    let observe_deadline = Instant::now() + Duration::from_millis(spec.hold_ms);
+    while Instant::now() < observe_deadline {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(signal, metrics)?;
+        }
+        if !network.is_connected() {
+            return Err("Automation text owner disconnected unexpectedly".into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if spec.expect_peers > 0 && (metrics.member_online_events as usize) < spec.expect_peers {
+        return Err(format!(
+            "Owner expected {} members online before text burst but saw {}",
+            spec.expect_peers, metrics.member_online_events
+        ));
+    }
+
+    Ok(())
+}
+
+async fn run_participant_text(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = wait_for_shared_info(&spec.shared_path, spec.invite_timeout_ms).await?;
+    join_space(spec, network, metrics, &shared).await?;
+
+    select_text_channel(network, &shared.text_channel_id).await?;
+    wait_for_text_channel_selected(network, metrics, &shared.text_channel_id).await?;
+
+    let observe_deadline = Instant::now()
+        + Duration::from_millis(spec.hold_ms.max((spec.message_count as u64 * 40) + 1200));
+    while Instant::now() < observe_deadline
+        && (metrics.text_messages_recv as usize) < spec.message_count
+    {
+        if let Some(signal) = network.try_recv_signal() {
+            match signal {
+                SignalMessage::TextMessage { channel_id, .. } if channel_id == shared.text_channel_id => {
+                    metrics.text_messages_recv += 1;
+                    metrics.last_status = "text-message-received".into();
+                }
+                other => handle_nonblocking_signal(other, metrics)?,
+            }
+        }
+
+        if !network.is_connected() {
+            return Err(format!(
+                "Automation text participant {} disconnected unexpectedly",
+                spec.user_name
+            ));
+        }
+
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if metrics.text_messages_recv as usize != spec.message_count {
+        return Err(format!(
+            "Automation participant {} expected {} text messages but received {}",
+            spec.user_name, spec.message_count, metrics.text_messages_recv
+        ));
+    }
+
+    Ok(())
+}
+
+async fn run_owner_screen(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = create_space_and_share(spec, network, metrics).await?;
+
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
+
+    let peer_deadline = Instant::now() + Duration::from_millis(spec.invite_timeout_ms);
+    while Instant::now() < peer_deadline && (metrics.peer_join_events as usize) < spec.expect_peers {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(signal, metrics)?;
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    network
+        .send_signal(&SignalMessage::StartScreenShare)
+        .await
+        .map_err(|err| format!("Failed to start automation screen share: {err}"))?;
+
+    let start_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < start_deadline && !metrics.screen_share_started {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(signal, metrics)?;
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    for idx in 0..spec.screen_frame_count {
+        let frame = generate_test_screen_frame(idx);
+        network
+            .send_screen_frame(&frame)
+            .await
+            .map_err(|err| format!("Failed to send automation screen frame: {err}"))?;
+        metrics.screen_frames_sent += 1;
+        metrics.last_status = "screen-frame-sent".into();
+        sleep(Duration::from_millis(60)).await;
+    }
+
+    network
+        .send_signal(&SignalMessage::StopScreenShare)
+        .await
+        .map_err(|err| format!("Failed to stop automation screen share: {err}"))?;
+
+    if spec.expect_peers > 0 && (metrics.peer_join_events as usize) < spec.expect_peers {
+        return Err(format!(
+            "Owner expected {} peer joins before screen share but saw {}",
+            spec.expect_peers, metrics.peer_join_events
+        ));
+    }
+    if metrics.screen_frames_sent == 0 {
+        return Err("Automation owner never sent any screen frames".into());
+    }
+
+    Ok(())
+}
+
+async fn run_participant_screen(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = wait_for_shared_info(&spec.shared_path, spec.invite_timeout_ms).await?;
+    join_space(spec, network, metrics, &shared).await?;
+
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
+
+    let observe_deadline = Instant::now()
+        + Duration::from_millis(spec.hold_ms.max((spec.screen_frame_count as u64 * 70) + 1200));
+    while Instant::now() < observe_deadline
+        && (metrics.screen_frames_recv as usize) < spec.screen_frame_count
+    {
+        if let Some(frame) = network.try_recv_screen_frame() {
+            if parse_screen_frame(&frame).is_some() {
+                metrics.screen_frames_recv += 1;
+                metrics.last_status = "screen-frame-received".into();
+            }
+        }
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(signal, metrics)?;
+        }
+
+        if !network.is_connected() {
+            return Err(format!(
+                "Automation screen participant {} disconnected unexpectedly",
+                spec.user_name
+            ));
+        }
+
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if metrics.screen_frames_recv as usize != spec.screen_frame_count {
+        return Err(format!(
+            "Automation participant {} expected {} screen frames but received {}",
+            spec.user_name, spec.screen_frame_count, metrics.screen_frames_recv
+        ));
+    }
+
+    Ok(())
+}
+
+async fn create_space_and_share(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<SharedJoinInfo, String> {
+    network
+        .send_signal(&SignalMessage::CreateSpace {
+            name: spec.space_name.clone(),
+            user_name: spec.user_name.clone(),
+        })
+        .await
+        .map_err(|err| format!("Failed to create automation space: {err}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let shared = loop {
+        match recv_signal_until(network, deadline).await? {
+            SignalMessage::SpaceCreated { space, channels } => {
+                let voice_channel = select_voice_channel(&channels)?;
+                let text_channel = match select_text_channel_info(&channels) {
+                    Ok(channel) => channel.clone(),
+                    Err(_) => create_text_channel(network, metrics, "chat").await?,
+                };
+                let shared = SharedJoinInfo {
+                    invite_code: space.invite_code,
+                    voice_channel_id: voice_channel.id.clone(),
+                    voice_channel_name: voice_channel.name.clone(),
+                    text_channel_id: text_channel.id.clone(),
+                    text_channel_name: text_channel.name.clone(),
+                };
+                write_shared_info(&spec.shared_path, &shared)?;
+                metrics.space_ready = true;
+                metrics.last_status = "space-created".into();
+                break shared;
+            }
+            signal => handle_nonblocking_signal(signal, metrics)?,
+        }
+    };
+    Ok(shared)
+}
+
+async fn join_space(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+    shared: &SharedJoinInfo,
+) -> Result<(), String> {
+    network
+        .send_signal(&SignalMessage::JoinSpace {
+            invite_code: shared.invite_code.clone(),
+            user_name: spec.user_name.clone(),
+        })
+        .await
+        .map_err(|err| format!("Failed to join automation space: {err}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match recv_signal_until(network, deadline).await? {
+            SignalMessage::SpaceJoined { .. } => {
+                metrics.space_ready = true;
+                metrics.last_status = "space-joined".into();
+                return Ok(());
+            }
+            signal => handle_nonblocking_signal(signal, metrics)?,
+        }
+    }
+}
+
 async fn join_channel(network: &mut NetworkClient, channel_id: &str) -> Result<(), String> {
     network
         .send_signal(&SignalMessage::JoinChannel {
@@ -383,6 +635,40 @@ async fn join_channel(network: &mut NetworkClient, channel_id: &str) -> Result<(
         })
         .await
         .map_err(|err| format!("Failed to join automation channel: {err}"))
+}
+
+async fn create_text_channel(
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+    channel_name: &str,
+) -> Result<ChannelInfo, String> {
+    network
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: channel_name.to_string(),
+            channel_type: ChannelType::Text,
+        })
+        .await
+        .map_err(|err| format!("Failed to create automation text channel: {err}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match recv_signal_until(network, deadline).await? {
+            SignalMessage::ChannelCreated { channel } if channel.channel_type == ChannelType::Text => {
+                metrics.last_status = "text-channel-created".into();
+                return Ok(channel);
+            }
+            signal => handle_nonblocking_signal(signal, metrics)?,
+        }
+    }
+}
+
+async fn select_text_channel(network: &mut NetworkClient, channel_id: &str) -> Result<(), String> {
+    network
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: channel_id.to_string(),
+        })
+        .await
+        .map_err(|err| format!("Failed to select automation text channel: {err}"))
 }
 
 async fn wait_for_channel_join(
@@ -424,6 +710,57 @@ async fn wait_for_channel_join(
     Ok(())
 }
 
+async fn wait_for_text_channel_selected(
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+    channel_id: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match recv_signal_until(network, deadline).await? {
+            SignalMessage::TextChannelSelected {
+                channel_id: selected_channel,
+                ..
+            } if selected_channel == channel_id => {
+                metrics.text_channel_selected = true;
+                metrics.last_status = "text-channel-selected".into();
+                return Ok(());
+            }
+            signal => handle_nonblocking_signal(signal, metrics)?,
+        }
+    }
+}
+
+async fn wait_for_member_online_count(
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+    expected: usize,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    if expected == 0 {
+        return Ok(());
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    while Instant::now() < deadline {
+        if metrics.member_online_events as usize >= expected {
+            return Ok(());
+        }
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(signal, metrics)?;
+        }
+        if !network.is_connected() {
+            return Err("Automation client disconnected while waiting for members".into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    Err(format!(
+        "Timed out waiting for {expected} members to come online; saw {}",
+        metrics.member_online_events
+    ))
+}
+
 async fn recv_signal_until(
     network: &mut NetworkClient,
     deadline: Instant,
@@ -452,13 +789,25 @@ fn handle_nonblocking_signal(
             metrics.authenticated = true;
             Ok(())
         }
+        SignalMessage::MemberOnline { .. } => {
+            metrics.member_online_events += 1;
+            Ok(())
+        }
+        SignalMessage::TextMessage { .. } => Ok(()),
+        SignalMessage::TextChannelSelected { .. } => {
+            metrics.text_channel_selected = true;
+            Ok(())
+        }
+        SignalMessage::ScreenShareStarted { .. } => {
+            metrics.screen_share_started = true;
+            Ok(())
+        }
+        SignalMessage::ScreenShareStopped { .. } => Ok(()),
         SignalMessage::FriendSnapshot { .. }
         | SignalMessage::FriendPresenceSnapshot { .. }
         | SignalMessage::FriendPresenceChanged { .. }
         | SignalMessage::TypingState { .. }
         | SignalMessage::DirectTypingState { .. }
-        | SignalMessage::MemberOnline { .. }
-        | SignalMessage::TextMessage { .. }
         | SignalMessage::MessageReaction { .. }
         | SignalMessage::MessagePinned { .. }
         | SignalMessage::TextMessageEdited { .. }
@@ -467,8 +816,6 @@ fn handle_nonblocking_signal(
         | SignalMessage::DirectMessageEdited { .. }
         | SignalMessage::DirectMessageDeleted { .. }
         | SignalMessage::DirectMessageSelected { .. }
-        | SignalMessage::ScreenShareStarted { .. }
-        | SignalMessage::ScreenShareStopped { .. }
         | SignalMessage::PeerLeft { .. }
         | SignalMessage::PeerMuteChanged { .. }
         | SignalMessage::PeerDeafenChanged { .. }
@@ -478,7 +825,6 @@ fn handle_nonblocking_signal(
         | SignalMessage::RoomCreated { .. }
         | SignalMessage::RoomJoined { .. }
         | SignalMessage::ChannelLeft
-        | SignalMessage::TextChannelSelected { .. }
         | SignalMessage::SpaceJoined { .. }
         | SignalMessage::SpaceCreated { .. } => Ok(()),
         SignalMessage::PeerJoined { .. } => {
@@ -501,6 +847,13 @@ fn select_voice_channel(channels: &[ChannelInfo]) -> Result<&ChannelInfo, String
         .ok_or_else(|| "Space did not contain any channels".into())
 }
 
+fn select_text_channel_info(channels: &[ChannelInfo]) -> Result<&ChannelInfo, String> {
+    channels
+        .iter()
+        .find(|channel| channel.channel_type == ChannelType::Text)
+        .ok_or_else(|| "Space did not contain a text channel".into())
+}
+
 fn write_shared_info(path: &PathBuf, shared: &SharedJoinInfo) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -509,8 +862,10 @@ fn write_shared_info(path: &PathBuf, shared: &SharedJoinInfo) -> Result<(), Stri
     let temp_path = path.with_extension("tmp");
     let payload = serde_json::json!({
         "invite_code": shared.invite_code,
-        "channel_id": shared.channel_id,
-        "channel_name": shared.channel_name,
+        "voice_channel_id": shared.voice_channel_id,
+        "voice_channel_name": shared.voice_channel_name,
+        "text_channel_id": shared.text_channel_id,
+        "text_channel_name": shared.text_channel_name,
     });
     fs::write(
         &temp_path,
@@ -532,21 +887,34 @@ async fn wait_for_shared_info(path: &PathBuf, timeout_ms: u64) -> Result<SharedJ
                 .and_then(|value| value.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let channel_id = parsed
-                .get("channel_id")
+            let voice_channel_id = parsed
+                .get("voice_channel_id")
                 .and_then(|value| value.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let channel_name = parsed
-                .get("channel_name")
+            let voice_channel_name = parsed
+                .get("voice_channel_name")
                 .and_then(|value| value.as_str())
                 .unwrap_or_default()
                 .to_string();
-            if !invite_code.is_empty() && !channel_id.is_empty() {
+            let text_channel_id = parsed
+                .get("text_channel_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let text_channel_name = parsed
+                .get("text_channel_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if !invite_code.is_empty() && !voice_channel_id.is_empty() && !text_channel_id.is_empty()
+            {
                 return Ok(SharedJoinInfo {
                     invite_code,
-                    channel_id,
-                    channel_name,
+                    voice_channel_id,
+                    voice_channel_name,
+                    text_channel_id,
+                    text_channel_name,
                 });
             }
         }
@@ -570,6 +938,7 @@ fn write_report(
     }
     let payload = serde_json::json!({
         "ok": ok,
+        "scenario": scenario_label(spec.scenario),
         "role": role_label(spec.role),
         "user_name": spec.user_name,
         "server_url": spec.server_url,
@@ -578,16 +947,25 @@ fn write_report(
         "expect_peers": spec.expect_peers,
         "expect_audio": spec.expect_audio,
         "send_audio": spec.send_audio,
+        "message_count": spec.message_count,
+        "screen_frame_count": spec.screen_frame_count,
         "elapsed_ms": elapsed.as_millis() as u64,
         "last_status": metrics.last_status,
         "authenticated": metrics.authenticated,
         "space_ready": metrics.space_ready,
         "channel_joined": metrics.channel_joined,
+        "text_channel_selected": metrics.text_channel_selected,
+        "screen_share_started": metrics.screen_share_started,
         "self_channel_updates": metrics.self_channel_updates,
         "peer_join_events": metrics.peer_join_events,
         "member_channel_updates": metrics.member_channel_updates,
+        "member_online_events": metrics.member_online_events,
         "audio_frames_sent": metrics.audio_frames_sent,
         "audio_frames_recv": metrics.audio_frames_recv,
+        "text_messages_sent": metrics.text_messages_sent,
+        "text_messages_recv": metrics.text_messages_recv,
+        "screen_frames_sent": metrics.screen_frames_sent,
+        "screen_frames_recv": metrics.screen_frames_recv,
         "failures": failures,
     });
     fs::write(
@@ -605,6 +983,14 @@ fn role_label(role: AutomationRole) -> &'static str {
     }
 }
 
+fn scenario_label(scenario: AutomationScenario) -> &'static str {
+    match scenario {
+        AutomationScenario::SpaceChannelSoak => "space_channel_soak",
+        AutomationScenario::SpaceTextChatSoak => "space_text_chat_soak",
+        AutomationScenario::SpaceScreenShareSoak => "space_screen_share_soak",
+    }
+}
+
 fn generate_test_audio() -> Vec<u8> {
     let sample_rate = 48_000.0_f64;
     let freq = 440.0_f64;
@@ -617,4 +1003,9 @@ fn generate_test_audio() -> Vec<u8> {
         bytes.extend_from_slice(&s16.to_le_bytes());
     }
     bytes
+}
+
+fn generate_test_screen_frame(idx: usize) -> Vec<u8> {
+    let payload = format!("synthetic-screen-frame-{idx}");
+    payload.into_bytes()
 }

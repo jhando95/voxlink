@@ -115,12 +115,26 @@ impl Peer {
     /// Set the peer's room code, updating both the authoritative mutex and fast cache.
     async fn set_room_code(&self, code: Option<String>) {
         *self.room_code.lock().await = code.clone();
-        *self.room_code_cache.write().unwrap() = code;
+        match self.room_code_cache.write() {
+            Ok(mut cache) => {
+                *cache = code;
+            }
+            Err(poisoned) => {
+                log::warn!("room_code_cache write lock was poisoned; recovering");
+                *poisoned.into_inner() = code;
+            }
+        }
     }
 
     /// Fast lock-free read of the cached room code (for audio relay hot path).
     fn cached_room_code(&self) -> Option<String> {
-        self.room_code_cache.read().unwrap().clone()
+        match self.room_code_cache.read() {
+            Ok(cache) => cache.clone(),
+            Err(poisoned) => {
+                log::warn!("room_code_cache read lock was poisoned; recovering");
+                poisoned.into_inner().clone()
+            }
+        }
     }
 }
 

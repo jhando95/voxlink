@@ -283,7 +283,9 @@ fn handle_keybind_listening(
         return;
     }
 
-    let state = ls.as_mut().unwrap();
+    let Some(state) = ls.as_mut() else {
+        return;
+    };
 
     state.total_ticks += 1;
     if state.total_ticks >= KEYBIND_LISTEN_TIMEOUT_TICKS {

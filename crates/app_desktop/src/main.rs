@@ -4,6 +4,7 @@
 
 mod automation;
 mod callbacks;
+mod crash_report;
 mod direct_messages;
 mod friends;
 mod helpers;
@@ -23,7 +24,10 @@ use ui_shell::{MainWindow, MemberWidgetWindow};
 
 fn main() {
     // #18: Set up logging — stderr + log file
-    setup_logging();
+    let log_path = setup_logging();
+    if let Some(crash_dir) = crash_report::install(log_path.clone()) {
+        log::info!("Crash reports will be written to {}", crash_dir.display());
+    }
 
     log::info!("Voxlink starting");
 
@@ -36,11 +40,18 @@ fn main() {
     let is_dark = config.dark_mode.unwrap_or(true);
     let theme_preset = helpers::theme_preset_index(&config.theme_preset);
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .expect("Failed to create tokio runtime");
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            log::error!("Failed to create tokio runtime: {err}");
+            eprintln!("Voxlink could not start the async runtime: {err}");
+            return;
+        }
+    };
     let rt_handle = rt.handle().clone();
 
     // Core systems
@@ -57,9 +68,10 @@ fn main() {
             log::info!("Audio engine initialized");
             engine
         }
-        Err(e) => {
-            log::error!("Audio engine init failed: {e}");
-            panic!("Cannot run without audio: {e}");
+        Err(err) => {
+            log::error!("Audio engine init failed: {err}");
+            eprintln!("Voxlink could not initialize audio: {err}");
+            return;
         }
     }));
 
@@ -79,7 +91,14 @@ fn main() {
     )));
     let screen_share = Arc::new(screen_share::ScreenShareController::new());
 
-    let window = MainWindow::new().unwrap();
+    let window = match MainWindow::new() {
+        Ok(window) => window,
+        Err(err) => {
+            log::error!("Failed to create main window: {err}");
+            eprintln!("Voxlink could not create the main window: {err}");
+            return;
+        }
+    };
     window.set_theme_preset(theme_preset);
     window.set_dark_mode(is_dark);
     let member_widget = Rc::new(RefCell::new(None::<MemberWidgetWindow>));
@@ -163,7 +182,11 @@ fn main() {
     );
 
     // Auto-connect on startup + auto-rejoin last room
-    auto_connect(&window, &config, &network, &rt_handle);
+    if !env_flag("VOXLINK_DISABLE_AUTO_CONNECT") {
+        auto_connect(&window, &config, &network, &rt_handle);
+    } else {
+        log::info!("Auto-connect disabled by environment");
+    }
 
     // Start the event loop timer
     tick_loop::start(
@@ -188,10 +211,16 @@ fn main() {
     );
 
     // M7B: Check for updates in background
-    helpers::check_for_updates(&window);
+    if !env_flag("VOXLINK_DISABLE_UPDATE_CHECK") {
+        helpers::check_for_updates(&window);
+    } else {
+        log::info!("Update check disabled by environment");
+    }
 
     log::info!("Voxlink ready");
-    window.run().unwrap();
+    if let Err(err) = window.run() {
+        log::error!("Voxlink UI loop failed: {err}");
+    }
     log::info!("Voxlink exiting");
 
     // #13: Save window size on exit
@@ -274,7 +303,17 @@ fn register_member_widget_initializer(
             return;
         }
 
-        let member_widget = MemberWidgetWindow::new().unwrap();
+        let member_widget = match MemberWidgetWindow::new() {
+            Ok(widget) => widget,
+            Err(err) => {
+                log::warn!("Failed to create member widget window: {err}");
+                if let Some(window) = window_weak.upgrade() {
+                    window.set_member_widget_visible(false);
+                    window.set_status_text("Member pop-out could not open".into());
+                }
+                return;
+            }
+        };
         if let Some((x, y)) = initial_position {
             member_widget
                 .window()
@@ -431,7 +470,7 @@ impl log::Log for DualLogger {
     }
 }
 
-fn setup_logging() {
+fn setup_logging() -> Option<std::path::PathBuf> {
     let log_path = directories::ProjectDirs::from("com", "voxlink", "Voxlink").map(|dirs| {
         let log_dir = dirs.data_dir();
         let _ = std::fs::create_dir_all(log_dir);
@@ -457,13 +496,14 @@ fn setup_logging() {
             };
             let _ = log::set_boxed_logger(Box::new(dual));
             log::set_max_level(max_level);
-            return;
+            return Some(path);
         }
     }
 
     // Fallback: stderr only
     let _ = log::set_boxed_logger(Box::new(env_logger));
     log::set_max_level(max_level);
+    None
 }
 
 /// Resolve a config key value to a combo Vec. None → use default. Some("") → cleared.
@@ -565,4 +605,11 @@ fn auto_connect(
             }
         }
     });
+}
+
+fn env_flag(key: &str) -> bool {
+    matches!(
+        std::env::var(key).ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    )
 }
