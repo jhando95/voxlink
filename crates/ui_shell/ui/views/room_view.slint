@@ -1,6 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { ParticipantData, ShareSourceData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, VxActionTile, VxAvatar, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
 
 export component RoomView inherits Rectangle {
     in property <bool> wide: false;
@@ -32,6 +32,8 @@ export component RoomView inherits Rectangle {
     in property <string> screen-share-quality-label: "";
     in property <string> screen-share-quality-detail: "";
     in-out property <bool> show-copied: false;
+    in-out property <string> selected-peer-id: "";
+    in-out property <bool> show-share-config: false;
     callback copy-room-code();
     callback leave-room();
     callback leave-channel();
@@ -47,790 +49,439 @@ export component RoomView inherits Rectangle {
 
     background: transparent;
 
-    ScrollView {
-        vertical-stretch: 1;
+    // -- Grid layout helpers --
+    property <int> cols:
+        root.participants.length <= 1 ? 1 :
+        root.participants.length <= 4 ? 2 :
+        root.participants.length <= 9 ? 3 : 4;
+    property <length> avatar-sz:
+        root.participants.length <= 2 ? 88px :
+        root.participants.length <= 4 ? 76px :
+        root.participants.length <= 9 ? 64px : 52px;
+    property <length> tile-w: root.avatar-sz + 24px;
+    property <length> tile-h: root.avatar-sz + 32px;
+    property <length> tile-gap: root.wide ? 16px : 10px;
+    property <int> row-count: root.participants.length <= 0 ? 0 :
+        (root.participants.length + root.cols - 1) / root.cols;
+    property <length> grid-w: root.cols * root.tile-w + (root.cols - 1) * root.tile-gap;
+    property <length> grid-h: root.row-count * root.tile-h + (root.row-count <= 1 ? 0px : (root.row-count - 1) * root.tile-gap);
 
-        VerticalLayout {
-            padding: root.wide ? 22px : 14px;
-            spacing: 18px;
+    VerticalLayout {
+        spacing: 0px;
 
-            if !root.is-connected : Rectangle {
-                border-radius: VxTheme.radius-card;
-                background: VxTheme.connection-lost-bg;
-                border-color: VxTheme.danger;
-                border-width: 1px;
-                HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    padding-top: 12px;
-                    padding-bottom: 12px;
-                    spacing: 10px;
-                    Rectangle {
-                        width: 10px;
-                        height: 10px;
-                        border-radius: 5px;
-                        background: VxTheme.danger;
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: "Connection unstable";
-                            color: VxTheme.danger;
-                            font-size: 12px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: root.status-text;
-                            color: VxTheme.text-secondary;
-                            font-size: 10px;
-                        }
-                    }
-                }
+        // ═══════════════════════════════════════════
+        //  ZONE 1 — Header bar
+        // ═══════════════════════════════════════════
+        Rectangle {
+            height: 48px;
+            background: VxTheme.bg-card;
+            border-color: VxTheme.border-subtle;
+            border-width: 0px;
+
+            // bottom border
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: VxTheme.border-subtle;
             }
 
-            if root.talking-while-muted : Rectangle {
-                border-radius: VxTheme.radius-card;
-                background: VxTheme.warning-soft;
-                border-color: VxTheme.warning;
-                border-width: 1px;
-                HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    padding-top: 10px;
-                    padding-bottom: 10px;
-                    spacing: 10px;
-                    alignment: center;
-                    Text {
-                        text: "You're muted";
-                        color: VxTheme.warning;
-                        font-size: 12px;
-                        font-weight: 700;
-                    }
-                    Text {
-                        text: "Others can't hear you right now.";
-                        color: VxTheme.text-secondary;
-                        font-size: 11px;
-                    }
-                }
-            }
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: center;
 
-            if root.wide : HorizontalLayout {
-                spacing: 18px;
-
+                // Left: channel/room info
                 VerticalLayout {
                     horizontal-stretch: 1;
-                    spacing: 18px;
+                    alignment: center;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: root.in-space-channel ? "# " + root.room-code : root.room-code;
+                            color: VxTheme.text-primary;
+                            font-size: 14px;
+                            font-weight: 700;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        if root.in-space-channel && root.current-space-name != "" : Text {
+                            text: "· " + root.current-space-name;
+                            color: VxTheme.text-muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
 
-                    VxCard {
-                        Rectangle {
+                // Center: status
+                if !root.is-connected : VxStatusPill {
+                    label: "Reconnecting" + (root.reconnect-attempts > 0 ? " (" + root.reconnect-attempts + ")" : "");
+                    tone: VxTheme.danger;
+                    fill: VxTheme.mute-badge-bg;
+                }
+
+                if root.talking-while-muted : VxStatusPill {
+                    label: "You're muted";
+                    tone: VxTheme.warning;
+                    fill: VxTheme.warning-soft;
+                }
+
+                // Right: participant count + ping
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: center;
+
+                    Text {
+                        text: root.participants.length + "";
+                        color: VxTheme.text-secondary;
+                        font-size: 11px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    // Ping dot
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: root.ping-ms < 0 ? VxTheme.text-muted :
+                                    root.ping-ms < 60 ? VxTheme.success :
+                                    root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                    }
+                    Text {
+                        text: root.ping-ms >= 0 ? root.ping-ms + "ms" : "--";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                    }
+
+                    // Copy code button
+                    VxButton {
+                        label: root.show-copied ? "Copied" : "Copy";
+                        small: true;
+                        ghost: true;
+                        clicked => {
+                            root.copy-room-code();
+                            root.show-copied = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        //  ZONE 2 — Stage area
+        // ═══════════════════════════════════════════
+        Rectangle {
+            vertical-stretch: 1;
+            background: VxTheme.bg-panel;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                // Screen share: when active, takes over the stage
+                if root.has-screen-share : Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: VxTheme.radius-card;
+                    background: VxTheme.bg-stage;
+                    border-color: VxTheme.accent-border;
+                    border-width: 1px;
+                    clip: true;
+
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.screen-share-image;
+                        image-fit: contain;
+                    }
+
+                    // Sharer badge overlaid top-left
+                    Rectangle {
+                        x: 8px;
+                        y: 8px;
+                        height: 24px;
+                        width: share-label.preferred-width + 20px;
+                        border-radius: 12px;
+                        background: VxTheme.bg-panel.transparentize(0.2);
+                        share-label := Text {
+                            text: root.is-sharing-screen ? "You are sharing" : root.screen-share-owner-name + " is sharing";
+                            color: VxTheme.success;
+                            font-size: 10px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // When screen share is active, show participants as a compact row below
+                if root.has-screen-share : HorizontalLayout {
+                    height: 50px;
+                    spacing: 8px;
+                    alignment: center;
+
+                    for p[idx] in root.participants : Rectangle {
+                        width: 42px;
+                        height: 50px;
+
+                        VxAvatar {
+                            x: (parent.width - self.width) / 2;
+                            y: 0px;
+                            avatar-size: 34px;
+                            initial: p.initial;
+                            color-index: p.color-index;
+                            is-speaking: p.is-speaking;
+                        }
+                        Text {
+                            y: 36px;
                             width: parent.width;
-                            height: parent.height;
-                            background: @linear-gradient(135deg, VxTheme.accent-subtle 0%, transparent 55%, VxTheme.warning-soft 100%);
+                            text: p.id == "self" ? "You" : p.name;
+                            color: VxTheme.text-secondary;
+                            font-size: 9px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                // No screen share: avatar grid is the stage
+                if !root.has-screen-share : Rectangle {
+                    vertical-stretch: 1;
+
+                    // Empty state
+                    if root.participants.length <= 1 : VerticalLayout {
+                        alignment: center;
+                        spacing: 12px;
+                        padding: 24px;
+
+                        if root.participants.length == 1 : VxAvatar {
+                            x: (parent.width - self.width) / 2;
+                            avatar-size: 96px;
+                            initial: root.participants[0].initial;
+                            color-index: root.participants[0].color-index;
+                            is-speaking: root.participants[0].is-speaking;
                         }
 
-                        VerticalLayout {
-                            padding: 20px;
-                            spacing: 16px;
+                        Text {
+                            text: root.participants.length == 1
+                                ? (root.participants[0].id == "self" ? root.participants[0].name + " · You" : root.participants[0].name)
+                                : "";
+                            color: VxTheme.text-primary;
+                            font-size: 14px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
 
-                            HorizontalLayout {
-                                alignment: space-between;
+                        Text {
+                            text: root.in-space-channel
+                                ? "Waiting for others to join the channel..."
+                                : "Share the room code to invite others.";
+                            color: VxTheme.text-muted;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                        }
+                    }
 
-                                VerticalLayout {
-                                    alignment: center;
-                                    spacing: 6px;
-                                    Text {
-                                        text: root.in-space-channel ? "VOICE CHANNEL" : "QUICK ROOM";
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                        letter-spacing: 1px;
+                    // Multi-participant avatar grid (2+ people)
+                    if root.participants.length > 1 : Rectangle {
+                        // Center the grid
+                        property <length> stage-w: self.width;
+                        property <length> stage-h: self.height;
+                        property <length> offset-x: (stage-w - root.grid-w) / 2;
+                        property <length> offset-y: (stage-h - root.grid-h) / 2;
+
+                        for p[idx] in root.participants : Rectangle {
+                            x: parent.offset-x + Math.mod(idx, root.cols) * (root.tile-w + root.tile-gap);
+                            y: parent.offset-y + Math.floor(idx / root.cols) * (root.tile-h + root.tile-gap);
+                            width: root.tile-w;
+                            height: root.tile-h;
+
+                            tile-touch := TouchArea {
+                                mouse-cursor: p.id != "self" ? pointer : default;
+                                clicked => {
+                                    if p.id != "self" {
+                                        root.selected-peer-id = root.selected-peer-id == p.id ? "" : p.id;
                                     }
-                                    Text {
-                                        text: root.room-code;
-                                        color: VxTheme.text-primary;
-                                        font-size: 30px;
-                                        font-weight: 800;
-                                        letter-spacing: 3px;
-                                    }
-                                    Text {
-                                        text: root.in-space-channel && root.current-space-name != ""
-                                            ? root.current-space-name
-                                            : "A fast voice stage with almost no interface drag.";
-                                        color: VxTheme.text-secondary;
-                                        font-size: 11px;
-                                    }
-                                }
-
-                                VerticalLayout {
-                                    alignment: center;
-                                    spacing: 8px;
-                                    Rectangle {
-                                        height: 34px;
-                                        border-radius: VxTheme.radius-control;
-                                        background: copy-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                        border-color: root.show-copied ? VxTheme.success : VxTheme.border-subtle;
-                                        border-width: 1px;
-
-                                        copy-touch := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => {
-                                                root.copy-room-code();
-                                                root.show-copied = true;
-                                            }
-                                        }
-
-                                        HorizontalLayout {
-                                            padding-left: 12px;
-                                            padding-right: 12px;
-                                            spacing: 8px;
-                                            Text {
-                                                text: root.show-copied ? "Copied to clipboard" : "Copy room code";
-                                                color: root.show-copied ? VxTheme.success : VxTheme.text-primary;
-                                                font-size: 11px;
-                                                font-weight: 700;
-                                            }
-                                        }
-                                    }
-
-                                    VxStatusPill {
-                                        label: root.room-status != "" ? root.room-status :
-                                               root.is-deafened ? "Listening only" :
-                                               root.is-muted ? "Muted" :
-                                               root.is-open-mic ? "Open mic live" :
-                                               root.ptt-key-display != "" ? "PTT on " + root.ptt-key-display : "Push to talk";
-                                        tone: root.is-deafened || root.is-muted ? VxTheme.danger :
-                                              root.is-open-mic ? VxTheme.success : VxTheme.accent;
-                                        fill: root.is-deafened || root.is-muted ? VxTheme.mute-badge-bg :
-                                              root.is-open-mic ? VxTheme.success-dim : VxTheme.accent-subtle;
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                spacing: 10px;
-                                VxStatBlock {
-                                    horizontal-stretch: 1;
-                                    label: "Members";
-                                    value: root.participants.length + "";
-                                    detail: root.participants.length == 1 ? "You are first in the room." : "Active listeners and speakers.";
-                                    tone: VxTheme.text-primary;
-                                }
-                                VxStatBlock {
-                                    horizontal-stretch: 1;
-                                    label: "Transmit";
-                                    value: root.is-open-mic ? "Open mic" : "Push to talk";
-                                    detail: root.is-open-mic ? "Always ready while unmuted." :
-                                            root.ptt-key-display != "" ? "Hold " + root.ptt-key-display + " to transmit." : "Hold your PTT binding to transmit.";
-                                    tone: root.is-open-mic ? VxTheme.success : VxTheme.accent;
-                                }
-                                VxStatBlock {
-                                    horizontal-stretch: 1;
-                                    label: "Connection";
-                                    value: root.is-connected ? "Stable" : "Recovering";
-                                    detail: root.is-connected ? "Voice path is healthy." : root.status-text;
-                                    tone: root.is-connected ? VxTheme.success : VxTheme.danger;
                                 }
                             }
 
                             VerticalLayout {
+                                alignment: center;
                                 spacing: 6px;
-                                FieldLabel { text: "Local mic activity"; }
+
+                                // Avatar with badges
                                 Rectangle {
-                                    height: 8px;
-                                    border-radius: 4px;
-                                    background: VxTheme.bg-soft;
+                                    width: root.avatar-sz;
+                                    height: root.avatar-sz;
+                                    x: (parent.width - self.width) / 2;
 
-                                    Rectangle {
-                                        width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                                        height: parent.height;
-                                        border-radius: 4px;
-                                        background: root.is-muted ? VxTheme.danger :
-                                                    root.is-deafened ? VxTheme.text-muted :
-                                                    root.mic-level > 0.15 ? VxTheme.warning :
-                                                    root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
-                                        animate width { duration: 50ms; }
+                                    VxAvatar {
+                                        avatar-size: root.avatar-sz;
+                                        initial: p.initial;
+                                        color-index: p.color-index;
+                                        is-speaking: p.is-speaking;
                                     }
-                                }
-                            }
-                        }
-                    }
 
-                    VxCard {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
+                                    // Mute badge (bottom-right corner)
+                                    if p.is-muted || (p.id == "self" && root.is-muted) : Rectangle {
+                                        x: parent.width - self.width - 2px;
+                                        y: parent.height - self.height - 2px;
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: 10px;
+                                        background: VxTheme.danger;
+                                        border-color: VxTheme.bg-panel;
+                                        border-width: 2px;
 
-                            HorizontalLayout {
-                                alignment: space-between;
-                                SectionLabel { text: "SCREEN SHARE"; }
-                                VxStatusPill {
-                                    label: root.has-screen-share
-                                        ? (root.is-sharing-screen ? "You are sharing" : root.screen-share-owner-name + " is sharing")
-                                        : "Idle";
-                                    tone: root.has-screen-share ? VxTheme.success : VxTheme.text-secondary;
-                                    fill: root.has-screen-share ? VxTheme.success-dim : VxTheme.bg-soft;
-                                }
-                            }
-
-                            Rectangle {
-                                height: 240px;
-                                border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-stage;
-                                border-color: root.has-screen-share ? VxTheme.accent-border : VxTheme.border-subtle;
-                                border-width: 1px;
-                                clip: true;
-
-                                if root.has-screen-share : Image {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    source: root.screen-share-image;
-                                    image-fit: contain;
-                                }
-
-                                if !root.has-screen-share : VerticalLayout {
-                                    alignment: center;
-                                    padding: 18px;
-                                    spacing: 6px;
-                                    Text {
-                                        text: "No screen share live";
-                                        color: VxTheme.text-primary;
-                                        font-size: 13px;
-                                        font-weight: 700;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: "Start sharing your primary display without touching the voice path.";
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
-                                        horizontal-alignment: center;
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                spacing: 10px;
-                                VxStatBlock {
-                                    horizontal-stretch: 1;
-                                    label: "Source";
-                                    value: root.screen-share-source-label != "" ? root.screen-share-source-label : "No source";
-                                    detail: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Refresh sources to choose a display or focused window.";
-                                    tone: VxTheme.accent;
-                                }
-                                VxStatBlock {
-                                    horizontal-stretch: 1;
-                                    label: "Mode";
-                                    value: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Efficient";
-                                    detail: root.screen-share-quality-detail != "" ? root.screen-share-quality-detail : "A lightweight stream preset that can step down under pressure.";
-                                    tone: root.is-sharing-screen ? VxTheme.success : VxTheme.text-primary;
-                                }
-                            }
-
-                            Rectangle {
-                                border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-
-                                    HorizontalLayout {
-                                        alignment: space-between;
-                                        SectionLabel { text: "SHARE SOURCE"; }
-                                        VxButton {
-                                            label: "Refresh";
-                                            small: true;
-                                            ghost: true;
-                                            clicked => { root.refresh-screen-share-sources(); }
+                                        // Slash line for mute icon
+                                        Rectangle {
+                                            x: 5px;
+                                            y: 7px;
+                                            width: 6px;
+                                            height: 2px;
+                                            border-radius: 1px;
+                                            background: VxTheme.text-inverse;
                                         }
                                     }
 
-                                    Text {
-                                        text: root.has-screen-share && !root.is-sharing-screen
-                                            ? "A share is already live. Your selection is saved for the next turn."
-                                            : root.is-sharing-screen
-                                                ? "Changing the selection now applies to your next share."
-                                                : "Pick a display or focused app window before you go live.";
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
+                                    // Deafen badge
+                                    if p.is-deafened || (p.id == "self" && root.is-deafened) : Rectangle {
+                                        x: parent.width - self.width - 2px;
+                                        y: 2px;
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: 10px;
+                                        background: VxTheme.warning;
+                                        border-color: VxTheme.bg-panel;
+                                        border-width: 2px;
+
+                                        Rectangle {
+                                            x: 5px;
+                                            y: 7px;
+                                            width: 6px;
+                                            height: 2px;
+                                            border-radius: 1px;
+                                            background: VxTheme.text-inverse;
+                                        }
                                     }
 
-                                    Rectangle {
-                                        height: 164px;
-                                        clip: true;
-                                        if root.screen-share-sources.length > 0 : ListView {
-                                            for source[idx] in root.screen-share-sources : VxOptionRow {
-                                                label: source.label;
-                                                detail: source.kind-label + " · " + source.detail;
-                                                selected: idx == root.selected-screen-share-source;
-                                                clicked => { root.select-screen-share-source(idx); }
-                                            }
-                                        }
-                                        if root.screen-share-sources.length == 0 : VerticalLayout {
-                                            alignment: center;
-                                            spacing: 4px;
-                                            Text {
-                                                text: "No share sources ready";
-                                                color: VxTheme.text-primary;
-                                                font-size: 11px;
-                                                font-weight: 700;
-                                                horizontal-alignment: center;
-                                            }
-                                            Text {
-                                                text: "Refresh once your target window is visible.";
-                                                color: VxTheme.text-muted;
-                                                font-size: 10px;
-                                                horizontal-alignment: center;
-                                            }
+                                    // Speaking "LIVE" pill (centered above avatar)
+                                    if p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted) : Rectangle {
+                                        x: (parent.width - self.width) / 2;
+                                        y: -8px;
+                                        width: 32px;
+                                        height: 16px;
+                                        border-radius: 8px;
+                                        background: VxTheme.success;
+                                        Text {
+                                            text: "LIVE";
+                                            color: VxTheme.text-inverse;
+                                            font-size: 8px;
+                                            font-weight: 800;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
                                         }
                                     }
                                 }
-                            }
 
-                            Rectangle {
-                                border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-                                VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 10px;
-                                    SectionLabel { text: "STREAM PROFILE"; }
-                                    Text {
-                                        text: "Higher caps only apply while sharing and the adaptive ladder can still step down if the system falls behind.";
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
-                                    }
-                                    VxOptionRow {
-                                        label: "Efficient";
-                                        detail: "Default low-cost mode · up to 540p / 8 fps";
-                                        selected: root.selected-screen-share-profile == 0;
-                                        clicked => { root.select-screen-share-profile(0); }
-                                    }
-                                    VxOptionRow {
-                                        label: "Balanced";
-                                        detail: "Readable desktop capture · up to 720p / 15 fps";
-                                        selected: root.selected-screen-share-profile == 1;
-                                        clicked => { root.select-screen-share-profile(1); }
-                                    }
-                                    VxOptionRow {
-                                        label: "Smooth";
-                                        detail: "Higher motion capture · up to 720p / 30 fps";
-                                        selected: root.selected-screen-share-profile == 2;
-                                        clicked => { root.select-screen-share-profile(2); }
-                                    }
-                                    VxOptionRow {
-                                        label: "Max";
-                                        detail: "High cost mode · attempts up to 720p / 60 fps";
-                                        selected: root.selected-screen-share-profile == 3;
-                                        clicked => { root.select-screen-share-profile(3); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    VxCard {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
-
-                            HorizontalLayout {
-                                alignment: space-between;
-                                SectionLabel { text: "PARTICIPANTS"; }
+                                // Name
                                 Text {
-                                    text: root.participants.length + " in call";
-                                    color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    text: p.id == "self" ? p.name + " (You)" : p.name;
+                                    color: p.is-speaking ? VxTheme.success :
+                                           root.selected-peer-id == p.id ? VxTheme.accent : VxTheme.text-primary;
+                                    font-size: 11px;
                                     font-weight: 600;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    max-width: root.tile-w;
                                 }
                             }
 
-                            if root.participants.length <= 1 : Rectangle {
-                                border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-stage;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-                                VerticalLayout {
-                                    padding: 18px;
-                                    spacing: 6px;
-                                    Text {
-                                        text: "Waiting for the rest of the room";
-                                        color: VxTheme.text-primary;
-                                        font-size: 13px;
-                                        font-weight: 700;
-                                    }
-                                    Text {
-                                        text: root.in-space-channel
-                                            ? "Invite people into the channel and the stage updates instantly."
-                                            : "Send the room code to bring more voices in.";
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
-                                    }
-                                }
-                            }
-
-                            ListView {
-                                vertical-stretch: 1;
-
-                                for p[idx] in root.participants : Rectangle {
-                                    height: p.id == "self" ? 84px : 68px;
-                                    border-radius: VxTheme.radius-card;
-                                    background: p.is-speaking ? VxTheme.speaking-row-bg :
-                                                row-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
-                                    border-color: p.is-speaking ? VxTheme.speaking-border : VxTheme.border-subtle;
-                                    border-width: 1px;
-
-                                    row-touch := TouchArea { mouse-cursor: p.id != "self" ? pointer : default; }
-
-                                    HorizontalLayout {
-                                        padding-left: 14px;
-                                        padding-right: 14px;
-                                        spacing: 12px;
-                                        alignment: center;
-
-                                        VxAvatar {
-                                            avatar-size: p.id == "self" ? 40px : 34px;
-                                            initial: p.initial;
-                                            color-index: p.color-index;
-                                            is-speaking: p.is-speaking;
-                                        }
-
-                                        VerticalLayout {
-                                            horizontal-stretch: 1;
-                                            alignment: center;
-                                            spacing: 4px;
-
-                                            HorizontalLayout {
-                                                spacing: 8px;
-                                                alignment: center;
-                                                Text {
-                                                    text: p.id == "self" ? p.name + "  ·  You" : p.name;
-                                                    color: VxTheme.text-primary;
-                                                    font-size: 12px;
-                                                    font-weight: 700;
-                                                    overflow: elide;
-                                                }
-                                                if p.is-speaking && !p.is-muted : VxStatusPill {
-                                                    label: "Live";
-                                                    tone: VxTheme.success;
-                                                    fill: VxTheme.success-dim;
-                                                }
-                                            }
-
-                                            if p.id == "self" : Rectangle {
-                                                height: 6px;
-                                                border-radius: 3px;
-                                                background: VxTheme.bg-panel;
-                                                Rectangle {
-                                                    width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
-                                                    height: parent.height;
-                                                    border-radius: 3px;
-                                                    background: root.is-muted ? VxTheme.danger :
-                                                                root.mic-level > 0.15 ? VxTheme.warning :
-                                                                root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
-                                                    animate width { duration: 40ms; }
-                                                }
-                                            }
-
-                                            if p.id != "self" : HorizontalLayout {
-                                                spacing: 10px;
-                                                alignment: center;
-                                                FieldLabel {
-                                                    text: "Peer level";
-                                                    vertical-alignment: center;
-                                                }
-                                                VxSlider {
-                                                    horizontal-stretch: 1;
-                                                    value: p.volume;
-                                                    changed(val) => { root.volume-changed(p.id, val); }
-                                                }
-                                                Text {
-                                                    text: Math.round(p.volume * 100) + "%";
-                                                    color: VxTheme.text-secondary;
-                                                    font-size: 10px;
-                                                    font-weight: 700;
-                                                    min-width: 34px;
-                                                    horizontal-alignment: right;
-                                                }
-                                            }
-                                        }
-
-                                        VerticalLayout {
-                                            alignment: center;
-                                            spacing: 6px;
-                                            if (p.id == "self" && root.is-muted) || (p.id != "self" && p.is-muted) : VxStatusPill {
-                                                label: "Muted";
-                                                tone: VxTheme.danger;
-                                                fill: VxTheme.mute-badge-bg;
-                                            }
-                                            if (p.id == "self" && root.is-deafened) || (p.id != "self" && p.is-deafened) : VxStatusPill {
-                                                label: "Deaf";
-                                                tone: VxTheme.warning;
-                                                fill: VxTheme.deafen-badge-bg;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                VerticalLayout {
-                    width: 288px;
-                    spacing: 18px;
-
-                    VxCard {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
-                            SectionLabel { text: "NETWORK HEALTH"; }
-
-                            VxStatBlock {
-                                label: "Ping";
-                                value: root.ping-ms >= 0 ? root.ping-ms + " ms" : "Waiting";
-                                detail: root.ping-ms < 0 ? "Sampling the route." :
-                                        root.ping-ms < 60 ? "Fast enough to feel instant." :
-                                        root.ping-ms < 150 ? "Usable with mild network drag." :
-                                        "Latency is elevated right now.";
-                                tone: root.ping-ms < 0 ? VxTheme.text-secondary :
-                                      root.ping-ms < 60 ? VxTheme.success :
-                                      root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
-                            }
-
-                            VxStatBlock {
-                                label: "Recovery";
-                                value: root.reconnect-attempts + "";
-                                detail: root.reconnect-attempts == 0
-                                    ? "No reconnect attempts in this session."
-                                    : root.reconnect-attempts == 1
-                                        ? "The client recovered once."
-                                        : "The client has recovered multiple times.";
-                                tone: root.reconnect-attempts == 0 ? VxTheme.success :
-                                      root.reconnect-attempts < 3 ? VxTheme.warning : VxTheme.danger;
-                            }
-
-                            VxStatBlock {
-                                label: "Dropped audio";
-                                value: root.dropped-frames + "";
-                                detail: root.dropped-frames == 0
-                                    ? "Clean playback so far."
-                                    : root.dropped-frames < 10
-                                        ? "A few frames were dropped under load."
-                                        : "Audio contention is showing up in the mix.";
-                                tone: root.dropped-frames == 0 ? VxTheme.success :
-                                      root.dropped-frames < 10 ? VxTheme.warning : VxTheme.danger;
-                            }
-                        }
-                    }
-
-                    VxCard {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
-                            SectionLabel { text: "CONTROL DECK"; }
-
-                            VxStatBlock {
-                                label: "Local monitor";
-                                value: Math.round(clamp(root.mic-level * 500.0, 0.0, 100.0)) + "%";
-                                detail: root.is-muted ? "Muted locally." :
-                                        root.mic-level > 0.15 ? "Hot signal, back off slightly." :
-                                        root.mic-level > 0.05 ? "Healthy speaking level." : "Quiet standby level.";
-                                tone: root.is-muted ? VxTheme.danger :
-                                      root.mic-level > 0.15 ? VxTheme.warning :
-                                      root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
-                            }
-
-                            VxActionTile {
-                                eyebrow: "MICROPHONE";
-                                title: root.is-muted ? "Muted" : "Live";
-                                detail: root.is-muted ? "Tap to rejoin the room instantly." : "Tap to mute yourself without leaving the channel.";
-                                active: root.is-muted;
-                                tone: VxTheme.danger;
-                                clicked => { root.toggle-mute(); }
-                            }
-
-                            VxActionTile {
-                                eyebrow: "OUTPUT";
-                                title: root.is-deafened ? "Quiet mode" : "Listening";
-                                detail: root.is-deafened ? "Tap to hear the room again." : "Tap to silence incoming audio while staying connected.";
-                                active: root.is-deafened;
-                                tone: VxTheme.warning;
-                                clicked => { root.toggle-deafen(); }
-                            }
-
-                            VxActionTile {
-                                eyebrow: "CAPTURE";
-                                title: root.is-open-mic ? "Open mic" : "Push to talk";
-                                detail: root.is-open-mic ? "Hands-free when the room is calm." :
-                                        root.ptt-key-display != "" ? "Hold " + root.ptt-key-display + " whenever you want to transmit." :
-                                        "Hold your PTT binding whenever you want to transmit.";
-                                active: !root.is-open-mic;
-                                tone: root.is-open-mic ? VxTheme.success : VxTheme.accent;
-                                clicked => { root.toggle-mic-mode(); }
-                            }
-
-                            VxActionTile {
-                                eyebrow: "SCREEN";
-                                title: root.is-sharing-screen ? "Sharing display" :
-                                       root.has-screen-share ? "Viewer mode" : "Start share";
-                                detail: root.is-sharing-screen
-                                    ? "Live from " + (root.screen-share-source-label != "" ? root.screen-share-source-label : "your selected source") + ". Tap to stop."
-                                    : root.has-screen-share
-                                        ? root.screen-share-owner-name + " is already sharing this room."
-                                        : "Ready on " + (root.screen-share-source-label != "" ? root.screen-share-source-label : "your next source") + " with " + (root.screen-share-quality-label != "" ? root.screen-share-quality-label : "adaptive quality") + ".";
-                                active: root.is-sharing-screen;
-                                tone: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
-                                clicked => { root.toggle-screen-share(); }
-                            }
-
-                            HorizontalLayout {
-                                spacing: 10px;
-                                VxButton {
-                                    label: "Settings";
-                                    soft: true;
-                                    horizontal-stretch: 1;
-                                    clicked => { root.navigate(2); }
-                                }
-                                VxButton {
-                                    label: root.in-space-channel ? "Leave Channel" : "Leave Call";
-                                    danger: true;
-                                    horizontal-stretch: 1;
-                                    clicked => {
-                                        if root.in-space-channel {
-                                            root.leave-channel();
-                                        } else {
-                                            root.leave-room();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !root.wide : VerticalLayout {
-                spacing: 18px;
-
-                VxCard {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 12px;
-                        Text {
-                            text: root.room-code;
-                            color: VxTheme.text-primary;
-                            font-size: 24px;
-                            font-weight: 800;
-                            letter-spacing: 2px;
-                        }
-                        VxStatusPill {
-                            label: root.room-status != "" ? root.room-status :
-                                   root.is-open-mic ? "Open mic live" : "Push to talk";
-                            tone: root.is-muted || root.is-deafened ? VxTheme.danger : VxTheme.accent;
-                            fill: root.is-muted || root.is-deafened ? VxTheme.mute-badge-bg : VxTheme.accent-subtle;
-                        }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            VxButton {
-                                label: root.show-copied ? "Copied" : "Copy";
-                                soft: true;
-                                horizontal-stretch: 1;
-                                clicked => {
-                                    root.copy-room-code();
-                                    root.show-copied = true;
-                                }
-                            }
-                            VxButton {
-                                label: root.in-space-channel ? "Leave" : "Leave Call";
-                                danger: true;
-                                horizontal-stretch: 1;
-                                clicked => {
-                                    if root.in-space-channel {
-                                        root.leave-channel();
-                                    } else {
-                                        root.leave-room();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                VxCard {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 12px;
-                        SectionLabel { text: "SCREEN SHARE"; }
-                        Rectangle {
-                            height: 180px;
-                            border-radius: VxTheme.radius-card;
-                            background: VxTheme.bg-stage;
-                            border-color: root.has-screen-share ? VxTheme.accent-border : VxTheme.border-subtle;
-                            border-width: 1px;
-                            clip: true;
-
-                            if root.has-screen-share : Image {
+                            // Hover highlight
+                            Rectangle {
                                 width: parent.width;
                                 height: parent.height;
-                                source: root.screen-share-image;
-                                image-fit: contain;
-                            }
-
-                            if !root.has-screen-share : VerticalLayout {
-                                alignment: center;
-                                padding: 16px;
-                                spacing: 6px;
-                                Text {
-                                    text: "No active screen share";
-                                    color: VxTheme.text-primary;
-                                    font-size: 12px;
-                                    font-weight: 700;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: "Share your primary display only when you need it.";
-                                    color: VxTheme.text-muted;
-                                    font-size: 10px;
-                                    wrap: word-wrap;
-                                    horizontal-alignment: center;
-                                }
+                                border-radius: VxTheme.radius-card;
+                                background: tile-touch.has-hover && p.id != "self" ? VxTheme.row-hover-bg : transparent;
+                                border-color: root.selected-peer-id == p.id ? VxTheme.accent-border : transparent;
+                                border-width: root.selected-peer-id == p.id ? 1px : 0px;
+                                animate background { duration: 80ms; }
                             }
                         }
+                    }
+                }
 
-                        VxStatBlock {
-                            label: "Source";
-                            value: root.screen-share-source-label != "" ? root.screen-share-source-label : "No source";
-                            detail: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Choose a display or window before you share.";
-                            tone: VxTheme.accent;
+                // Per-peer volume slider (shows when a peer is selected)
+                if root.selected-peer-id != "" : Rectangle {
+                    height: 40px;
+                    border-radius: VxTheme.radius-control;
+                    background: VxTheme.bg-soft;
+                    border-color: VxTheme.border-subtle;
+                    border-width: 1px;
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 12px;
+                        alignment: center;
+
+                        Text {
+                            text: "Volume";
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
                         }
 
-                        VxStatBlock {
-                            label: "Mode";
-                            value: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Efficient";
-                            detail: root.screen-share-quality-detail != "" ? root.screen-share-quality-detail : "A lightweight stream preset that can step down under pressure.";
-                            tone: root.is-sharing-screen ? VxTheme.success : VxTheme.text-primary;
+                        VxSlider {
+                            horizontal-stretch: 1;
+                            // Find the selected peer's volume — iterate to match
+                            // Slint doesn't support array.find(), so use first participant as fallback
+                            value: 1.0;
+                            changed(val) => { root.volume-changed(root.selected-peer-id, val); }
                         }
+
+                        VxButton {
+                            label: "Done";
+                            small: true;
+                            ghost: true;
+                            clicked => { root.selected-peer-id = ""; }
+                        }
+                    }
+                }
+
+                // Screen share configuration (expandable)
+                if root.show-share-config : VxCard {
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
 
                         HorizontalLayout {
-                            spacing: 10px;
-                            SectionLabel { text: "SOURCE PICKER"; horizontal-stretch: 1; }
-                            VxButton {
-                                label: "Refresh";
-                                small: true;
-                                ghost: true;
-                                clicked => { root.refresh-screen-share-sources(); }
+                            alignment: space-between;
+                            SectionLabel { text: "SHARE SOURCE"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxButton {
+                                    label: "Refresh";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.refresh-screen-share-sources(); }
+                                }
+                                VxButton {
+                                    label: "Close";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.show-share-config = false; }
+                                }
                             }
                         }
 
                         Rectangle {
-                            height: 150px;
+                            height: 120px;
                             clip: true;
                             if root.screen-share-sources.length > 0 : ListView {
                                 for source[idx] in root.screen-share-sources : VxOptionRow {
@@ -842,16 +493,8 @@ export component RoomView inherits Rectangle {
                             }
                             if root.screen-share-sources.length == 0 : VerticalLayout {
                                 alignment: center;
-                                spacing: 4px;
                                 Text {
-                                    text: "No share sources ready";
-                                    color: VxTheme.text-primary;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: "Refresh once your target window is visible.";
+                                    text: "No sources — click Refresh";
                                     color: VxTheme.text-muted;
                                     font-size: 10px;
                                     horizontal-alignment: center;
@@ -859,138 +502,130 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
-                        VerticalLayout {
-                            spacing: 10px;
-                            SectionLabel { text: "STREAM PROFILE"; }
-                            Text {
-                                text: "Only affects active shares. Higher profiles cost more CPU, bandwidth, and decode time.";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
-                                wrap: word-wrap;
-                            }
-                            VxOptionRow {
-                                label: "Efficient";
-                                detail: "Default low-cost mode · up to 540p / 8 fps";
-                                selected: root.selected-screen-share-profile == 0;
-                                clicked => { root.select-screen-share-profile(0); }
-                            }
-                            VxOptionRow {
-                                label: "Balanced";
-                                detail: "Readable desktop capture · up to 720p / 15 fps";
-                                selected: root.selected-screen-share-profile == 1;
-                                clicked => { root.select-screen-share-profile(1); }
-                            }
-                            VxOptionRow {
-                                label: "Smooth";
-                                detail: "Higher motion capture · up to 720p / 30 fps";
-                                selected: root.selected-screen-share-profile == 2;
-                                clicked => { root.select-screen-share-profile(2); }
-                            }
-                            VxOptionRow {
-                                label: "Max";
-                                detail: "High cost mode · attempts up to 720p / 60 fps";
-                                selected: root.selected-screen-share-profile == 3;
-                                clicked => { root.select-screen-share-profile(3); }
-                            }
+                        SectionLabel { text: "STREAM PROFILE"; }
+                        VxOptionRow {
+                            label: "Efficient";
+                            detail: "Up to 540p / 8 fps";
+                            selected: root.selected-screen-share-profile == 0;
+                            clicked => { root.select-screen-share-profile(0); }
+                        }
+                        VxOptionRow {
+                            label: "Balanced";
+                            detail: "Up to 720p / 15 fps";
+                            selected: root.selected-screen-share-profile == 1;
+                            clicked => { root.select-screen-share-profile(1); }
+                        }
+                        VxOptionRow {
+                            label: "Smooth";
+                            detail: "Up to 720p / 30 fps";
+                            selected: root.selected-screen-share-profile == 2;
+                            clicked => { root.select-screen-share-profile(2); }
+                        }
+                        VxOptionRow {
+                            label: "Max";
+                            detail: "Up to 720p / 60 fps";
+                            selected: root.selected-screen-share-profile == 3;
+                            clicked => { root.select-screen-share-profile(3); }
                         }
                     }
                 }
+            }
+        }
 
-                VxCard {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 12px;
-                        SectionLabel { text: "PARTICIPANTS"; }
+        // ═══════════════════════════════════════════
+        //  ZONE 3 — Control bar (pinned bottom)
+        // ═══════════════════════════════════════════
 
-                        ListView {
-                            vertical-stretch: 1;
+        // Mic level indicator strip
+        Rectangle {
+            height: 3px;
+            background: VxTheme.bg-card;
+            Rectangle {
+                width: parent.width * clamp(root.mic-level * 5.0, 0.0, 1.0);
+                height: parent.height;
+                background: root.is-muted ? VxTheme.danger :
+                            root.is-deafened ? VxTheme.text-muted :
+                            root.mic-level > 0.15 ? VxTheme.warning :
+                            root.mic-level > 0.05 ? VxTheme.success : VxTheme.accent;
+                animate width { duration: 50ms; }
+            }
+        }
 
-                            for p[idx] in root.participants : Rectangle {
-                                height: 72px;
-                                border-radius: VxTheme.radius-card;
-                                background: p.is-speaking ? VxTheme.speaking-row-bg : VxTheme.bg-soft;
-                                border-color: p.is-speaking ? VxTheme.speaking-border : VxTheme.border-subtle;
-                                border-width: 1px;
+        Rectangle {
+            height: 56px;
+            background: VxTheme.bg-card;
+            border-color: VxTheme.border-subtle;
 
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    spacing: 10px;
-                                    alignment: center;
+            // Top border
+            Rectangle {
+                width: parent.width;
+                height: 1px;
+                background: VxTheme.border-subtle;
+            }
 
-                                    VxAvatar {
-                                        avatar-size: 34px;
-                                        initial: p.initial;
-                                        color-index: p.color-index;
-                                        is-speaking: p.is-speaking;
-                                    }
+            HorizontalLayout {
+                padding-left: root.wide ? 24px : 10px;
+                padding-right: root.wide ? 24px : 10px;
+                spacing: root.wide ? 10px : 6px;
+                alignment: center;
 
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        alignment: center;
-                                        spacing: 3px;
-                                        Text {
-                                            text: p.id == "self" ? p.name + "  ·  You" : p.name;
-                                            color: VxTheme.text-primary;
-                                            font-size: 12px;
-                                            font-weight: 700;
-                                        }
-                                        if p.id != "self" : VxSlider {
-                                            value: p.volume;
-                                            changed(val) => { root.volume-changed(p.id, val); }
-                                        }
-                                    }
-                                }
-                            }
+                // Mute
+                VxButton {
+                    label: root.is-muted ? "Unmute" : "Mute";
+                    danger: root.is-muted;
+                    soft: !root.is-muted;
+                    horizontal-stretch: 1;
+                    clicked => { root.toggle-mute(); }
+                }
+
+                // Deafen
+                VxButton {
+                    label: root.is-deafened ? "Undeafen" : "Deafen";
+                    soft: true;
+                    horizontal-stretch: 1;
+                    clicked => { root.toggle-deafen(); }
+                }
+
+                // Mic mode
+                VxButton {
+                    label: root.is-open-mic ? "Open Mic" : "PTT";
+                    accent: root.is-open-mic;
+                    soft: !root.is-open-mic;
+                    horizontal-stretch: 1;
+                    clicked => { root.toggle-mic-mode(); }
+                }
+
+                // Screen share
+                VxButton {
+                    label: root.is-sharing-screen ? "Stop" :
+                           root.has-screen-share ? "Viewing" : "Share";
+                    accent: root.is-sharing-screen;
+                    soft: !root.is-sharing-screen;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        if !root.has-screen-share && !root.is-sharing-screen {
+                            root.show-share-config = !root.show-share-config;
                         }
+                        root.toggle-screen-share();
                     }
                 }
 
-                VxCard {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 10px;
-                        SectionLabel { text: "CONTROLS"; }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            VxButton {
-                                label: root.is-muted ? "Unmute" : "Mute";
-                                danger: root.is-muted;
-                                soft: !root.is-muted;
-                                horizontal-stretch: 1;
-                                clicked => { root.toggle-mute(); }
-                            }
-                            VxButton {
-                                label: root.is-deafened ? "Undeafen" : "Deafen";
-                                soft: !root.is-deafened;
-                                horizontal-stretch: 1;
-                                clicked => { root.toggle-deafen(); }
-                            }
-                        }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            VxButton {
-                                label: root.is-open-mic ? "Open mic" : "Push to talk";
-                                accent: true;
-                                horizontal-stretch: 1;
-                                clicked => { root.toggle-mic-mode(); }
-                            }
-                            VxButton {
-                                label: root.is-sharing-screen ? "Stop share" : "Share";
-                                soft: !root.is-sharing-screen;
-                                accent: root.is-sharing-screen;
-                                horizontal-stretch: 1;
-                                clicked => { root.toggle-screen-share(); }
-                            }
-                        }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            VxButton {
-                                label: "Settings";
-                                soft: true;
-                                horizontal-stretch: 1;
-                                clicked => { root.navigate(2); }
-                            }
+                // Settings
+                VxButton {
+                    label: "Settings";
+                    ghost: true;
+                    clicked => { root.navigate(2); }
+                }
+
+                // Disconnect
+                VxButton {
+                    label: root.in-space-channel ? "Leave" : "Disconnect";
+                    danger: true;
+                    clicked => {
+                        if root.in-space-channel {
+                            root.leave-channel();
+                        } else {
+                            root.leave-room();
                         }
                     }
                 }
