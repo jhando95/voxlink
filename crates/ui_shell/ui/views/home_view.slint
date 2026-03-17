@@ -46,16 +46,35 @@ export component HomeView inherits Rectangle {
 
                         Text {
                             text: root.user-name != "" && root.user-name != "User"
-                                ? "Welcome back, " + root.user-name
-                                : "Voice with less drag";
+                                ? (VxTheme.is-party ? "Welcome back, " + root.user-name + ". Ready to play?" :
+                                   VxTheme.is-space ? "Captain " + root.user-name + ", on deck." :
+                                   VxTheme.is-retro ? "user@voxlink:~$ hello " + root.user-name :
+                                   VxTheme.is-amber ? "> WELCOME, " + root.user-name :
+                                   VxTheme.is-noir  ? root.user-name + ". Good evening." :
+                                   VxTheme.is-arctic ? "Welcome to the tundra, " + root.user-name :
+                                   "Welcome back, " + root.user-name)
+                                : (VxTheme.is-party ? "Ready up." :
+                                   VxTheme.is-space ? "Awaiting crew." :
+                                   VxTheme.is-retro ? "BOOT COMPLETE" :
+                                   VxTheme.is-amber ? "> SYSTEM READY_" :
+                                   VxTheme.is-noir  ? "The line is open." :
+                                   VxTheme.is-arctic ? "Clear signal ahead." :
+                                   "Voice with less drag");
                             color: VxTheme.text-primary;
                             font-size: 24px;
-                            font-weight: 700;
+                            font-weight: VxTheme.is-noir ? 500 : 700;
                             wrap: word-wrap;
                         }
 
                         Text {
-                            text: "A calmer, faster desktop shell for calls, spaces, and chat.";
+                            text:
+                                VxTheme.is-party ? "Your 360-style voice party. Jump in, squad up, dominate." :
+                                VxTheme.is-space ? "Deep-space comms array online. All channels nominal." :
+                                VxTheme.is-retro ? "TERMINAL READY // ALL SUBSYSTEMS NOMINAL // VOICE CODEC LOADED" :
+                                VxTheme.is-amber ? "PHOSPHOR DISPLAY ACTIVE. VOICE SUBSYSTEM INITIALIZED." :
+                                VxTheme.is-noir  ? "A quieter kind of voice app. Understated. Reliable." :
+                                VxTheme.is-arctic ? "Crystal-clear comms. Zero noise. Sub-zero latency." :
+                                "A calmer, faster desktop shell for calls, spaces, and chat.";
                             color: VxTheme.text-secondary;
                             font-size: 11px;
                             wrap: word-wrap;

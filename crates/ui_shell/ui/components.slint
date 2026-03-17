@@ -78,11 +78,51 @@ export component VxCard inherits Rectangle {
     border-width: VxTheme.btn-border-width;
     clip: true;
 
+    // Default accent bar
     Rectangle {
         width: parent.width;
         height: VxTheme.card-accent-height;
         background: @linear-gradient(90deg, transparent 0%, VxTheme.accent-border 20%, transparent 100%);
         opacity: 0.9;
+    }
+
+    // ── Party/360: Blade-style double accent stripe ──
+    if VxTheme.is-party : Rectangle {
+        y: VxTheme.card-accent-height;
+        width: parent.width * 0.6;
+        height: 1px;
+        background: #8be14f20;
+    }
+
+    // ── Retro/Amber: CRT scanline overlay ──
+    if VxTheme.is-retro || VxTheme.is-amber : Rectangle {
+        y: parent.height * 0.33;
+        width: parent.width;
+        height: 1px;
+        background: VxTheme.is-amber ? #ffbe4f06 : #5cf3a606;
+    }
+    if VxTheme.is-retro || VxTheme.is-amber : Rectangle {
+        y: parent.height * 0.66;
+        width: parent.width;
+        height: 1px;
+        background: VxTheme.is-amber ? #ffbe4f06 : #5cf3a606;
+    }
+
+    // ── Space: tiny star dots in corner ──
+    if VxTheme.is-space : Rectangle {
+        x: parent.width - 12px; y: 8px;
+        width: 2px; height: 2px; border-radius: 1px; background: #ffffff18;
+    }
+    if VxTheme.is-space : Rectangle {
+        x: parent.width - 24px; y: 14px;
+        width: 2px; height: 2px; border-radius: 1px; background: #ffffff10;
+    }
+
+    // ── Arctic: frost edge glow ──
+    if VxTheme.is-arctic : Rectangle {
+        width: parent.width;
+        height: 3px;
+        background: @linear-gradient(90deg, transparent 0%, #5fdaf40a 30%, #5fdaf40e 50%, #5fdaf40a 70%, transparent 100%);
     }
 }
 
@@ -485,11 +525,36 @@ export component VxLogo inherits Rectangle {
 
     width: root.logo-size;
     height: root.logo-size;
-    border-radius: root.logo-size * 0.26;
-    background: @linear-gradient(145deg, VxTheme.header-accent-left 0%, VxTheme.header-accent-mid 55%, VxTheme.header-accent-right 100%);
+    border-radius:
+        VxTheme.is-party ? root.logo-size / 2 :   // 360: circle
+        VxTheme.is-retro ? 2px :                   // Retro: sharp CRT
+        VxTheme.is-amber ? 2px :                   // Amber: hard terminal
+        VxTheme.is-noir  ? root.logo-size / 2 :    // Noir: monocle circle
+        VxTheme.is-arctic ? root.logo-size * 0.35 : // Arctic: hexagonal feel
+        root.logo-size * 0.26;                      // Default + Space
+    background:
+        VxTheme.is-party ? #1a1a1a :                                // 360: dark circle
+        VxTheme.is-retro ? #0a1a10 :                                // Retro: dark CRT screen
+        VxTheme.is-amber ? #1a1000 :                                // Amber: dark terminal
+        VxTheme.is-noir  ? #16192240 :                              // Noir: translucent lens
+        VxTheme.is-arctic ? #0d2530 :                               // Arctic: dark ice
+        VxTheme.is-space ? #080818 :                                // Space: deep space
+        @linear-gradient(145deg, VxTheme.header-accent-left 0%, VxTheme.header-accent-mid 55%, VxTheme.header-accent-right 100%);
+    border-color:
+        VxTheme.is-party ? #8be14f60 :
+        VxTheme.is-retro ? #5cf3a640 :
+        VxTheme.is-amber ? #ffbe4f40 :
+        VxTheme.is-noir  ? #90a8ff30 :
+        VxTheme.is-arctic ? #5fdaf440 :
+        VxTheme.is-space ? #6cc9ff40 :
+        transparent;
+    border-width:
+        VxTheme.is-party || VxTheme.is-retro || VxTheme.is-amber || VxTheme.is-noir || VxTheme.is-arctic || VxTheme.is-space
+        ? 1px : 0px;
     clip: true;
 
-    Rectangle {
+    // ── Default Voxlink: gradient overlay + audio wave bars ──
+    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
         width: parent.width;
         height: parent.height;
         border-radius: parent.border-radius;
@@ -500,7 +565,7 @@ export component VxLogo inherits Rectangle {
     property <length> band-gap: root.logo-size * 0.07;
     property <length> band-start-x: (root.logo-size - (band-w * 3 + band-gap * 2)) / 2;
 
-    Rectangle {
+    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
         x: root.band-start-x;
         y: root.logo-size * 0.34;
         width: root.band-w;
@@ -508,7 +573,7 @@ export component VxLogo inherits Rectangle {
         border-radius: root.band-w / 2;
         background: #f3fbffcc;
     }
-    Rectangle {
+    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
         x: root.band-start-x + root.band-w + root.band-gap;
         y: root.logo-size * 0.20;
         width: root.band-w;
@@ -516,13 +581,320 @@ export component VxLogo inherits Rectangle {
         border-radius: root.band-w / 2;
         background: #f5fdff;
     }
-    Rectangle {
+    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
         x: root.band-start-x + (root.band-w + root.band-gap) * 2;
         y: root.logo-size * 0.28;
         width: root.band-w;
         height: root.logo-size * 0.44;
         border-radius: root.band-w / 2;
         background: #f3fbffe0;
+    }
+
+    // ── Party 360: Ring of Light ──
+    // Outer ring
+    if VxTheme.is-party : Rectangle {
+        x: root.logo-size * 0.15;
+        y: root.logo-size * 0.15;
+        width: root.logo-size * 0.70;
+        height: root.logo-size * 0.70;
+        border-radius: root.logo-size * 0.35;
+        background: transparent;
+        border-color: #4a6a3a;
+        border-width: root.logo-size * 0.04;
+    }
+    // Ring of Light — top quadrant LED
+    if VxTheme.is-party : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.18) / 2;
+        y: root.logo-size * 0.10;
+        width: root.logo-size * 0.18;
+        height: root.logo-size * 0.12;
+        border-radius: root.logo-size * 0.06;
+        background: #8be14f;
+    }
+    // Ring of Light — bottom quadrant LED
+    if VxTheme.is-party : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.18) / 2;
+        y: root.logo-size * 0.78;
+        width: root.logo-size * 0.18;
+        height: root.logo-size * 0.12;
+        border-radius: root.logo-size * 0.06;
+        background: #8be14f;
+    }
+    // Ring of Light — left quadrant LED
+    if VxTheme.is-party : Rectangle {
+        x: root.logo-size * 0.10;
+        y: (root.logo-size - root.logo-size * 0.12) / 2;
+        width: root.logo-size * 0.12;
+        height: root.logo-size * 0.18;
+        border-radius: root.logo-size * 0.06;
+        background: #8be14f;
+    }
+    // Ring of Light — right quadrant LED
+    if VxTheme.is-party : Rectangle {
+        x: root.logo-size * 0.78;
+        y: (root.logo-size - root.logo-size * 0.12) / 2;
+        width: root.logo-size * 0.12;
+        height: root.logo-size * 0.18;
+        border-radius: root.logo-size * 0.06;
+        background: #8be14f;
+    }
+    // Central "X"
+    if VxTheme.is-party : Text {
+        text: "X";
+        color: #8be14f;
+        font-size: root.logo-size * 0.30;
+        font-weight: 900;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    // Glow overlay
+    if VxTheme.is-party : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: @radial-gradient(circle, #8be14f0c 0%, transparent 65%);
+    }
+
+    // ── Space: Planet with orbit rings ──
+    // Center planet
+    if VxTheme.is-space : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.30) / 2;
+        y: (root.logo-size - root.logo-size * 0.30) / 2;
+        width: root.logo-size * 0.30;
+        height: root.logo-size * 0.30;
+        border-radius: root.logo-size * 0.15;
+        background: @radial-gradient(circle, #6cc9ff 0%, #3a6ea8 100%);
+    }
+    // Inner orbit ring
+    if VxTheme.is-space : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.55) / 2;
+        y: (root.logo-size - root.logo-size * 0.55) / 2;
+        width: root.logo-size * 0.55;
+        height: root.logo-size * 0.55;
+        border-radius: root.logo-size * 0.275;
+        background: transparent;
+        border-color: #6cc9ff30;
+        border-width: 1px;
+    }
+    // Outer orbit ring
+    if VxTheme.is-space : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.80) / 2;
+        y: (root.logo-size - root.logo-size * 0.80) / 2;
+        width: root.logo-size * 0.80;
+        height: root.logo-size * 0.80;
+        border-radius: root.logo-size * 0.40;
+        background: transparent;
+        border-color: #6cc9ff1a;
+        border-width: 1px;
+    }
+    // Moon dot on inner orbit (top-right)
+    if VxTheme.is-space : Rectangle {
+        x: root.logo-size * 0.68;
+        y: root.logo-size * 0.22;
+        width: root.logo-size * 0.08;
+        height: root.logo-size * 0.08;
+        border-radius: root.logo-size * 0.04;
+        background: #bb8cff;
+    }
+    // Moon dot on outer orbit (bottom-left)
+    if VxTheme.is-space : Rectangle {
+        x: root.logo-size * 0.16;
+        y: root.logo-size * 0.70;
+        width: root.logo-size * 0.06;
+        height: root.logo-size * 0.06;
+        border-radius: root.logo-size * 0.03;
+        background: #f2b36c;
+    }
+    // Starfield twinkle dots
+    if VxTheme.is-space : Rectangle {
+        x: root.logo-size * 0.82; y: root.logo-size * 0.14;
+        width: 2px; height: 2px; border-radius: 1px; background: #ffffff60;
+    }
+    if VxTheme.is-space : Rectangle {
+        x: root.logo-size * 0.12; y: root.logo-size * 0.18;
+        width: 2px; height: 2px; border-radius: 1px; background: #ffffff40;
+    }
+    if VxTheme.is-space : Rectangle {
+        x: root.logo-size * 0.80; y: root.logo-size * 0.78;
+        width: 2px; height: 2px; border-radius: 1px; background: #ffffff30;
+    }
+
+    // ── Retro-tech: CRT terminal with >_ prompt ──
+    // CRT screen inset glow
+    if VxTheme.is-retro : Rectangle {
+        x: 2px; y: 2px;
+        width: root.logo-size - 4px;
+        height: root.logo-size - 4px;
+        border-radius: 1px;
+        background: @radial-gradient(circle, #5cf3a60a 0%, transparent 80%);
+    }
+    // Horizontal scanline 1
+    if VxTheme.is-retro : Rectangle {
+        y: root.logo-size * 0.30;
+        width: parent.width;
+        height: 1px;
+        background: #5cf3a60c;
+    }
+    // Horizontal scanline 2
+    if VxTheme.is-retro : Rectangle {
+        y: root.logo-size * 0.55;
+        width: parent.width;
+        height: 1px;
+        background: #5cf3a60c;
+    }
+    // Horizontal scanline 3
+    if VxTheme.is-retro : Rectangle {
+        y: root.logo-size * 0.80;
+        width: parent.width;
+        height: 1px;
+        background: #5cf3a60c;
+    }
+    // Prompt ">_"
+    if VxTheme.is-retro : Text {
+        x: root.logo-size * 0.18;
+        text: ">_";
+        color: #5cf3a6;
+        font-size: root.logo-size * 0.36;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // ── Amber CRT: Phosphor terminal ──
+    // Warm CRT glow
+    if VxTheme.is-amber : Rectangle {
+        x: 2px; y: 2px;
+        width: root.logo-size - 4px;
+        height: root.logo-size - 4px;
+        border-radius: 1px;
+        background: @radial-gradient(circle, #ffbe4f08 0%, transparent 80%);
+    }
+    // Scanlines
+    if VxTheme.is-amber : Rectangle {
+        y: root.logo-size * 0.25;
+        width: parent.width; height: 1px; background: #ffbe4f0c;
+    }
+    if VxTheme.is-amber : Rectangle {
+        y: root.logo-size * 0.50;
+        width: parent.width; height: 1px; background: #ffbe4f0c;
+    }
+    if VxTheme.is-amber : Rectangle {
+        y: root.logo-size * 0.75;
+        width: parent.width; height: 1px; background: #ffbe4f0c;
+    }
+    // Amber prompt ">_"
+    if VxTheme.is-amber : Text {
+        x: root.logo-size * 0.18;
+        text: ">_";
+        color: #ffbe4f;
+        font-size: root.logo-size * 0.36;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // ── Noir: Film monocle / detective lens ──
+    // Outer lens rim
+    if VxTheme.is-noir : Rectangle {
+        x: root.logo-size * 0.12;
+        y: root.logo-size * 0.12;
+        width: root.logo-size * 0.76;
+        height: root.logo-size * 0.76;
+        border-radius: root.logo-size * 0.38;
+        background: transparent;
+        border-color: #90a8ff40;
+        border-width: root.logo-size * 0.035;
+    }
+    // Inner lens highlight (top-left reflection)
+    if VxTheme.is-noir : Rectangle {
+        x: root.logo-size * 0.26;
+        y: root.logo-size * 0.22;
+        width: root.logo-size * 0.20;
+        height: root.logo-size * 0.10;
+        border-radius: root.logo-size * 0.05;
+        background: #90a8ff18;
+    }
+    // "Vx" monogram
+    if VxTheme.is-noir : Text {
+        text: "Vx";
+        color: #cfd8f4;
+        font-size: root.logo-size * 0.26;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // ── Arctic: Ice crystal / snowflake ──
+    // Center crystal dot
+    if VxTheme.is-arctic : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.16) / 2;
+        y: (root.logo-size - root.logo-size * 0.16) / 2;
+        width: root.logo-size * 0.16;
+        height: root.logo-size * 0.16;
+        border-radius: root.logo-size * 0.08;
+        background: #5fdaf4;
+    }
+    // Vertical crystal arm
+    if VxTheme.is-arctic : Rectangle {
+        x: (root.logo-size - root.logo-size * 0.06) / 2;
+        y: root.logo-size * 0.12;
+        width: root.logo-size * 0.06;
+        height: root.logo-size * 0.76;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf450;
+    }
+    // Horizontal crystal arm
+    if VxTheme.is-arctic : Rectangle {
+        x: root.logo-size * 0.12;
+        y: (root.logo-size - root.logo-size * 0.06) / 2;
+        width: root.logo-size * 0.76;
+        height: root.logo-size * 0.06;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf450;
+    }
+    // Diagonal arm hint (top-right branch)
+    if VxTheme.is-arctic : Rectangle {
+        x: root.logo-size * 0.62;
+        y: root.logo-size * 0.18;
+        width: root.logo-size * 0.06;
+        height: root.logo-size * 0.20;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf430;
+    }
+    // Diagonal arm hint (bottom-left branch)
+    if VxTheme.is-arctic : Rectangle {
+        x: root.logo-size * 0.32;
+        y: root.logo-size * 0.62;
+        width: root.logo-size * 0.06;
+        height: root.logo-size * 0.20;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf430;
+    }
+    // Diagonal arm hint (top-left branch)
+    if VxTheme.is-arctic : Rectangle {
+        x: root.logo-size * 0.22;
+        y: root.logo-size * 0.18;
+        width: root.logo-size * 0.16;
+        height: root.logo-size * 0.06;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf428;
+    }
+    // Diagonal arm hint (bottom-right branch)
+    if VxTheme.is-arctic : Rectangle {
+        x: root.logo-size * 0.62;
+        y: root.logo-size * 0.76;
+        width: root.logo-size * 0.16;
+        height: root.logo-size * 0.06;
+        border-radius: root.logo-size * 0.03;
+        background: #5fdaf428;
+    }
+    // Frost glow
+    if VxTheme.is-arctic : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: @radial-gradient(circle, #5fdaf40a 0%, transparent 70%);
     }
 }
 

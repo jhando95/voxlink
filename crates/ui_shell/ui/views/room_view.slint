@@ -373,12 +373,25 @@ export component RoomView inherits Rectangle {
                                     if p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted) : Rectangle {
                                         x: (parent.width - self.width) / 2;
                                         y: -8px;
-                                        width: 32px;
+                                        width:
+                                            VxTheme.is-party ? 52px :
+                                            VxTheme.is-space ? 42px :
+                                            VxTheme.is-retro ? 28px :
+                                            VxTheme.is-noir  ? 36px :
+                                            32px;
                                         height: 16px;
-                                        border-radius: 8px;
+                                        border-radius:
+                                            VxTheme.is-retro || VxTheme.is-amber ? 2px : 8px;
                                         background: VxTheme.success;
                                         Text {
-                                            text: "LIVE";
+                                            text:
+                                                VxTheme.is-party ? "HOT MIC" :
+                                                VxTheme.is-space ? "COMMS" :
+                                                VxTheme.is-retro ? "TX" :
+                                                VxTheme.is-amber ? "TX" :
+                                                VxTheme.is-noir  ? "On Air" :
+                                                VxTheme.is-arctic ? "LIVE" :
+                                                "LIVE";
                                             color: VxTheme.text-inverse;
                                             font-size: 8px;
                                             font-weight: 800;

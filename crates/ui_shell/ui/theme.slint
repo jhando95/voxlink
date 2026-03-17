@@ -126,12 +126,12 @@ export struct ShareSourceData {
 export global VxTheme {
     in-out property <int> theme-preset: 0;
     in-out property <bool> dark-mode: true;
-    property <bool> is-party: theme-preset == 1;
-    property <bool> is-space: theme-preset == 2;
-    property <bool> is-retro: theme-preset == 3;
-    property <bool> is-amber: theme-preset == 4;
-    property <bool> is-noir: theme-preset == 5;
-    property <bool> is-arctic: theme-preset == 6;
+    out property <bool> is-party: theme-preset == 1;
+    out property <bool> is-space: theme-preset == 2;
+    out property <bool> is-retro: theme-preset == 3;
+    out property <bool> is-amber: theme-preset == 4;
+    out property <bool> is-noir: theme-preset == 5;
+    out property <bool> is-arctic: theme-preset == 6;
 
     // Core surfaces
     out property <color> bg-canvas:
@@ -439,7 +439,7 @@ export global VxTheme {
 
     // ── Theme-specific layout tokens ──
     out property <length> radius-card:
-        is-party ? 6px :   // Xbox 360: boxy angular panels
+        is-party ? 6px :   // 360: boxy angular panels
         is-retro ? 4px :   // Retro-tech: sharp CRT corners
         is-amber ? 3px :   // Amber CRT: hard rectangles
         is-noir  ? 8px :   // Noir: subtle rounding

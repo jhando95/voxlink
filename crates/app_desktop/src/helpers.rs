@@ -89,7 +89,7 @@ pub fn sanitize_theme_preset(preset: i32) -> i32 {
 
 pub fn theme_preset_key(preset: i32) -> &'static str {
     match sanitize_theme_preset(preset) {
-        1 => "xbox-party",
+        1 => "360-party",
         2 => "space",
         3 => "retro-tech",
         4 => "amber-crt",
@@ -101,7 +101,7 @@ pub fn theme_preset_key(preset: i32) -> &'static str {
 
 pub fn theme_preset_index(key: &str) -> i32 {
     match key {
-        "xbox-party" => 1,
+        "xbox-party" | "360-party" => 1,
         "space" => 2,
         "retro-tech" => 3,
         "amber-crt" => 4,

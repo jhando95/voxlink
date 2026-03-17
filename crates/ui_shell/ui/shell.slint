@@ -204,17 +204,38 @@ export component WorkspaceRail inherits Rectangle {
                     spacing: 2px;
 
                     Text {
-                        text: "VOXLINK";
+                        text:
+                            VxTheme.is-party ? "PARTYLINK" :
+                            VxTheme.is-space ? "STARLINK" :
+                            VxTheme.is-retro ? "VOXLINK//" :
+                            VxTheme.is-amber ? "VOX>LINK_" :
+                            VxTheme.is-noir  ? "Voxlink" :
+                            VxTheme.is-arctic ? "VOXLINK" :
+                            "VOXLINK";
                         color: VxTheme.text-primary;
                         font-size: root.compact ? 12px : 13px;
-                        font-weight: 800;
-                        letter-spacing: 1.4px;
+                        font-weight:
+                            VxTheme.is-noir ? 500 : 800;
+                        letter-spacing:
+                            VxTheme.is-noir ? 0.6px :
+                            VxTheme.is-retro || VxTheme.is-amber ? 2.0px :
+                            1.4px;
                     }
                     Text {
-                        text: root.compact ? "Voice rail" : "Voice-first command rail";
+                        text:
+                            VxTheme.is-party ? (root.compact ? "Guide" : "Achievement unlocked: Voice chat") :
+                            VxTheme.is-space ? (root.compact ? "Deep space" : "Transmitting across the void") :
+                            VxTheme.is-retro ? (root.compact ? "TERMINAL" : "BOOT SEQUENCE COMPLETE") :
+                            VxTheme.is-amber ? (root.compact ? "SYS READY" : "AMBER TERMINAL v2.04 ONLINE") :
+                            VxTheme.is-noir  ? (root.compact ? "Quiet line" : "Every voice tells a story") :
+                            VxTheme.is-arctic ? (root.compact ? "Frozen" : "Crystal-clear voice, sub-zero latency") :
+                            root.compact ? "Voice rail" : "Voice-first command rail";
                         color: VxTheme.text-muted;
                         font-size: 9px;
-                        font-weight: 500;
+                        font-weight:
+                            VxTheme.is-retro || VxTheme.is-amber ? 700 : 500;
+                        letter-spacing:
+                            VxTheme.is-retro || VxTheme.is-amber ? 1.0px : 0px;
                     }
                 }
             }
@@ -257,7 +278,15 @@ export component WorkspaceRail inherits Rectangle {
                             alignment: space-between;
                             spacing: 8px;
 
-                            SectionLabel { text: "SESSION DECK"; }
+                            SectionLabel {
+                                text: VxTheme.is-party ? "PARTY HUB" :
+                                      VxTheme.is-space ? "MISSION BRIEF" :
+                                      VxTheme.is-retro ? "SESSION.LOG" :
+                                      VxTheme.is-amber ? "SESSION>>" :
+                                      VxTheme.is-noir ? "CASE FILE" :
+                                      VxTheme.is-arctic ? "EXPEDITION" :
+                                      "SESSION DECK";
+                            }
 
                             if root.room-code != "" : VxStatusPill {
                                 label: "Live";
@@ -313,7 +342,15 @@ export component WorkspaceRail inherits Rectangle {
 
                 VerticalLayout {
                     spacing: 6px;
-                    SectionLabel { text: "NAVIGATION"; }
+                    SectionLabel {
+                        text: VxTheme.is-party ? "BLADES" :
+                              VxTheme.is-space ? "HELM" :
+                              VxTheme.is-retro ? "MENU//" :
+                              VxTheme.is-amber ? "NAV>>" :
+                              VxTheme.is-noir ? "CHAPTERS" :
+                              VxTheme.is-arctic ? "WAYPOINTS" :
+                              "NAVIGATION";
+                    }
 
                     Rectangle {
                         height: 46px;
@@ -337,12 +374,19 @@ export component WorkspaceRail inherits Rectangle {
                             Rectangle {
                                 width: 34px;
                                 height: 34px;
-                                border-radius: 10px;
+                                border-radius: VxTheme.is-party ? 17px :
+                                               VxTheme.is-retro || VxTheme.is-amber ? 4px : 10px;
                                 background: root.current-view == 0 ? VxTheme.accent : VxTheme.bg-soft;
                                 Text {
-                                    text: "HM";
+                                    text: VxTheme.is-party ? "X" :
+                                          VxTheme.is-retro ? ">_" :
+                                          VxTheme.is-amber ? "~$" :
+                                          VxTheme.is-noir ? "i" :
+                                          VxTheme.is-space ? "*" :
+                                          VxTheme.is-arctic ? "**" :
+                                          "HM";
                                     color: root.current-view == 0 ? VxTheme.text-inverse : VxTheme.text-secondary;
-                                    font-size: 10px;
+                                    font-size: VxTheme.is-party ? 14px : 10px;
                                     font-weight: 800;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -353,13 +397,23 @@ export component WorkspaceRail inherits Rectangle {
                                 alignment: center;
                                 spacing: 1px;
                                 Text {
-                                    text: "Home";
+                                    text: VxTheme.is-party ? "Guide" :
+                                          VxTheme.is-retro ? "MAIN" :
+                                          VxTheme.is-amber ? "HOME" :
+                                          VxTheme.is-noir ? "Lobby" :
+                                          VxTheme.is-space ? "Bridge" :
+                                          VxTheme.is-arctic ? "Base" :
+                                          "Home";
                                     color: VxTheme.text-primary;
                                     font-size: 12px;
                                     font-weight: 700;
                                 }
                                 Text {
-                                    text: "Calls, identity, spaces";
+                                    text: VxTheme.is-party ? "Dashboard, gamertag" :
+                                          VxTheme.is-retro ? "Sessions and identity" :
+                                          VxTheme.is-noir ? "Connections, dossiers" :
+                                          VxTheme.is-space ? "Comms, crew, stations" :
+                                          "Calls, identity, spaces";
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
                                 }
@@ -389,12 +443,19 @@ export component WorkspaceRail inherits Rectangle {
                             Rectangle {
                                 width: 34px;
                                 height: 34px;
-                                border-radius: 10px;
+                                border-radius: VxTheme.is-party ? 17px :
+                                               VxTheme.is-retro || VxTheme.is-amber ? 4px : 10px;
                                 background: root.current-view == 2 ? VxTheme.accent : VxTheme.bg-soft;
                                 Text {
-                                    text: "AU";
+                                    text: VxTheme.is-party ? "Y" :
+                                          VxTheme.is-retro ? "cf" :
+                                          VxTheme.is-amber ? "/e" :
+                                          VxTheme.is-noir ? "ii" :
+                                          VxTheme.is-space ? "@" :
+                                          VxTheme.is-arctic ? "==" :
+                                          "AU";
                                     color: root.current-view == 2 ? VxTheme.text-inverse : VxTheme.text-secondary;
-                                    font-size: 10px;
+                                    font-size: VxTheme.is-party ? 14px : 10px;
                                     font-weight: 800;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -405,13 +466,23 @@ export component WorkspaceRail inherits Rectangle {
                                 alignment: center;
                                 spacing: 1px;
                                 Text {
-                                    text: "Settings";
+                                    text: VxTheme.is-party ? "Preferences" :
+                                          VxTheme.is-retro ? "CONFIG" :
+                                          VxTheme.is-amber ? "EDIT" :
+                                          VxTheme.is-noir ? "Dials" :
+                                          VxTheme.is-space ? "Controls" :
+                                          VxTheme.is-arctic ? "Tuning" :
+                                          "Settings";
                                     color: VxTheme.text-primary;
                                     font-size: 12px;
                                     font-weight: 700;
                                 }
                                 Text {
-                                    text: "Devices, keybinds, tone";
+                                    text: VxTheme.is-party ? "Audio, controller config" :
+                                          VxTheme.is-retro ? "I/O ports and keybinds" :
+                                          VxTheme.is-noir ? "Mic, output, presence" :
+                                          VxTheme.is-space ? "Comms array, frequencies" :
+                                          "Devices, keybinds, tone";
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
                                 }
@@ -441,12 +512,19 @@ export component WorkspaceRail inherits Rectangle {
                             Rectangle {
                                 width: 34px;
                                 height: 34px;
-                                border-radius: 10px;
+                                border-radius: VxTheme.is-party ? 17px :
+                                               VxTheme.is-retro || VxTheme.is-amber ? 4px : 10px;
                                 background: root.current-view == 3 ? VxTheme.accent : VxTheme.bg-soft;
                                 Text {
-                                    text: "SY";
+                                    text: VxTheme.is-party ? "B" :
+                                          VxTheme.is-retro ? "ps" :
+                                          VxTheme.is-amber ? "df" :
+                                          VxTheme.is-noir ? "iii" :
+                                          VxTheme.is-space ? "#" :
+                                          VxTheme.is-arctic ? "--" :
+                                          "SY";
                                     color: root.current-view == 3 ? VxTheme.text-inverse : VxTheme.text-secondary;
-                                    font-size: 10px;
+                                    font-size: VxTheme.is-party ? 14px : 10px;
                                     font-weight: 800;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -457,13 +535,23 @@ export component WorkspaceRail inherits Rectangle {
                                 alignment: center;
                                 spacing: 1px;
                                 Text {
-                                    text: "System";
+                                    text: VxTheme.is-party ? "Stats" :
+                                          VxTheme.is-retro ? "MONITOR" :
+                                          VxTheme.is-amber ? "DIAG" :
+                                          VxTheme.is-noir ? "Pulse" :
+                                          VxTheme.is-space ? "Telemetry" :
+                                          VxTheme.is-arctic ? "Sensors" :
+                                          "System";
                                     color: VxTheme.text-primary;
                                     font-size: 12px;
                                     font-weight: 700;
                                 }
                                 Text {
-                                    text: "Health and performance";
+                                    text: VxTheme.is-party ? "Gamerscore, performance" :
+                                          VxTheme.is-retro ? "CPU, memory, uptime" :
+                                          VxTheme.is-noir ? "Vitals and diagnostics" :
+                                          VxTheme.is-space ? "Ship systems, hull status" :
+                                          "Health and performance";
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
                                 }
@@ -646,13 +734,18 @@ export component BottomNav inherits Rectangle {
                 alignment: center;
                 spacing: 2px;
                 Text {
-                    text: "HOME";
+                    text: VxTheme.is-party ? "GUIDE" :
+                          VxTheme.is-retro ? "MAIN" :
+                          VxTheme.is-space ? "BRIDGE" :
+                          "HOME";
                     color: root.current-view == 0 ? VxTheme.accent : VxTheme.text-secondary;
                     font-size: 10px;
                     font-weight: 800;
                 }
                 Text {
-                    text: "Overview";
+                    text: VxTheme.is-party ? "Dashboard" :
+                          VxTheme.is-noir ? "Lobby" :
+                          "Overview";
                     color: VxTheme.text-muted;
                     font-size: 9px;
                 }
@@ -669,13 +762,19 @@ export component BottomNav inherits Rectangle {
                 alignment: center;
                 spacing: 2px;
                 Text {
-                    text: "SET";
+                    text: VxTheme.is-party ? "PREF" :
+                          VxTheme.is-retro ? "CONF" :
+                          VxTheme.is-space ? "CTRL" :
+                          "SET";
                     color: root.current-view == 2 ? VxTheme.accent : VxTheme.text-secondary;
                     font-size: 10px;
                     font-weight: 800;
                 }
                 Text {
-                    text: "Devices";
+                    text: VxTheme.is-party ? "Audio" :
+                          VxTheme.is-noir ? "Dials" :
+                          VxTheme.is-space ? "Array" :
+                          "Devices";
                     color: VxTheme.text-muted;
                     font-size: 9px;
                 }
@@ -692,13 +791,19 @@ export component BottomNav inherits Rectangle {
                 alignment: center;
                 spacing: 2px;
                 Text {
-                    text: "SYS";
+                    text: VxTheme.is-party ? "STATS" :
+                          VxTheme.is-retro ? "MON" :
+                          VxTheme.is-space ? "TEL" :
+                          "SYS";
                     color: root.current-view == 3 ? VxTheme.accent : VxTheme.text-secondary;
                     font-size: 10px;
                     font-weight: 800;
                 }
                 Text {
-                    text: "Health";
+                    text: VxTheme.is-party ? "Score" :
+                          VxTheme.is-noir ? "Pulse" :
+                          VxTheme.is-space ? "Sensors" :
+                          "Health";
                     color: VxTheme.text-muted;
                     font-size: 9px;
                 }
