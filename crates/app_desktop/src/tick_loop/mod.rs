@@ -592,11 +592,12 @@ fn auto_hide_notification(
     tick: u64,
     w: &MainWindow,
 ) {
-    if let Some(t) = *notification_at_tick.borrow() {
-        if tick.saturating_sub(t) >= 120 {
-            w.set_room_status(slint::SharedString::default());
-            *notification_at_tick.borrow_mut() = None;
-        }
+    let should_clear = notification_at_tick
+        .borrow()
+        .map_or(false, |t| tick.saturating_sub(t) >= 120);
+    if should_clear {
+        w.set_room_status(slint::SharedString::default());
+        *notification_at_tick.borrow_mut() = None;
     }
 }
 
