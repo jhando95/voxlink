@@ -1,5 +1,5 @@
 import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
-import { BottomNav, TopBar, WorkspaceRail } from "shell.slint";
+import { BottomNav, NavBreadcrumb, TopBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
 import { RoomView } from "views/room_view.slint";
@@ -298,6 +298,18 @@ export component MainWindow inherits Window {
                         update-available: root.update-available;
                         update-version: root.update-version;
                         nav-toggle => { root.sidebar-expanded = !root.sidebar-expanded; }
+                    }
+
+                    NavBreadcrumb {
+                        current-view: root.current-view;
+                        previous-view: root.previous-view;
+                        space-name: root.current-space-name;
+                        channel-name: root.chat-channel-name;
+                        room-code: root.room-code;
+                        in-space-channel: root.in-space-channel;
+                        chat-is-dm: root.chat-is-direct-message;
+                        chat-back-view: root.chat-back-view;
+                        navigate(view-index) => { root.navigate(view-index); }
                     }
 
                     Rectangle {

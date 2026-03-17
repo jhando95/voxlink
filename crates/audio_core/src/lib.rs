@@ -418,6 +418,15 @@ impl AudioEngine {
         opus_encoder
             .set_bandwidth(audiopus::Bandwidth::Fullband)
             .ok();
+        // VBR: Variable bitrate — better quality for speech by allocating more bits
+        // to complex segments and fewer to simple/silence. More efficient than CBR.
+        opus_encoder.set_vbr(true).ok();
+        // Constrained VBR: prevents bitrate spikes that could cause network jitter
+        opus_encoder.set_vbr_constraint(true).ok();
+        // Explicit voice signal type — helps Opus optimize for speech intelligibility
+        opus_encoder
+            .set_signal(audiopus::Signal::Voice)
+            .ok();
 
         let on_frame = self.on_encoded_frame.clone();
         let is_capturing = self.is_capturing.clone();
