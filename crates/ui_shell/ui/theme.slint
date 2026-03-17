@@ -52,6 +52,7 @@ export struct ChannelData {
     is-voice: bool,
     is-active: bool,
     unread-count: int,
+    topic: string,
 }
 
 export struct MemberData {
@@ -59,7 +60,10 @@ export struct MemberData {
     user-id: string,
     name: string,
     initial: string,
+    role-label: string,
+    role-tier: int,
     channel-name: string,
+    status: string,
     is-online: bool,
     is-in-voice: bool,
     color-index: int,
@@ -68,6 +72,14 @@ export struct MemberData {
     has-incoming-request: bool,
     has-outgoing-request: bool,
     is-self: bool,
+}
+
+export struct AuditEntryData {
+    actor-name: string,
+    action: string,
+    target-name: string,
+    detail: string,
+    timestamp: string,
 }
 
 export struct FriendData {
@@ -112,39 +124,207 @@ export struct ShareSourceData {
 // Voice-first broadcast console aesthetic: calm, sharp, premium
 
 export global VxTheme {
+    in-out property <int> theme-preset: 0;
     in-out property <bool> dark-mode: true;
+    property <bool> is-party: theme-preset == 1;
+    property <bool> is-space: theme-preset == 2;
+    property <bool> is-retro: theme-preset == 3;
+    property <bool> is-amber: theme-preset == 4;
+    property <bool> is-noir: theme-preset == 5;
+    property <bool> is-arctic: theme-preset == 6;
 
     // Core surfaces
-    out property <color> bg-canvas:    dark-mode ? #071019 : #eef3f7;
-    out property <color> bg-app:       dark-mode ? #0a141e : #f4f8fb;
-    out property <color> bg-panel:     dark-mode ? #101b26 : #ffffff;
-    out property <color> bg-card:      dark-mode ? #13202d : #ffffff;
-    out property <color> bg-raised:    dark-mode ? #182736 : #e7eff6;
-    out property <color> bg-input:     dark-mode ? #0d1722 : #f6f9fc;
-    out property <color> bg-rail:      dark-mode ? #09121b : #e9f0f5;
-    out property <color> bg-overlay:   dark-mode ? #04090fd0 : #ffffffdd;
-    out property <color> bg-soft:      dark-mode ? #0e1721 : #edf4f8;
-    out property <color> bg-stage:     dark-mode ? #0c151d : #f3f8fb;
+    out property <color> bg-canvas:
+        is-party ? (dark-mode ? #0b1209 : #eef4e8) :
+        is-space ? (dark-mode ? #050713 : #eef1fb) :
+        is-retro ? (dark-mode ? #050c0a : #eef6f2) :
+        is-amber ? (dark-mode ? #120b06 : #f8efe3) :
+        is-noir ? (dark-mode ? #050608 : #eef1f6) :
+        is-arctic ? (dark-mode ? #071014 : #edf8fb) :
+        dark-mode ? #071019 : #eef3f7;
+    out property <color> bg-app:
+        is-party ? (dark-mode ? #10180e : #f5f8f0) :
+        is-space ? (dark-mode ? #080c18 : #f5f7ff) :
+        is-retro ? (dark-mode ? #08110e : #f4f8f6) :
+        is-amber ? (dark-mode ? #181008 : #fcf6ee) :
+        is-noir ? (dark-mode ? #0a0c10 : #f7f8fb) :
+        is-arctic ? (dark-mode ? #0b161b : #f5fbfd) :
+        dark-mode ? #0a141e : #f4f8fb;
+    out property <color> bg-panel:
+        is-party ? (dark-mode ? #152012 : #ffffff) :
+        is-space ? (dark-mode ? #0f1530 : #ffffff) :
+        is-retro ? (dark-mode ? #0d1713 : #ffffff) :
+        is-amber ? (dark-mode ? #23180c : #fffdf9) :
+        is-noir ? (dark-mode ? #11141a : #ffffff) :
+        is-arctic ? (dark-mode ? #102127 : #ffffff) :
+        dark-mode ? #101b26 : #ffffff;
+    out property <color> bg-card:
+        is-party ? (dark-mode ? #192715 : #ffffff) :
+        is-space ? (dark-mode ? #141c3a : #ffffff) :
+        is-retro ? (dark-mode ? #111d18 : #ffffff) :
+        is-amber ? (dark-mode ? #291c0f : #fffdfb) :
+        is-noir ? (dark-mode ? #151921 : #ffffff) :
+        is-arctic ? (dark-mode ? #13292f : #ffffff) :
+        dark-mode ? #13202d : #ffffff;
+    out property <color> bg-raised:
+        is-party ? (dark-mode ? #22331d : #dfead5) :
+        is-space ? (dark-mode ? #1a2548 : #dfe5fb) :
+        is-retro ? (dark-mode ? #172721 : #dcebe3) :
+        is-amber ? (dark-mode ? #362615 : #f0dfcb) :
+        is-noir ? (dark-mode ? #1e2430 : #e0e5ef) :
+        is-arctic ? (dark-mode ? #1a3640 : #dff1f5) :
+        dark-mode ? #182736 : #e7eff6;
+    out property <color> bg-input:
+        is-party ? (dark-mode ? #0e160d : #f7faf4) :
+        is-space ? (dark-mode ? #0a1124 : #f7f9ff) :
+        is-retro ? (dark-mode ? #09110d : #f5faf7) :
+        is-amber ? (dark-mode ? #1b1209 : #fff9f3) :
+        is-noir ? (dark-mode ? #0c1015 : #fafbff) :
+        is-arctic ? (dark-mode ? #0c1b21 : #f7fdff) :
+        dark-mode ? #0d1722 : #f6f9fc;
+    out property <color> bg-rail:
+        is-party ? (dark-mode ? #091008 : #e5ecde) :
+        is-space ? (dark-mode ? #050915 : #e6ebfb) :
+        is-retro ? (dark-mode ? #040a07 : #e3eee8) :
+        is-amber ? (dark-mode ? #100904 : #f2e4d3) :
+        is-noir ? (dark-mode ? #07090d : #e7ebf2) :
+        is-arctic ? (dark-mode ? #081318 : #e4f1f5) :
+        dark-mode ? #09121b : #e9f0f5;
+    out property <color> bg-overlay:
+        is-party ? (dark-mode ? #040804d0 : #ffffffdd) :
+        is-space ? (dark-mode ? #03040bd0 : #ffffffdd) :
+        is-retro ? (dark-mode ? #020604d0 : #ffffffdd) :
+        is-amber ? (dark-mode ? #070401d0 : #fffffadd) :
+        is-noir ? (dark-mode ? #020305d0 : #ffffffdd) :
+        is-arctic ? (dark-mode ? #03090bd0 : #ffffffdd) :
+        dark-mode ? #04090fd0 : #ffffffdd;
+    out property <color> bg-soft:
+        is-party ? (dark-mode ? #121b10 : #edf3e6) :
+        is-space ? (dark-mode ? #0d1530 : #edf2fd) :
+        is-retro ? (dark-mode ? #0d1714 : #ebf5ef) :
+        is-amber ? (dark-mode ? #21160d : #f7eddc) :
+        is-noir ? (dark-mode ? #10141b : #edf1f7) :
+        is-arctic ? (dark-mode ? #0f1e24 : #eef7fa) :
+        dark-mode ? #0e1721 : #edf4f8;
+    out property <color> bg-stage:
+        is-party ? (dark-mode ? #0d150c : #f4f8f0) :
+        is-space ? (dark-mode ? #091020 : #f3f6ff) :
+        is-retro ? (dark-mode ? #09120e : #f2f7f4) :
+        is-amber ? (dark-mode ? #1b1209 : #fbf6ee) :
+        is-noir ? (dark-mode ? #0b0f14 : #f6f8fb) :
+        is-arctic ? (dark-mode ? #0d181d : #f4fafc) :
+        dark-mode ? #0c151d : #f3f8fb;
 
     // Borders
-    out property <color> border-subtle: dark-mode ? #213344 : #d6e0e8;
-    out property <color> border-strong: dark-mode ? #2d465b : #bfd1df;
-    out property <color> border-focus:  dark-mode ? #54d2ff : #1686c5;
+    out property <color> border-subtle:
+        is-party ? (dark-mode ? #2d4724 : #c5d5b8) :
+        is-space ? (dark-mode ? #273467 : #c8d2f0) :
+        is-retro ? (dark-mode ? #204238 : #bfd8cc) :
+        is-amber ? (dark-mode ? #5b3b1e : #dfc1a0) :
+        is-noir ? (dark-mode ? #2b3240 : #cfd6e3) :
+        is-arctic ? (dark-mode ? #24404a : #bfd9e1) :
+        dark-mode ? #213344 : #d6e0e8;
+    out property <color> border-strong:
+        is-party ? (dark-mode ? #4a7138 : #a9c193) :
+        is-space ? (dark-mode ? #3d5399 : #a9b8e8) :
+        is-retro ? (dark-mode ? #327060 : #97bcae) :
+        is-amber ? (dark-mode ? #835328 : #c69e72) :
+        is-noir ? (dark-mode ? #455068 : #b5bfd4) :
+        is-arctic ? (dark-mode ? #396273 : #9ec3ce) :
+        dark-mode ? #2d465b : #bfd1df;
+    out property <color> border-focus:
+        is-party ? (dark-mode ? #98f15d : #5cad2c) :
+        is-space ? (dark-mode ? #7cc8ff : #4d8fd9) :
+        is-retro ? (dark-mode ? #5cf3a6 : #289a67) :
+        is-amber ? (dark-mode ? #ffbe4f : #cb7d12) :
+        is-noir ? (dark-mode ? #90a8ff : #5670cb) :
+        is-arctic ? (dark-mode ? #5fdaf4 : #159db9) :
+        dark-mode ? #54d2ff : #1686c5;
 
     // Text
-    out property <color> text-primary:   dark-mode ? #eaf3fb : #0f1720;
-    out property <color> text-secondary: dark-mode ? #a4b6c7 : #425363;
-    out property <color> text-muted:     dark-mode ? #6f8295 : #76899c;
+    out property <color> text-primary:
+        is-party ? (dark-mode ? #eff8ea : #152114) :
+        is-space ? (dark-mode ? #f0f4ff : #121935) :
+        is-retro ? (dark-mode ? #dfffee : #11211a) :
+        is-amber ? (dark-mode ? #ffe6b9 : #2d1a0a) :
+        is-noir ? (dark-mode ? #f3f5fa : #171b24) :
+        is-arctic ? (dark-mode ? #e8fbff : #0f2027) :
+        dark-mode ? #eaf3fb : #0f1720;
+    out property <color> text-secondary:
+        is-party ? (dark-mode ? #abc89d : #4d6342) :
+        is-space ? (dark-mode ? #a7b4dc : #475685) :
+        is-retro ? (dark-mode ? #95c6b5 : #3d6454) :
+        is-amber ? (dark-mode ? #d1aa74 : #79563a) :
+        is-noir ? (dark-mode ? #aab2c4 : #4d5769) :
+        is-arctic ? (dark-mode ? #9fc8d0 : #446671) :
+        dark-mode ? #a4b6c7 : #425363;
+    out property <color> text-muted:
+        is-party ? (dark-mode ? #78906d : #75886b) :
+        is-space ? (dark-mode ? #7280aa : #7180ad) :
+        is-retro ? (dark-mode ? #668578 : #70887c) :
+        is-amber ? (dark-mode ? #a18159 : #9a7c61) :
+        is-noir ? (dark-mode ? #7a8398 : #798396) :
+        is-arctic ? (dark-mode ? #70929a : #6f919b) :
+        dark-mode ? #6f8295 : #76899c;
     out property <color> text-inverse:   dark-mode ? #081018 : #ffffff;
 
     // Accent
-    out property <color> accent:         dark-mode ? #54d2ff : #1686c5;
-    out property <color> accent-hover:   dark-mode ? #7bddff : #0f7ab3;
-    out property <color> accent-pressed: dark-mode ? #2cb6ef : #0f6fa6;
-    out property <color> accent-glow:    dark-mode ? #54d2ff28 : #1686c518;
-    out property <color> accent-subtle:  dark-mode ? #54d2ff12 : #1686c50f;
-    out property <color> accent-border:  dark-mode ? #54d2ff58 : #1686c53a;
-    out property <color> accent-warm:    dark-mode ? #7ce5c8 : #0ea88f;
+    out property <color> accent:
+        is-party ? (dark-mode ? #8be14f : #5cad2c) :
+        is-space ? (dark-mode ? #6cc9ff : #4d8fd9) :
+        is-retro ? (dark-mode ? #5cf3a6 : #289a67) :
+        is-amber ? (dark-mode ? #ffbe4f : #cb7d12) :
+        is-noir ? (dark-mode ? #90a8ff : #5670cb) :
+        is-arctic ? (dark-mode ? #5fdaf4 : #159db9) :
+        dark-mode ? #54d2ff : #1686c5;
+    out property <color> accent-hover:
+        is-party ? (dark-mode ? #a5f06d : #4a9425) :
+        is-space ? (dark-mode ? #91d8ff : #417dc0) :
+        is-retro ? (dark-mode ? #7cf6b7 : #237f56) :
+        is-amber ? (dark-mode ? #ffca6d : #b56c0b) :
+        is-noir ? (dark-mode ? #adc0ff : #4760b4) :
+        is-arctic ? (dark-mode ? #88e7fa : #118aa3) :
+        dark-mode ? #7bddff : #0f7ab3;
+    out property <color> accent-pressed:
+        is-party ? (dark-mode ? #73c83a : #438920) :
+        is-space ? (dark-mode ? #4fb3eb : #396faa) :
+        is-retro ? (dark-mode ? #3fd88c : #1f704d) :
+        is-amber ? (dark-mode ? #e59f28 : #9e5d08) :
+        is-noir ? (dark-mode ? #7188df : #3b5198) :
+        is-arctic ? (dark-mode ? #37c7e3 : #0e7890) :
+        dark-mode ? #2cb6ef : #0f6fa6;
+    out property <color> accent-glow:
+        is-party ? (dark-mode ? #8be14f28 : #5cad2c18) :
+        is-space ? (dark-mode ? #6cc9ff28 : #4d8fd918) :
+        is-retro ? (dark-mode ? #5cf3a628 : #289a6718) :
+        is-amber ? (dark-mode ? #ffbe4f28 : #cb7d1218) :
+        is-noir ? (dark-mode ? #90a8ff24 : #5670cb18) :
+        is-arctic ? (dark-mode ? #5fdaf428 : #159db918) :
+        dark-mode ? #54d2ff28 : #1686c518;
+    out property <color> accent-subtle:
+        is-party ? (dark-mode ? #8be14f12 : #5cad2c10) :
+        is-space ? (dark-mode ? #6cc9ff12 : #4d8fd910) :
+        is-retro ? (dark-mode ? #5cf3a610 : #289a670f) :
+        is-amber ? (dark-mode ? #ffbe4f12 : #cb7d1210) :
+        is-noir ? (dark-mode ? #90a8ff10 : #5670cb10) :
+        is-arctic ? (dark-mode ? #5fdaf412 : #159db910) :
+        dark-mode ? #54d2ff12 : #1686c50f;
+    out property <color> accent-border:
+        is-party ? (dark-mode ? #8be14f52 : #5cad2c3a) :
+        is-space ? (dark-mode ? #6cc9ff52 : #4d8fd93a) :
+        is-retro ? (dark-mode ? #5cf3a650 : #289a673a) :
+        is-amber ? (dark-mode ? #ffbe4f50 : #cb7d123c) :
+        is-noir ? (dark-mode ? #90a8ff48 : #5670cb3a) :
+        is-arctic ? (dark-mode ? #5fdaf450 : #159db93c) :
+        dark-mode ? #54d2ff58 : #1686c53a;
+    out property <color> accent-warm:
+        is-party ? (dark-mode ? #f3c65d : #c98f2a) :
+        is-space ? (dark-mode ? #bb8cff : #8462dd) :
+        is-retro ? (dark-mode ? #ffca5c : #d5942a) :
+        is-amber ? (dark-mode ? #fff0b2 : #d9ab4a) :
+        is-noir ? (dark-mode ? #cfd8f4 : #7d8dbf) :
+        is-arctic ? (dark-mode ? #c8f6ff : #6fc5d6) :
+        dark-mode ? #7ce5c8 : #0ea88f;
 
     // States
     out property <color> success:        #2fd88a;
@@ -156,23 +336,100 @@ export global VxTheme {
     out property <color> warning-soft:   dark-mode ? #ffb84d20 : #ffb84d16;
 
     // Interactive / utility
-    out property <color> card-hover-bg:     dark-mode ? #172535 : #edf4fa;
-    out property <color> card-hover-border: dark-mode ? #2b4458 : #c4d8e6;
-    out property <color> btn-hover-bg:      dark-mode ? #1d2d3f : #deebf4;
-    out property <color> surface-active:    dark-mode ? #1a3144 : #d9ecf8;
-    out property <color> row-hover-bg:      dark-mode ? #122131 : #ebf4fa;
-    out property <color> speaking-row-bg:   dark-mode ? #163143 : #def3ff;
-    out property <color> speaking-glow:     dark-mode ? #54d2ff18 : #1686c512;
-    out property <color> speaking-border:   dark-mode ? #54d2ff6a : #1686c54a;
+    out property <color> card-hover-bg:
+        is-party ? (dark-mode ? #1d2c18 : #e8f2df) :
+        is-space ? (dark-mode ? #152146 : #e8eefc) :
+        is-retro ? (dark-mode ? #13211c : #e3f0e8) :
+        is-amber ? (dark-mode ? #2b1d10 : #f3e7d6) :
+        is-noir ? (dark-mode ? #171c26 : #e8edf5) :
+        is-arctic ? (dark-mode ? #162a31 : #e7f4f8) :
+        dark-mode ? #172535 : #edf4fa;
+    out property <color> card-hover-border:
+        is-party ? (dark-mode ? #4c6a39 : #afc691) :
+        is-space ? (dark-mode ? #4a63a8 : #a5b7e7) :
+        is-retro ? (dark-mode ? #3b7564 : #9abfad) :
+        is-amber ? (dark-mode ? #8f5f31 : #ca9d69) :
+        is-noir ? (dark-mode ? #52607c : #b7c1d6) :
+        is-arctic ? (dark-mode ? #46717e : #a1ccd6) :
+        dark-mode ? #2b4458 : #c4d8e6;
+    out property <color> btn-hover-bg:
+        is-party ? (dark-mode ? #263a1f : #dcead0) :
+        is-space ? (dark-mode ? #1d2a54 : #dce5fb) :
+        is-retro ? (dark-mode ? #1a3028 : #d9ece2) :
+        is-amber ? (dark-mode ? #3a2815 : #ead9c3) :
+        is-noir ? (dark-mode ? #222938 : #dde4f0) :
+        is-arctic ? (dark-mode ? #1e3740 : #dceff4) :
+        dark-mode ? #1d2d3f : #deebf4;
+    out property <color> surface-active:
+        is-party ? (dark-mode ? #294423 : #d7ebc4) :
+        is-space ? (dark-mode ? #1e3461 : #d7e3fb) :
+        is-retro ? (dark-mode ? #1c3a30 : #d5ece0) :
+        is-amber ? (dark-mode ? #482f16 : #ead2b3) :
+        is-noir ? (dark-mode ? #273248 : #d8e0ef) :
+        is-arctic ? (dark-mode ? #23444d : #d8edf3) :
+        dark-mode ? #1a3144 : #d9ecf8;
+    out property <color> row-hover-bg:
+        is-party ? (dark-mode ? #182716 : #eaf3e2) :
+        is-space ? (dark-mode ? #12203f : #eaf0fd) :
+        is-retro ? (dark-mode ? #10211a : #e7f2eb) :
+        is-amber ? (dark-mode ? #26190d : #f3e8d8) :
+        is-noir ? (dark-mode ? #131823 : #ebeff6) :
+        is-arctic ? (dark-mode ? #13252c : #ebf5f8) :
+        dark-mode ? #122131 : #ebf4fa;
+    out property <color> speaking-row-bg:
+        is-party ? (dark-mode ? #18351b : #def2d2) :
+        is-space ? (dark-mode ? #162b4a : #e1ebff) :
+        is-retro ? (dark-mode ? #123125 : #ddf4e7) :
+        is-amber ? (dark-mode ? #342211 : #f4dfbe) :
+        is-noir ? (dark-mode ? #162033 : #e1e8f8) :
+        is-arctic ? (dark-mode ? #17323a : #def2f7) :
+        dark-mode ? #163143 : #def3ff;
+    out property <color> speaking-glow:
+        is-party ? (dark-mode ? #8be14f18 : #5cad2c12) :
+        is-space ? (dark-mode ? #6cc9ff18 : #4d8fd912) :
+        is-retro ? (dark-mode ? #5cf3a618 : #289a6712) :
+        is-amber ? (dark-mode ? #ffbe4f18 : #cb7d1212) :
+        is-noir ? (dark-mode ? #90a8ff18 : #5670cb12) :
+        is-arctic ? (dark-mode ? #5fdaf418 : #159db912) :
+        dark-mode ? #54d2ff18 : #1686c512;
+    out property <color> speaking-border:
+        is-party ? (dark-mode ? #8be14f62 : #5cad2c4a) :
+        is-space ? (dark-mode ? #6cc9ff6a : #4d8fd94a) :
+        is-retro ? (dark-mode ? #5cf3a65a : #289a6748) :
+        is-amber ? (dark-mode ? #ffbe4f60 : #cb7d1248) :
+        is-noir ? (dark-mode ? #90a8ff60 : #5670cb48) :
+        is-arctic ? (dark-mode ? #5fdaf460 : #159db948) :
+        dark-mode ? #54d2ff6a : #1686c54a;
     out property <color> mute-badge-bg:     dark-mode ? #321a1d : #fff0f0;
     out property <color> deafen-badge-bg:   dark-mode ? #2e2617 : #fff7e9;
     out property <color> connection-lost-bg:dark-mode ? #31191d : #fff0f0;
     out property <color> mic-glow-green:    dark-mode ? #2fd88a30 : #2fd88a20;
     out property <color> mic-glow-yellow:   dark-mode ? #ffb84d30 : #ffb84d20;
     out property <color> mic-glow-red:      dark-mode ? #ff6b6b30 : #ff6b6b20;
-    out property <color> msg-self-bg:       dark-mode ? #143041 : #e1f5ff;
-    out property <color> msg-other-bg:      dark-mode ? #0f1923 : #f5f8fb;
-    out property <color> tab-active-bg:     dark-mode ? #153043 : #dff1fb;
+    out property <color> msg-self-bg:
+        is-party ? (dark-mode ? #1d3724 : #e0f1d5) :
+        is-space ? (dark-mode ? #152d4d : #dfeaff) :
+        is-retro ? (dark-mode ? #123024 : #dcf2e7) :
+        is-amber ? (dark-mode ? #3a2412 : #f1dec0) :
+        is-noir ? (dark-mode ? #1a2438 : #dde5f7) :
+        is-arctic ? (dark-mode ? #173741 : #dbf1f6) :
+        dark-mode ? #143041 : #e1f5ff;
+    out property <color> msg-other-bg:
+        is-party ? (dark-mode ? #111914 : #f5f8f0) :
+        is-space ? (dark-mode ? #0c1430 : #f6f8ff) :
+        is-retro ? (dark-mode ? #0b1411 : #f4f8f5) :
+        is-amber ? (dark-mode ? #1a120a : #f9f3ec) :
+        is-noir ? (dark-mode ? #10141b : #f6f8fb) :
+        is-arctic ? (dark-mode ? #101c21 : #f4fafc) :
+        dark-mode ? #0f1923 : #f5f8fb;
+    out property <color> tab-active-bg:
+        is-party ? (dark-mode ? #203622 : #deefcf) :
+        is-space ? (dark-mode ? #173153 : #dde7ff) :
+        is-retro ? (dark-mode ? #173629 : #ddefe4) :
+        is-amber ? (dark-mode ? #452a12 : #edd9bb) :
+        is-noir ? (dark-mode ? #1c2942 : #dde5f4) :
+        is-arctic ? (dark-mode ? #1a3942 : #dceff4) :
+        dark-mode ? #153043 : #dff1fb;
 
     // Layout tokens
     out property <length> radius-card:    16px;
@@ -189,9 +446,30 @@ export global VxTheme {
     out property <color> sidebar-item-active:    tab-active-bg;
     out property <color> sidebar-divider:        border-subtle;
     out property <color> sidebar-user-bg:        bg-soft;
-    out property <color> header-accent-left:     dark-mode ? #54d2ff : #1686c5;
-    out property <color> header-accent-mid:      dark-mode ? #4fd5d0 : #0ea88f;
-    out property <color> header-accent-right:    dark-mode ? #f5c86b : #d99b2b;
+    out property <color> header-accent-left:
+        is-party ? accent :
+        is-space ? accent :
+        is-retro ? accent :
+        is-amber ? accent :
+        is-noir ? accent :
+        is-arctic ? accent :
+        dark-mode ? #54d2ff : #1686c5;
+    out property <color> header-accent-mid:
+        is-party ? accent-warm :
+        is-space ? accent-warm :
+        is-retro ? accent-warm :
+        is-amber ? accent-warm :
+        is-noir ? accent-warm :
+        is-arctic ? accent-warm :
+        dark-mode ? #4fd5d0 : #0ea88f;
+    out property <color> header-accent-right:
+        is-party ? #7fd7f0 :
+        is-space ? #f2b36c :
+        is-retro ? #6cc9ff :
+        is-amber ? #ff8e4f :
+        is-noir ? #e6edf8 :
+        is-arctic ? #94efff :
+        dark-mode ? #f5c86b : #d99b2b;
     out property <color> card-shadow:            dark-mode ? #00000044 : #6f86940a;
     out property <color> elevation-shadow:       dark-mode ? #00000055 : #6f869410;
 

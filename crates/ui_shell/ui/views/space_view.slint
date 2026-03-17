@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { ChannelData, MemberData, VxTheme } from "../theme.slint";
+import { AuditEntryData, ChannelData, MemberData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
 
 export component SpaceView inherits Rectangle {
@@ -7,8 +7,14 @@ export component SpaceView inherits Rectangle {
     in property <string> current-space-name: "";
     in property <string> current-space-invite: "";
     in property <bool> is-space-owner: false;
+    in property <string> space-role-label: "Member";
+    in property <bool> can-manage-space-channels: false;
+    in property <bool> can-manage-space-members: false;
+    in property <bool> can-manage-space-roles: false;
+    in property <bool> can-view-space-audit: false;
     in property <[ChannelData]> channels: [];
     in property <[MemberData]> members: [];
+    in property <[AuditEntryData]> audit-entries: [];
     in-out property <string> search-query: "";
     in property <int> visible-text-channels: 0;
     in property <int> visible-voice-channels: 0;
@@ -31,6 +37,7 @@ export component SpaceView inherits Rectangle {
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
+    callback set-member-role(string, int);
     callback send-friend-request(string);
     callback accept-friend-request(string);
     callback decline-friend-request(string);
@@ -44,7 +51,7 @@ export component SpaceView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: 24px;
+            padding: root.wide ? 22px : 14px;
             spacing: 18px;
 
             HorizontalLayout {
@@ -64,6 +71,11 @@ export component SpaceView inherits Rectangle {
                         text: "Channels, members, and chat in one focused workspace.";
                         color: VxTheme.text-muted;
                         font-size: 10px;
+                    }
+                    VxStatusPill {
+                        label: root.space-role-label + " access";
+                        tone: VxTheme.accent;
+                        fill: VxTheme.accent-subtle;
                     }
                 }
 
@@ -202,11 +214,14 @@ export component SpaceView inherits Rectangle {
                                             font-weight: 700;
                                         }
                                         Text {
-                                            text: channel.unread-count > 0
-                                                ? channel.unread-count + " new messages"
-                                                : channel.is-active ? "Recent conversation" : "Persistent text channel";
+                                            text: channel.topic != ""
+                                                ? channel.topic
+                                                : channel.unread-count > 0
+                                                    ? channel.unread-count + " new messages"
+                                                    : channel.is-active ? "Recent conversation" : "Persistent text channel";
                                             color: VxTheme.text-muted;
                                             font-size: 9px;
+                                            overflow: elide;
                                         }
                                     }
 
@@ -220,7 +235,7 @@ export component SpaceView inherits Rectangle {
                                         tone: channel.is-active ? VxTheme.success : VxTheme.accent;
                                         fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
                                     }
-                                    if root.is-space-owner : VxButton {
+                                    if root.can-manage-space-channels : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                         small: true;
                                         danger: root.confirm-delete-channel-id == channel.id;
@@ -233,6 +248,73 @@ export component SpaceView inherits Rectangle {
                                                 root.confirm-delete-channel-id = channel.id;
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.can-view-space-audit : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "ACTIVITY"; }
+                                Text {
+                                    text: root.audit-entries.length + " events";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+
+                            if root.audit-entries.length == 0 : Text {
+                                text: "Role changes, moderation, and channel changes appear here.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+
+                            for entry in root.audit-entries : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 4px;
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        Text {
+                                            text: entry.actor-name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                        }
+                                        VxStatusPill {
+                                            label: entry.action;
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                    }
+                                    if entry.target-name != "" : Text {
+                                        text: entry.target-name;
+                                        color: VxTheme.text-secondary;
+                                        font-size: 10px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: entry.detail;
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: entry.timestamp;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
                                     }
                                 }
                             }
@@ -309,10 +391,13 @@ export component SpaceView inherits Rectangle {
                                             font-weight: 700;
                                         }
                                         Text {
-                                            text: channel.is-active ? "Connected right now" :
+                                            text: channel.topic != ""
+                                                ? channel.topic
+                                                : channel.is-active ? "Connected right now" :
                                                   channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
                                             color: VxTheme.text-muted;
                                             font-size: 9px;
+                                            overflow: elide;
                                         }
                                     }
 
@@ -326,7 +411,7 @@ export component SpaceView inherits Rectangle {
                                         tone: VxTheme.success;
                                         fill: VxTheme.success-dim;
                                     }
-                                    if root.is-space-owner : VxButton {
+                                    if root.can-manage-space-channels : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                         small: true;
                                         danger: root.confirm-delete-channel-id == channel.id;
@@ -345,7 +430,7 @@ export component SpaceView inherits Rectangle {
                         }
                     }
 
-                    VxCard {
+                    if root.can-manage-space-channels : VxCard {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
@@ -389,7 +474,7 @@ export component SpaceView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 340px;
+                    width: 304px;
                     spacing: 18px;
 
                     VxCard {
@@ -529,8 +614,10 @@ export component SpaceView inherits Rectangle {
                                                 font-weight: 700;
                                             }
                                             Text {
-                                                text: member.is-in-voice ? member.channel-name : "Not in voice";
-                                                color: VxTheme.text-muted;
+                                                text: member.status != ""
+                                                    ? member.status
+                                                    : member.is-in-voice ? member.channel-name : "Not in voice";
+                                                color: member.status != "" ? VxTheme.text-secondary : VxTheme.text-muted;
                                                 font-size: 9px;
                                                 overflow: elide;
                                             }
@@ -560,6 +647,15 @@ export component SpaceView inherits Rectangle {
                                             label: "Pending";
                                             tone: VxTheme.text-secondary;
                                             fill: VxTheme.bg-panel;
+                                        }
+                                        VxStatusPill {
+                                            label: member.role-label;
+                                            tone: member.role-tier >= 2 ? VxTheme.warning :
+                                                member.role-tier == 1 ? VxTheme.success :
+                                                VxTheme.text-secondary;
+                                            fill: member.role-tier >= 2 ? VxTheme.warning-soft :
+                                                member.role-tier == 1 ? VxTheme.success-dim :
+                                                VxTheme.bg-panel;
                                         }
                                     }
 
@@ -603,7 +699,39 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
 
-                                    if root.is-space-owner : HorizontalLayout {
+                                    if root.can-manage-space-roles && !member.is-self && member.role-tier < 3 : HorizontalLayout {
+                                        spacing: 8px;
+                                        if member.role-tier == 0 : VxButton {
+                                            label: "Promote mod";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.set-member-role(member.user-id, 1); }
+                                        }
+                                        if member.role-tier == 1 : VxButton {
+                                            label: "Demote";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.set-member-role(member.user-id, 0); }
+                                        }
+                                        if root.is-space-owner && member.role-tier < 2 : VxButton {
+                                            label: "Promote admin";
+                                            small: true;
+                                            accent: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.set-member-role(member.user-id, 2); }
+                                        }
+                                        if root.is-space-owner && member.role-tier == 2 : VxButton {
+                                            label: "Demote admin";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.set-member-role(member.user-id, 0); }
+                                        }
+                                    }
+
+                                    if root.can-manage-space-members && !member.is-self : HorizontalLayout {
                                         spacing: 8px;
                                         VxButton {
                                             label: member.is-server-muted ? "Unmute" : "Server mute";
@@ -663,7 +791,7 @@ export component SpaceView inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             if !root.is-space-owner : Text {
-                                text: "Only the space creator can delete the space or remove channels.";
+                                text: "Admins can manage channels. Moderators can manage members. Only the creator can delete the space.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
@@ -776,7 +904,7 @@ export component SpaceView inherits Rectangle {
                                     font-size: 10px;
                                     font-weight: 700;
                                 }
-                                if root.is-space-owner : VxButton {
+                                if root.can-manage-space-channels : VxButton {
                                     label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                     small: true;
                                     danger: root.confirm-delete-channel-id == channel.id;
@@ -789,6 +917,48 @@ export component SpaceView inherits Rectangle {
                                             root.confirm-delete-channel-id = channel.id;
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.can-view-space-audit : VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        SectionLabel { text: "ACTIVITY"; }
+                        if root.audit-entries.length == 0 : Text {
+                            text: "Role changes and moderation actions show up here.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        for entry in root.audit-entries : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-soft;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 4px;
+                                Text {
+                                    text: entry.actor-name + " • " + entry.action;
+                                    color: VxTheme.text-primary;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: entry.detail;
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: entry.timestamp;
+                                    color: VxTheme.text-muted;
+                                    font-size: 9px;
                                 }
                             }
                         }

@@ -592,8 +592,8 @@ mod tests {
         // Low frequency signal should pass through mostly unchanged
         let mut samples = [0.0f32; 960];
         let tau = std::f32::consts::TAU;
-        for i in 0..960 {
-            samples[i] = (tau * 200.0 * i as f32 / 48000.0).sin() * 0.5;
+        for (i, sample) in samples.iter_mut().enumerate() {
+            *sample = (tau * 200.0 * i as f32 / 48000.0).sin() * 0.5;
         }
         let original_energy: f32 = samples.iter().map(|s| s * s).sum();
         de.process(&mut samples);

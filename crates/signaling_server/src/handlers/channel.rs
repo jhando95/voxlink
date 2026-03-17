@@ -33,6 +33,28 @@ pub async fn handle_create_channel(
         return;
     };
 
+    let Some((_, actor_user_id, actor_role)) = super::space::peer_space_role(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !super::space::can_manage_channels(actor_role) {
+        send_error(state, peer_id, "Only admins can create channels").await;
+        return;
+    }
+
+    let actor_name = {
+        let peer = {
+            let s = state.read().await;
+            s.peers.get(peer_id).cloned()
+        };
+        if let Some(peer) = peer {
+            peer.name.lock().await.clone()
+        } else {
+            "Unknown".into()
+        }
+    };
+
     let channel_info = {
         let mut s = state.write().await;
         let channel_id = s.alloc_channel_id();
@@ -54,6 +76,7 @@ pub async fn handle_create_channel(
             name: channel_name.clone(),
             room_key,
             channel_type,
+            topic: String::new(),
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -65,6 +88,7 @@ pub async fn handle_create_channel(
             name: channel_name,
             peer_count: 0,
             channel_type,
+            topic: String::new(),
         }
     };
 
@@ -100,12 +124,14 @@ pub async fn handle_create_channel(
                 name: cname,
                 room_key: rk,
                 channel_type: ct.into(),
+                topic: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
         });
     }
 
+    let created_channel_name = channel_info.name.clone();
     let notify = SignalMessage::ChannelCreated {
         channel: channel_info,
     };
@@ -122,6 +148,24 @@ pub async fn handle_create_channel(
             send_to(&peer, &notify).await;
         }
     }
+
+    let channel_type_label = if channel_type == ChannelType::Text {
+        "text"
+    } else {
+        "voice"
+    };
+    let _ = super::space::append_audit_entry(
+        state,
+        db,
+        &space_id,
+        &actor_user_id,
+        &actor_name,
+        "channel",
+        None,
+        Some(created_channel_name),
+        format!("Created a {channel_type_label} channel"),
+    )
+    .await;
 }
 
 pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: String, db: &Db) {
@@ -138,25 +182,39 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
         return;
     };
 
-    let owner_identity = super::space::stable_peer_id(state, peer_id).await;
+    let Some((_, actor_user_id, actor_role)) = super::space::peer_space_role(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !super::space::can_manage_channels(actor_role) {
+        send_error(state, peer_id, "Only admins can delete channels").await;
+        return;
+    }
+
+    let actor_name = {
+        let peer = {
+            let s = state.read().await;
+            s.peers.get(peer_id).cloned()
+        };
+        if let Some(peer) = peer {
+            peer.name.lock().await.clone()
+        } else {
+            "Unknown".into()
+        }
+    };
+
     let (deleted_channel, member_ids, affected_voice_ids) = {
         let mut s = state.write().await;
-        let Some((is_owner, member_ids, channel_count)) = s.spaces.get(&space_id).map(|space| {
-            (
-                space.owner_id == peer_id || space.owner_id == owner_identity,
-                space.member_ids.clone(),
-                space.channels.len(),
-            )
-        }) else {
+        let Some((member_ids, channel_count)) = s
+            .spaces
+            .get(&space_id)
+            .map(|space| (space.member_ids.clone(), space.channels.len()))
+        else {
             send_error(state, peer_id, "Space not found").await;
             return;
         };
 
-        if !is_owner {
-            drop(s);
-            send_error(state, peer_id, "Only the space creator can delete channels").await;
-            return;
-        }
         if channel_count <= 1 {
             drop(s);
             send_error(state, peer_id, "A space must keep at least one channel").await;
@@ -240,6 +298,19 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
         "Channel {} deleted in space {space_id} by {peer_id}",
         deleted_channel.id
     );
+
+    let _ = super::space::append_audit_entry(
+        state,
+        db,
+        &space_id,
+        &actor_user_id,
+        &actor_name,
+        "channel",
+        None,
+        Some(deleted_channel.name.clone()),
+        "Deleted the channel".into(),
+    )
+    .await;
 }
 
 pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: String) {
@@ -324,18 +395,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         room.peer_ids.push(peer_id.to_string());
     }
 
-    // Send ChannelJoined to the joiner
-    if let Some(peer) = s.peers.get(peer_id).cloned() {
-        send_to(
-            &peer,
-            &SignalMessage::ChannelJoined {
-                channel_id: channel_id.clone(),
-                channel_name: channel_name.clone(),
-                participants,
-            },
-        )
-        .await;
-    }
+    let joiner_peer = s.peers.get(peer_id).cloned();
 
     // Send PeerJoined to others in the channel
     let joiner_info = if let Some(p) = s.peers.get(peer_id) {
@@ -349,7 +409,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         None
     };
 
-    if let Some(info) = joiner_info {
+    let (joiner_info, others) = if let Some(info) = joiner_info {
         let others: Vec<Arc<Peer>> = s
             .rooms
             .get(&room_key)
@@ -361,14 +421,32 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                     .collect()
             })
             .unwrap_or_default();
+        (Some(info), others)
+    } else {
+        (None, Vec::new())
+    };
 
+    drop(s);
+
+    // Notify the joiner after the room membership update has completed.
+    if let Some(peer) = joiner_peer {
+        send_to(
+            &peer,
+            &SignalMessage::ChannelJoined {
+                channel_id: channel_id.clone(),
+                channel_name: channel_name.clone(),
+                participants,
+            },
+        )
+        .await;
+    }
+
+    if let Some(info) = joiner_info {
         let notify = SignalMessage::PeerJoined { peer: info };
         for peer in &others {
             send_to(peer, &notify).await;
         }
     }
-
-    drop(s);
 
     // Broadcast MemberChannelChanged to all space members
     let notify = SignalMessage::MemberChannelChanged {

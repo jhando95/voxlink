@@ -87,6 +87,7 @@ pub fn setup(
     space::setup_kick_member(window, network, rt_handle);
     space::setup_ban_member(window, network, rt_handle);
     space::setup_server_mute_member(window, network, rt_handle);
+    space::setup_set_member_role(window, network, rt_handle);
 
     // Channel
     channel::setup_create_channel(window, network, rt_handle);
@@ -122,6 +123,7 @@ pub fn setup(
     ui::setup_play_speaker_test(window, audio, audio_started, rt_handle);
     ui::setup_clear_keybind(window, ptt_key, mute_key, deafen_key);
     ui::setup_toggle_dark_mode(window);
+    ui::setup_select_theme_preset(window);
     ui::setup_toggle_member_widget(window, state);
     ui::setup_friend_actions(window, network, rt_handle);
     ui::setup_toggle_feedback_sound(window);

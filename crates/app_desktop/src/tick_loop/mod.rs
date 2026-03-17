@@ -551,7 +551,15 @@ fn update_mic_level(
         let level = aud.mic_level();
         w.set_mic_level(level);
 
-        let self_speaking = level > 0.02 && !w.get_is_muted();
+        let is_muted = w.get_is_muted();
+        let self_speaking = level > 0.02 && !is_muted;
+
+        // Detect talking while muted
+        let talking_while_muted = level > 0.02 && is_muted;
+        if w.get_talking_while_muted() != talking_while_muted {
+            w.set_talking_while_muted(talking_while_muted);
+        }
+
         let mut s = state.borrow_mut();
         if let Some(me) = s.room.participants.iter_mut().find(|p| p.id == "self") {
             if me.is_speaking != self_speaking {

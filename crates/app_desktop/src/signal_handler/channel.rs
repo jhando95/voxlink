@@ -191,3 +191,19 @@ pub fn handle_channel_left(
         flag.store(false, std::sync::atomic::Ordering::Relaxed);
     });
 }
+
+pub fn handle_channel_topic_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    channel_id: &str,
+    topic: &str,
+) {
+    let mut s = state.borrow_mut();
+    if let Some(ref mut space) = s.space {
+        if let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) {
+            channel.topic = topic.to_string();
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}

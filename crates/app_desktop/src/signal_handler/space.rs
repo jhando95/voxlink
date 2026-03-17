@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use shared_types::{AppView, SpaceState};
+use shared_types::{AppView, SpaceRole, SpaceState};
 use ui_shell::MainWindow;
 
 use super::AudioContext;
@@ -20,8 +20,10 @@ pub fn handle_space_created(
         invite_code: space.invite_code.clone(),
         channels: channels.to_vec(),
         members: Vec::new(),
+        audit_log: Vec::new(),
         active_channel_id: None,
         selected_text_channel_id: remembered_text_channel(space, channels),
+        self_role: space.self_role,
         unread_text_channels: Default::default(),
         typing_users: Default::default(),
     };
@@ -55,6 +57,8 @@ pub fn handle_space_created(
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
+    apply_space_permissions(w, space.self_role);
+    ui_shell::set_space_audit_log(w, &[]);
     {
         let mut s = state.borrow_mut();
         let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
@@ -86,8 +90,10 @@ pub fn handle_space_joined(
         invite_code: space.invite_code.clone(),
         channels: channels.to_vec(),
         members: members.to_vec(),
+        audit_log: Vec::new(),
         active_channel_id: None,
         selected_text_channel_id: remembered_text_channel(space, channels),
+        self_role: space.self_role,
         unread_text_channels: Default::default(),
         typing_users: Default::default(),
     };
@@ -121,6 +127,8 @@ pub fn handle_space_joined(
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
+    apply_space_permissions(w, space.self_role);
+    ui_shell::set_space_audit_log(w, &[]);
     {
         let mut s = state.borrow_mut();
         let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
@@ -189,11 +197,13 @@ pub fn handle_space_deleted(
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
     w.set_is_space_owner(false);
+    apply_space_permissions(w, SpaceRole::Member);
     w.set_mic_level(0.0);
     w.set_window_title("Voxlink".into());
     w.set_status_text("Space was deleted".into());
     ui_shell::set_channels(w, &[]);
     ui_shell::set_members(w, &[]);
+    ui_shell::set_space_audit_log(w, &[]);
     if !deleted_space_id.is_empty() {
         crate::helpers::remove_saved_space_async(deleted_space_id.clone());
         crate::helpers::sync_saved_spaces_ui(w, Some(&deleted_space_id));
@@ -210,6 +220,25 @@ pub fn handle_space_deleted(
         aud.stop_playback();
         flag.store(false, std::sync::atomic::Ordering::Relaxed);
     });
+}
+
+pub fn apply_space_permissions(window: &MainWindow, role: SpaceRole) {
+    window.set_space_role_label(
+        match role {
+            SpaceRole::Owner => "Owner",
+            SpaceRole::Admin => "Admin",
+            SpaceRole::Moderator => "Moderator",
+            SpaceRole::Member => "Member",
+        }
+        .into(),
+    );
+    window.set_can_manage_space_channels(matches!(role, SpaceRole::Owner | SpaceRole::Admin));
+    window.set_can_manage_space_members(matches!(
+        role,
+        SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
+    ));
+    window.set_can_manage_space_roles(matches!(role, SpaceRole::Owner | SpaceRole::Admin));
+    window.set_can_view_space_audit(true);
 }
 
 fn remembered_text_channel(

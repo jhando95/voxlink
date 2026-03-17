@@ -347,11 +347,32 @@ pub fn setup_toggle_dark_mode(window: &MainWindow) {
         };
         let new_mode = !w.get_dark_mode();
         w.set_dark_mode(new_mode);
-        ui_shell::sync_member_widget_theme(new_mode);
+        ui_shell::sync_member_widget_theme(new_mode, w.get_theme_preset());
 
         std::thread::spawn(move || {
             let mut cfg = config_store::load_config();
             cfg.dark_mode = Some(new_mode);
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_select_theme_preset(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_select_theme_preset(move |preset| {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let preset = helpers::sanitize_theme_preset(preset);
+        if preset == w.get_theme_preset() {
+            return;
+        }
+        w.set_theme_preset(preset);
+        ui_shell::sync_member_widget_theme(w.get_dark_mode(), preset);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.theme_preset = helpers::theme_preset_key(preset).into();
             let _ = config_store::save_config(&cfg);
         });
     });
@@ -375,7 +396,7 @@ pub fn setup_toggle_member_widget(
             }
             let state = state.borrow();
             ui_shell::sync_member_widget(state.space.as_ref(), &state.favorite_friends);
-            ui_shell::sync_member_widget_theme(w.get_dark_mode());
+            ui_shell::sync_member_widget_theme(w.get_dark_mode(), w.get_theme_preset());
         }
 
         if ui_shell::set_member_widget_visible(next_visible) {

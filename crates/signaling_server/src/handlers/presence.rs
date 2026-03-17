@@ -6,6 +6,7 @@ use shared_types::{FriendPresence, SignalMessage};
 use crate::{send_to, Peer, State};
 
 const MAX_WATCHED_FRIENDS: usize = 256;
+type PresencePeerMatch = (Arc<Peer>, String, Option<String>, Option<String>);
 
 pub async fn handle_watch_friend_presence(state: &State, peer_id: &str, user_ids: Vec<String>) {
     let peer = {
@@ -107,7 +108,7 @@ fn better_presence_rank(presence: &FriendPresence) -> i32 {
 
 pub async fn describe_user_presence(state: &State, user_id: &str) -> FriendPresence {
     // Collect matching peers first to minimize time holding state read lock
-    let matching_peers: Vec<(Arc<Peer>, String, Option<String>, Option<String>)> = {
+    let matching_peers: Vec<PresencePeerMatch> = {
         let s = state.read().await;
         let mut matches = Vec::new();
         for peer in s.peers.values() {

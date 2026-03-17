@@ -14,7 +14,9 @@ export component MemberWidgetWindow inherits Window {
     in-out property <int> favorite-count: 0;
     in-out property <[FriendData]> friends: [];
     in-out property <bool> dark-mode: true;
+    in-out property <int> theme-preset: 0;
     changed dark-mode => { VxTheme.dark-mode = self.dark-mode; }
+    changed theme-preset => { VxTheme.theme-preset = self.theme-preset; }
     callback send-friend-request(string);
     callback remove-friend(string);
     callback open-direct-message(string);

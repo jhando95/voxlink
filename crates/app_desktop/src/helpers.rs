@@ -7,6 +7,8 @@ use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+pub const THEME_PRESET_COUNT: i32 = 7;
+
 /// Auto-save all settings to config file with device hot-swap.
 pub fn auto_save_settings(
     w: &MainWindow,
@@ -58,6 +60,7 @@ pub fn auto_save_settings(
             mute_key: existing.mute_key,
             deafen_key: existing.deafen_key,
             dark_mode: existing.dark_mode,
+            theme_preset: existing.theme_preset,
             saved_spaces: existing.saved_spaces,
             last_space_id: existing.last_space_id,
             last_channel_id: existing.last_channel_id,
@@ -78,6 +81,34 @@ pub fn auto_save_settings(
             Err(e) => log::error!("Failed to save settings: {e}"),
         }
     });
+}
+
+pub fn sanitize_theme_preset(preset: i32) -> i32 {
+    preset.clamp(0, THEME_PRESET_COUNT - 1)
+}
+
+pub fn theme_preset_key(preset: i32) -> &'static str {
+    match sanitize_theme_preset(preset) {
+        1 => "xbox-party",
+        2 => "space",
+        3 => "retro-tech",
+        4 => "amber-crt",
+        5 => "midnight-noir",
+        6 => "arctic-glass",
+        _ => "voxlink",
+    }
+}
+
+pub fn theme_preset_index(key: &str) -> i32 {
+    match key {
+        "xbox-party" => 1,
+        "space" => 2,
+        "retro-tech" => 3,
+        "amber-crt" => 4,
+        "midnight-noir" => 5,
+        "arctic-glass" => 6,
+        _ => 0,
+    }
 }
 
 /// Save room code to config in background (non-blocking).
@@ -205,6 +236,7 @@ pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo
             member_count: 0,
             channel_count: 0,
             is_owner: false,
+            self_role: shared_types::SpaceRole::Member,
         })
         .collect::<Vec<_>>();
     ui_shell::set_spaces(window, &spaces);
@@ -253,6 +285,7 @@ pub fn sync_saved_spaces_ui(window: &MainWindow, exclude_space_id: Option<&str>)
             member_count: 0,
             channel_count: 0,
             is_owner: false,
+            self_role: shared_types::SpaceRole::Member,
         })
         .collect::<Vec<_>>();
     ui_shell::set_spaces(window, &spaces);

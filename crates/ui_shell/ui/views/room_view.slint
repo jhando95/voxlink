@@ -11,6 +11,7 @@ export component RoomView inherits Rectangle {
     in property <string> room-status: "";
     in property <bool> is-muted: false;
     in property <bool> is-deafened: false;
+    in property <bool> talking-while-muted: false;
     in property <bool> is-open-mic: true;
     in property <float> mic-level: 0.0;
     in property <string> ptt-key-display: "";
@@ -50,7 +51,7 @@ export component RoomView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: 24px;
+            padding: root.wide ? 22px : 14px;
             spacing: 18px;
 
             if !root.is-connected : Rectangle {
@@ -84,6 +85,32 @@ export component RoomView inherits Rectangle {
                             color: VxTheme.text-secondary;
                             font-size: 10px;
                         }
+                    }
+                }
+            }
+
+            if root.talking-while-muted : Rectangle {
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.warning-soft;
+                border-color: VxTheme.warning;
+                border-width: 1px;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    spacing: 10px;
+                    alignment: center;
+                    Text {
+                        text: "You're muted";
+                        color: VxTheme.warning;
+                        font-size: 12px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: "Others can't hear you right now.";
+                        color: VxTheme.text-secondary;
+                        font-size: 11px;
                     }
                 }
             }
@@ -556,7 +583,7 @@ export component RoomView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 320px;
+                    width: 288px;
                     spacing: 18px;
 
                     VxCard {

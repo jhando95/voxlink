@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use shared_types::SpaceRole;
 use ui_shell::MainWindow;
 
 pub fn handle_member_online(
@@ -46,6 +47,22 @@ pub fn handle_member_offline(
     crate::friends::sync_ui(w, state);
 }
 
+pub fn handle_user_status_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    member_id: &str,
+    status: &str,
+) {
+    let mut s = state.borrow_mut();
+    if let Some(ref mut space) = s.space {
+        if let Some(member) = space.members.iter_mut().find(|m| m.id == member_id) {
+            member.status = status.to_string();
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}
+
 pub fn handle_member_channel_changed(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
@@ -75,4 +92,55 @@ pub fn handle_member_channel_changed(
     if favorites_changed {
         crate::friends::persist(state);
     }
+}
+
+pub fn handle_member_role_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    user_id: &str,
+    role: SpaceRole,
+) {
+    let mut s = state.borrow_mut();
+    let self_user_id = s.self_user_id.clone();
+    if let Some(ref mut space) = s.space {
+        for member in &mut space.members {
+            if member.user_id.as_deref() == Some(user_id) {
+                member.role = role;
+            }
+        }
+        if self_user_id.as_deref() == Some(user_id) {
+            space.self_role = role;
+            crate::signal_handler::apply_space_permissions(w, role);
+            w.set_is_space_owner(role == SpaceRole::Owner);
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}
+
+pub fn handle_space_audit_snapshot(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    entries: &[shared_types::SpaceAuditEntry],
+) {
+    if let Some(ref mut space) = state.borrow_mut().space {
+        space.audit_log = entries.to_vec();
+    }
+    ui_shell::set_space_audit_log(w, entries);
+}
+
+pub fn handle_space_audit_appended(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    entry: &shared_types::SpaceAuditEntry,
+) {
+    let mut entries = Vec::new();
+    if let Some(ref mut space) = state.borrow_mut().space {
+        space.audit_log.insert(0, entry.clone());
+        if space.audit_log.len() > 64 {
+            space.audit_log.truncate(64);
+        }
+        entries = space.audit_log.clone();
+    }
+    ui_shell::set_space_audit_log(w, &entries);
 }

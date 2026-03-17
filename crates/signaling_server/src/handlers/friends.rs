@@ -6,6 +6,8 @@ use shared_types::{FavoriteFriend, FriendRequest, SignalMessage};
 use crate::handlers::presence::describe_user_presence;
 use crate::{send_error, send_to, Db, Peer, State};
 
+type FriendSnapshotRows = (Vec<FavoriteFriend>, Vec<FriendRequest>, Vec<FriendRequest>);
+
 pub async fn send_friend_snapshot_to_peer(state: &State, peer_id: &str, db: &Db) {
     let Some(user_id) = authenticated_user_id(state, peer_id).await else {
         return;
@@ -281,11 +283,7 @@ pub async fn handle_remove_friend(state: &State, peer_id: &str, user_id: String,
     }
 }
 
-async fn build_friend_snapshot(
-    state: &State,
-    user_id: &str,
-    db: &Db,
-) -> (Vec<FavoriteFriend>, Vec<FriendRequest>, Vec<FriendRequest>) {
+async fn build_friend_snapshot(state: &State, user_id: &str, db: &Db) -> FriendSnapshotRows {
     let Some(db) = db.as_ref().cloned() else {
         return (Vec::new(), Vec::new(), Vec::new());
     };
@@ -313,7 +311,7 @@ async fn build_friend_snapshot(
 fn load_snapshot_rows(
     db: &crate::persistence::Database,
     user_id: &str,
-) -> Result<(Vec<FavoriteFriend>, Vec<FriendRequest>, Vec<FriendRequest>), String> {
+) -> Result<FriendSnapshotRows, String> {
     let friendships = db.load_friendships_for_user(user_id)?;
     let incoming_rows = db.load_incoming_friend_requests(user_id)?;
     let outgoing_rows = db.load_outgoing_friend_requests(user_id)?;

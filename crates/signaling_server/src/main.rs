@@ -2,13 +2,15 @@ mod handlers;
 pub mod persistence;
 
 use futures_util::{SinkExt, StreamExt};
+use rand::rngs::OsRng;
+use rand::RngCore;
 use shared_types::SignalMessage;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
@@ -93,6 +95,7 @@ struct Peer {
     room_code_cache: std::sync::RwLock<Option<String>>,
     is_muted: AtomicBool,
     is_deafened: AtomicBool,
+    status: Mutex<String>,
     tx: Mutex<Tx>,
     space_id: Mutex<Option<String>>,
     typing_channel_id: Mutex<Option<String>>,
@@ -130,6 +133,7 @@ struct Room {
 
 /// Max text messages stored per channel (in-memory ring buffer).
 const MAX_CHANNEL_MESSAGES: usize = 100;
+const MAX_SPACE_AUDIT_ENTRIES: usize = 64;
 
 #[allow(dead_code)]
 struct Space {
@@ -139,8 +143,10 @@ struct Space {
     owner_id: String,
     channels: Vec<ChannelMeta>,
     member_ids: Vec<String>,
+    member_roles: HashMap<String, shared_types::SpaceRole>,
     /// Text messages per channel_id, capped at MAX_CHANNEL_MESSAGES.
     text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>>,
+    audit_log: VecDeque<shared_types::SpaceAuditEntry>,
     created_at: Instant,
 }
 
@@ -149,6 +155,7 @@ struct ChannelMeta {
     name: String,
     room_key: String, // internal room code for audio relay, e.g. "sp:s1:ch:c1"
     channel_type: shared_types::ChannelType,
+    topic: String,
 }
 
 struct ServerState {
@@ -161,6 +168,7 @@ struct ServerState {
     next_space_id: u64,
     next_channel_id: u64,
     next_message_id: u64,
+    next_audit_id: u64,
     connections_per_ip: HashMap<IpAddr, u32>,
 }
 
@@ -175,6 +183,7 @@ impl ServerState {
             next_space_id: 1,
             next_channel_id: 1,
             next_message_id: 1,
+            next_audit_id: 1,
             connections_per_ip: HashMap::new(),
         }
     }
@@ -186,28 +195,33 @@ impl ServerState {
     }
 
     fn generate_room_code(&self) -> String {
-        // Use OS-seeded entropy via RandomState (no external crate needed)
-        use std::hash::{BuildHasher, Hasher};
-        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-        hasher.write_usize(self.next_id as usize);
-        hasher.write_usize(self.rooms.len());
-        let hash = hasher.finish();
-        format!("{:06}", hash % 1_000_000)
+        for _ in 0..32 {
+            let mut bytes = [0u8; 4];
+            OsRng.fill_bytes(&mut bytes);
+            let code = format!("{:06}", u32::from_le_bytes(bytes) % 1_000_000);
+            if !self.rooms.contains_key(&code) {
+                return code;
+            }
+        }
+
+        format!("{:06}", self.next_id % 1_000_000)
     }
 
     fn generate_invite_code(&self) -> String {
-        use std::hash::{BuildHasher, Hasher};
         let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        let mut result = String::with_capacity(8);
-        for i in 0..8 {
-            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-            hasher.write_usize(self.next_space_id as usize);
-            hasher.write_usize(i);
-            hasher.write_usize(self.spaces.len());
-            let hash = hasher.finish();
-            result.push(chars[(hash as usize) % chars.len()] as char);
+        for _ in 0..32 {
+            let mut bytes = [0u8; 8];
+            OsRng.fill_bytes(&mut bytes);
+            let mut result = String::with_capacity(bytes.len());
+            for byte in bytes {
+                result.push(chars[(byte as usize) % chars.len()] as char);
+            }
+            if !self.invite_index.contains_key(&result) {
+                return result;
+            }
         }
-        result
+
+        format!("INV{:05}", self.next_space_id % 100_000)
     }
 
     fn alloc_space_id(&mut self) -> String {
@@ -227,10 +241,165 @@ impl ServerState {
         self.next_message_id += 1;
         id
     }
+
+    fn alloc_audit_id(&mut self) -> String {
+        let id = format!("a{}", self.next_audit_id);
+        self.next_audit_id += 1;
+        id
+    }
 }
 
 type State = Arc<RwLock<ServerState>>;
 type Db = Option<Arc<persistence::Database>>;
+type Metrics = Arc<ServerMetrics>;
+
+#[derive(Default)]
+struct ServerMetrics {
+    connection_attempts_total: AtomicU64,
+    active_connections: AtomicU64,
+    websocket_handshake_failures_total: AtomicU64,
+    signaling_messages_total: AtomicU64,
+    malformed_signaling_messages_total: AtomicU64,
+    signaling_rate_limited_total: AtomicU64,
+    auth_success_total: AtomicU64,
+    auth_failure_total: AtomicU64,
+    audio_frames_in_total: AtomicU64,
+    audio_frames_out_total: AtomicU64,
+    screen_frames_in_total: AtomicU64,
+    screen_frames_out_total: AtomicU64,
+}
+
+fn bind_requires_tls(addr: &str) -> bool {
+    match addr.to_socket_addrs() {
+        Ok(addrs) => addrs
+            .map(|socket_addr| socket_addr.ip())
+            .any(|ip| !ip.is_loopback()),
+        Err(_) => {
+            !addr.starts_with("127.0.0.1:")
+                && !addr.starts_with("[::1]:")
+                && !addr.starts_with("localhost:")
+        }
+    }
+}
+
+fn allow_insecure_public_bind() -> bool {
+    matches!(
+        std::env::var("PV_ALLOW_INSECURE").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
+async fn run_metrics_server(state: State, metrics: Metrics, addr: String, tls_enabled: bool) {
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::error!("Metrics endpoint unavailable on {addr}: {e}");
+            return;
+        }
+    };
+
+    log::info!("Metrics endpoint listening on http://{addr}");
+    loop {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            continue;
+        };
+        let state = state.clone();
+        let metrics = metrics.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let read =
+                tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut buf))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..read]);
+            let is_health = request.starts_with("GET /healthz ");
+            let body = if is_health {
+                "ok\n".to_string()
+            } else {
+                render_metrics(&state, &metrics, tls_enabled).await
+            };
+            let content_type = if is_health {
+                "text/plain; charset=utf-8"
+            } else {
+                "text/plain; version=0.0.4; charset=utf-8"
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+            let _ = stream.shutdown().await;
+        });
+    }
+}
+
+async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: bool) -> String {
+    let s = state.read().await;
+    let active_rooms = s.rooms.len();
+    let active_spaces = s.spaces.len();
+    let connected_peers = s.peers.len();
+    drop(s);
+
+    format!(
+        concat!(
+            "# TYPE voxlink_connection_attempts_total counter\n",
+            "voxlink_connection_attempts_total {}\n",
+            "# TYPE voxlink_active_connections gauge\n",
+            "voxlink_active_connections {}\n",
+            "# TYPE voxlink_websocket_handshake_failures_total counter\n",
+            "voxlink_websocket_handshake_failures_total {}\n",
+            "# TYPE voxlink_signaling_messages_total counter\n",
+            "voxlink_signaling_messages_total {}\n",
+            "# TYPE voxlink_malformed_signaling_messages_total counter\n",
+            "voxlink_malformed_signaling_messages_total {}\n",
+            "# TYPE voxlink_signaling_rate_limited_total counter\n",
+            "voxlink_signaling_rate_limited_total {}\n",
+            "# TYPE voxlink_auth_success_total counter\n",
+            "voxlink_auth_success_total {}\n",
+            "# TYPE voxlink_auth_failure_total counter\n",
+            "voxlink_auth_failure_total {}\n",
+            "# TYPE voxlink_audio_frames_in_total counter\n",
+            "voxlink_audio_frames_in_total {}\n",
+            "# TYPE voxlink_audio_frames_out_total counter\n",
+            "voxlink_audio_frames_out_total {}\n",
+            "# TYPE voxlink_screen_frames_in_total counter\n",
+            "voxlink_screen_frames_in_total {}\n",
+            "# TYPE voxlink_screen_frames_out_total counter\n",
+            "voxlink_screen_frames_out_total {}\n",
+            "# TYPE voxlink_active_rooms gauge\n",
+            "voxlink_active_rooms {}\n",
+            "# TYPE voxlink_active_spaces gauge\n",
+            "voxlink_active_spaces {}\n",
+            "# TYPE voxlink_connected_peers gauge\n",
+            "voxlink_connected_peers {}\n",
+            "# TYPE voxlink_tls_enabled gauge\n",
+            "voxlink_tls_enabled {}\n",
+        ),
+        metrics.connection_attempts_total.load(Ordering::Relaxed),
+        metrics.active_connections.load(Ordering::Relaxed),
+        metrics
+            .websocket_handshake_failures_total
+            .load(Ordering::Relaxed),
+        metrics.signaling_messages_total.load(Ordering::Relaxed),
+        metrics
+            .malformed_signaling_messages_total
+            .load(Ordering::Relaxed),
+        metrics.signaling_rate_limited_total.load(Ordering::Relaxed),
+        metrics.auth_success_total.load(Ordering::Relaxed),
+        metrics.auth_failure_total.load(Ordering::Relaxed),
+        metrics.audio_frames_in_total.load(Ordering::Relaxed),
+        metrics.audio_frames_out_total.load(Ordering::Relaxed),
+        metrics.screen_frames_in_total.load(Ordering::Relaxed),
+        metrics.screen_frames_out_total.load(Ordering::Relaxed),
+        active_rooms,
+        active_spaces,
+        connected_peers,
+        if tls_enabled { 1 } else { 0 },
+    )
+}
 
 // ─── Main ───
 
@@ -241,7 +410,6 @@ async fn main() {
         .init();
 
     let addr = std::env::var("PV_ADDR").unwrap_or_else(|_| "0.0.0.0:9090".into());
-    let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
 
     // TLS setup (optional)
     let tls_acceptor = match (std::env::var("PV_CERT"), std::env::var("PV_KEY")) {
@@ -252,15 +420,28 @@ async fn main() {
             }
             Err(e) => {
                 log::error!("Failed to load TLS config: {e}");
-                log::warn!("Falling back to plain WebSocket (insecure)");
                 None
             }
         },
-        _ => {
-            log::warn!("No TLS configured (set PV_CERT and PV_KEY for secure mode)");
-            None
-        }
+        _ => None,
     };
+
+    if tls_acceptor.is_none() && bind_requires_tls(&addr) && !allow_insecure_public_bind() {
+        log::error!(
+            "Refusing insecure public bind on {addr}. Configure PV_CERT and PV_KEY or set PV_ALLOW_INSECURE=1 for local testing only."
+        );
+        std::process::exit(1);
+    }
+
+    if tls_acceptor.is_none() {
+        if bind_requires_tls(&addr) {
+            log::warn!("Starting insecure public WebSocket server on {addr} because PV_ALLOW_INSECURE is enabled");
+        } else {
+            log::warn!("No TLS configured; loopback-only server will use plain WebSocket");
+        }
+    }
+
+    let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
 
     let proto = if tls_acceptor.is_some() { "wss" } else { "ws" };
     log::info!("Signaling server listening on {proto}://{addr}");
@@ -279,6 +460,7 @@ async fn main() {
     };
 
     let state: State = Arc::new(RwLock::new(ServerState::new()));
+    let metrics: Metrics = Arc::new(ServerMetrics::default());
 
     // Load persisted spaces from DB
     if let Some(ref db) = db {
@@ -286,6 +468,10 @@ async fn main() {
             let mut s = state.write().await;
             for sr in &space_rows {
                 let channels_rows = db.load_channels_for_space(&sr.id).unwrap_or_default();
+                let role_rows = db.load_space_roles(&sr.id).unwrap_or_default();
+                let audit_rows = db
+                    .load_audit_log_for_space(&sr.id, MAX_SPACE_AUDIT_ENTRIES)
+                    .unwrap_or_default();
                 let mut channels = Vec::new();
                 for cr in &channels_rows {
                     let ct = if cr.channel_type == "text" {
@@ -298,6 +484,7 @@ async fn main() {
                         name: cr.name.clone(),
                         room_key: cr.room_key.clone(),
                         channel_type: ct,
+                        topic: cr.topic.clone().unwrap_or_default(),
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -340,6 +527,31 @@ async fn main() {
                     }
                 }
 
+                let member_roles = role_rows
+                    .into_iter()
+                    .filter_map(|row| {
+                        let role = match row.role.as_str() {
+                            "owner" => shared_types::SpaceRole::Owner,
+                            "admin" => shared_types::SpaceRole::Admin,
+                            "moderator" => shared_types::SpaceRole::Moderator,
+                            "member" => shared_types::SpaceRole::Member,
+                            _ => return None,
+                        };
+                        Some((row.user_id, role))
+                    })
+                    .collect::<HashMap<_, _>>();
+                let audit_log = audit_rows
+                    .into_iter()
+                    .map(|row| shared_types::SpaceAuditEntry {
+                        id: row.id,
+                        actor_name: row.actor_name,
+                        action: row.action,
+                        target_name: row.target_name.unwrap_or_default(),
+                        detail: row.detail,
+                        timestamp: row.created_at as u64,
+                    })
+                    .collect::<VecDeque<_>>();
+
                 s.invite_index.insert(sr.invite_code.clone(), sr.id.clone());
                 s.spaces.insert(
                     sr.id.clone(),
@@ -350,7 +562,9 @@ async fn main() {
                         owner_id: sr.owner_id.clone(),
                         channels,
                         member_ids: Vec::new(),
+                        member_roles,
                         text_messages,
+                        audit_log,
                         created_at: Instant::now(),
                     },
                 );
@@ -361,11 +575,13 @@ async fn main() {
             let max_channel = db.max_id_suffix("channels", "id").unwrap_or(0);
             let max_message = db.max_id_suffix("messages", "id").unwrap_or(0);
             let max_direct_message = db.max_id_suffix("direct_messages", "id").unwrap_or(0);
+            let max_audit = db.max_id_suffix("space_audit_log", "id").unwrap_or(0);
             s.next_space_id = s.next_space_id.max(max_space + 1);
             s.next_channel_id = s.next_channel_id.max(max_channel + 1);
             s.next_message_id = s
                 .next_message_id
                 .max(max_message.max(max_direct_message) + 1);
+            s.next_audit_id = s.next_audit_id.max(max_audit + 1);
 
             log::info!("Loaded {} space(s) from database", space_rows.len());
         }
@@ -374,6 +590,17 @@ async fn main() {
     // Start LAN discovery beacon
     let discover_addr = format!("{proto}://{addr}");
     tokio::spawn(run_discovery(discover_addr));
+
+    if let Ok(metrics_addr) = std::env::var("PV_METRICS_ADDR") {
+        if !metrics_addr.trim().is_empty() {
+            tokio::spawn(run_metrics_server(
+                state.clone(),
+                metrics.clone(),
+                metrics_addr,
+                tls_acceptor.is_some(),
+            ));
+        }
+    }
 
     // Periodic cleanup of stale empty rooms (every 60s)
     {
@@ -433,9 +660,13 @@ async fn main() {
         }
 
         let state = state.clone();
+        let metrics = metrics.clone();
         let tls = tls_acceptor.clone();
         let db = db.clone();
         tokio::spawn(async move {
+            metrics
+                .connection_attempts_total
+                .fetch_add(1, Ordering::Relaxed);
             let server_stream = if let Some(acceptor) = tls {
                 match acceptor.accept(stream).await {
                     Ok(tls_stream) => ServerStream::Tls(Box::new(tls_stream)),
@@ -449,7 +680,7 @@ async fn main() {
                 ServerStream::Plain(stream)
             };
 
-            handle_connection(state.clone(), server_stream, addr, db).await;
+            handle_connection(state.clone(), metrics, server_stream, addr, db).await;
             decrement_ip(&state, addr.ip()).await;
         });
     }
@@ -516,10 +747,19 @@ async fn run_discovery(server_addr: String) {
 
 // ─── Connection Handler ───
 
-async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr, db: Db) {
+async fn handle_connection(
+    state: State,
+    metrics: Metrics,
+    stream: ServerStream,
+    addr: SocketAddr,
+    db: Db,
+) {
     let ws = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
+            metrics
+                .websocket_handshake_failures_total
+                .fetch_add(1, Ordering::Relaxed);
             log::warn!("WebSocket handshake failed from {addr}: {e}");
             return;
         }
@@ -540,6 +780,7 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
                 room_code_cache: std::sync::RwLock::new(None),
                 is_muted: AtomicBool::new(false),
                 is_deafened: AtomicBool::new(false),
+                status: Mutex::new(String::new()),
                 tx: Mutex::new(tx),
                 space_id: Mutex::new(None),
                 typing_channel_id: Mutex::new(None),
@@ -555,6 +796,8 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
         );
         id
     };
+
+    metrics.active_connections.fetch_add(1, Ordering::Relaxed);
 
     log::info!("Peer {peer_id} connected from {addr}");
 
@@ -582,11 +825,21 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
             Ok(Message::Text(text)) => {
                 // Rate limit signaling messages
                 if !check_rate_limit(&state, &peer_id).await {
+                    metrics
+                        .signaling_rate_limited_total
+                        .fetch_add(1, Ordering::Relaxed);
                     log::warn!("Peer {peer_id} rate limited");
                     continue;
                 }
                 if let Ok(signal) = serde_json::from_str::<SignalMessage>(&text) {
-                    handle_signal(&state, &peer_id, signal, &db).await;
+                    metrics
+                        .signaling_messages_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    handle_signal(&state, &metrics, &peer_id, signal, &db).await;
+                } else {
+                    metrics
+                        .malformed_signaling_messages_total
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             Ok(Message::Binary(data)) => {
@@ -595,10 +848,10 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
                 }
                 match data[0] {
                     shared_types::MEDIA_PACKET_AUDIO => {
-                        relay_audio(&state, &peer_id, &data[1..]).await;
+                        relay_audio(&state, &metrics, &peer_id, &data[1..]).await;
                     }
                     shared_types::MEDIA_PACKET_SCREEN => {
-                        relay_screen(&state, &peer_id, &data[1..]).await;
+                        relay_screen(&state, &metrics, &peer_id, &data[1..]).await;
                     }
                     _ => {}
                 }
@@ -628,6 +881,7 @@ async fn handle_connection(state: State, stream: ServerStream, addr: SocketAddr,
     if let Some(user_id) = disconnected_user_id {
         handlers::presence::notify_watchers_for_user(&state, &user_id).await;
     }
+    metrics.active_connections.fetch_sub(1, Ordering::Relaxed);
     log::info!("Peer {peer_id} disconnected");
 }
 
@@ -685,7 +939,13 @@ fn validate_password(pw: &Option<String>) -> Result<(), String> {
 
 // ─── Signal Handler ───
 
-async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db) {
+async fn handle_signal(
+    state: &State,
+    metrics: &Metrics,
+    peer_id: &str,
+    msg: SignalMessage,
+    db: &Db,
+) {
     match msg {
         SignalMessage::CreateRoom {
             user_name,
@@ -815,7 +1075,11 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db
                 .await;
         }
         SignalMessage::Authenticate { token, user_name } => {
-            handlers::auth::handle_authenticate(state, peer_id, token, user_name, db).await;
+            if handlers::auth::handle_authenticate(state, peer_id, token, user_name, db).await {
+                metrics.auth_success_total.fetch_add(1, Ordering::Relaxed);
+            } else {
+                metrics.auth_failure_total.fetch_add(1, Ordering::Relaxed);
+            }
             handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::WatchFriendPresence { user_ids } => {
@@ -886,14 +1150,23 @@ async fn handle_signal(state: &State, peer_id: &str, msg: SignalMessage, db: &Db
             handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji)
                 .await;
         }
+        SignalMessage::SetUserStatus { status } => {
+            handle_set_user_status(state, peer_id, status, db).await;
+        }
+        SignalMessage::SetChannelTopic { channel_id, topic } => {
+            handle_set_channel_topic(state, peer_id, channel_id, topic, db).await;
+        }
         SignalMessage::KickMember { member_id } => {
-            handlers::moderation::handle_kick_member(state, peer_id, member_id).await;
+            handlers::moderation::handle_kick_member(state, peer_id, member_id, db).await;
         }
         SignalMessage::MuteMember { member_id, muted } => {
-            handlers::moderation::handle_mute_member(state, peer_id, member_id, muted).await;
+            handlers::moderation::handle_mute_member(state, peer_id, member_id, muted, db).await;
         }
         SignalMessage::BanMember { member_id } => {
             handlers::moderation::handle_ban_member(state, peer_id, member_id, db).await;
+        }
+        SignalMessage::SetMemberRole { user_id, role } => {
+            handlers::space::handle_set_member_role(state, peer_id, user_id, role, db).await;
         }
         _ => {}
     }
@@ -918,7 +1191,7 @@ async fn send_error(state: &State, peer_id: &str, message: &str) {
 const MAX_AUDIO_FRAMES_PER_SEC: u32 = 100; // 50fps normal, 100 allows burst
 const MAX_SCREEN_FRAMES_PER_SEC: u32 = 60;
 
-async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
+async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
     // #3: Reject oversized audio frames
     if data.len() > shared_types::MAX_AUDIO_FRAME_SIZE {
         return;
@@ -963,6 +1236,12 @@ async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
     frame.extend_from_slice(data);
 
     let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    metrics
+        .audio_frames_in_total
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .audio_frames_out_total
+        .fetch_add(others.len() as u64, Ordering::Relaxed);
 
     // Send with timeout to prevent slow peers from blocking the relay.
     // If a peer can't accept within 500ms, drop the frame for them.
@@ -996,7 +1275,7 @@ async fn relay_audio(state: &State, sender_id: &str, data: &[u8]) {
     futures_util::future::join_all(futs).await;
 }
 
-async fn relay_screen(state: &State, sender_id: &str, data: &[u8]) {
+async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
     if data.len() > shared_types::MAX_SCREEN_FRAME_SIZE {
         return;
     }
@@ -1045,8 +1324,17 @@ async fn relay_screen(state: &State, sender_id: &str, data: &[u8]) {
 
     let others = handlers::collect_room_others(state, &room_code, sender_id).await;
     if others.is_empty() {
+        metrics
+            .screen_frames_in_total
+            .fetch_add(1, Ordering::Relaxed);
         return;
     }
+    metrics
+        .screen_frames_in_total
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .screen_frames_out_total
+        .fetch_add(others.len() as u64, Ordering::Relaxed);
 
     let send_timeout = std::time::Duration::from_millis(300);
 
@@ -1153,6 +1441,118 @@ async fn send_to(peer: &Peer, msg: &SignalMessage) {
     }
 }
 
+async fn handle_set_user_status(state: &State, peer_id: &str, status: String, db: &Db) {
+    let status = status.chars().take(128).collect::<String>();
+
+    let (space_id, user_id) = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        *peer.status.lock().await = status.clone();
+        let space_id = peer.space_id.lock().await.clone();
+        let user_id = peer.user_id.lock().await.clone();
+        (space_id, user_id)
+    };
+
+    // Persist status to DB if authenticated
+    if let (Some(db), Some(uid)) = (db, user_id) {
+        let db = db.clone();
+        let status_clone = status.clone();
+        tokio::task::spawn_blocking(move || {
+            db.set_user_status(&uid, &status_clone);
+        })
+        .await
+        .ok();
+    }
+
+    // Broadcast to space members
+    if let Some(space_id) = space_id {
+        let notify = SignalMessage::UserStatusChanged {
+            member_id: peer_id.to_string(),
+            status,
+        };
+        handlers::broadcast_to_space(state, &space_id, peer_id, &notify).await;
+    }
+}
+
+async fn handle_set_channel_topic(
+    state: &State,
+    peer_id: &str,
+    channel_id: String,
+    topic: String,
+    db: &Db,
+) {
+    let topic = topic.chars().take(256).collect::<String>();
+    let Some((space_id, actor_user_id, actor_role)) =
+        handlers::space::peer_space_role(state, peer_id).await
+    else {
+        return;
+    };
+    if !handlers::space::can_manage_channels(actor_role) {
+        send_error(state, peer_id, "Only admins can change channel topics").await;
+        return;
+    }
+    let actor_name = {
+        let peer = {
+            let s = state.read().await;
+            s.peers.get(peer_id).cloned()
+        };
+        if let Some(peer) = peer {
+            peer.name.lock().await.clone()
+        } else {
+            "Unknown".into()
+        }
+    };
+    let changed_channel_name = {
+        let mut s = state.write().await;
+        let Some(space) = s.spaces.get_mut(&space_id) else {
+            return;
+        };
+        let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) else {
+            return;
+        };
+        channel.topic = topic.clone();
+        channel.name.clone()
+    };
+
+    // Persist to DB
+    if let Some(db) = db {
+        let db = db.clone();
+        let cid = channel_id.clone();
+        let t = topic.clone();
+        tokio::task::spawn_blocking(move || {
+            db.set_channel_topic(&cid, &t);
+        })
+        .await
+        .ok();
+    }
+
+    let notify = SignalMessage::ChannelTopicChanged {
+        channel_id: channel_id.clone(),
+        topic: topic.clone(),
+    };
+    handlers::broadcast_to_space(state, &space_id, peer_id, &notify).await;
+
+    // Also send to the setter
+    if let Some(peer) = state.read().await.peers.get(peer_id) {
+        send_to(peer, &notify).await;
+    }
+
+    let _ = handlers::space::append_audit_entry(
+        state,
+        db,
+        &space_id,
+        &actor_user_id,
+        &actor_name,
+        "topic",
+        None,
+        Some(changed_channel_name),
+        "Updated the channel topic".into(),
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1235,5 +1635,13 @@ mod tests {
         assert_eq!(id1, "p1");
         assert_eq!(id2, "p2");
         assert_eq!(id3, "p3");
+    }
+
+    #[test]
+    fn bind_requires_tls_for_non_loopback() {
+        assert!(!bind_requires_tls("127.0.0.1:9090"));
+        assert!(!bind_requires_tls("[::1]:9090"));
+        assert!(bind_requires_tls("0.0.0.0:9090"));
+        assert!(bind_requires_tls("192.168.1.10:9090"));
     }
 }

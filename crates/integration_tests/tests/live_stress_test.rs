@@ -92,7 +92,11 @@ impl Client {
             match timeout(dur, self.stream.next()).await {
                 Ok(Some(Ok(Message::Text(text)))) => {
                     if let Ok(msg) = serde_json::from_str::<SignalMessage>(&text) {
-                        return Some(msg);
+                        match msg {
+                            SignalMessage::SpaceAuditLogSnapshot { .. }
+                            | SignalMessage::SpaceAuditLogAppended { .. } => continue,
+                            other => return Some(other),
+                        }
                     }
                 }
                 Ok(Some(Ok(Message::Ping(_)))) | Ok(Some(Ok(Message::Pong(_)))) => continue,
@@ -245,9 +249,7 @@ async fn live_stress_space_full_lifecycle() {
 
     let (invite_code, space_channels) = loop {
         match owner.recv().await {
-            SignalMessage::SpaceCreated { space, channels } => {
-                break (space.invite_code, channels)
-            }
+            SignalMessage::SpaceCreated { space, channels } => break (space.invite_code, channels),
             _ => continue,
         }
     };
@@ -452,7 +454,7 @@ async fn live_stress_reconnect_identity() {
 
     let name = unique_name("recon");
     let mut client1 = Client::connect(&name).await;
-    let (token, user_id) = client1.authenticate().await;
+    let (mut token, user_id) = client1.authenticate().await;
     eprintln!("[{name}] First connect: uid={user_id}");
 
     // Disconnect
@@ -475,7 +477,8 @@ async fn live_stress_reconnect_identity() {
             }
         };
         assert_eq!(uid2, user_id, "Attempt {attempt}: user_id should persist");
-        assert_eq!(t2, token, "Attempt {attempt}: token should persist");
+        assert_ne!(t2, token, "Attempt {attempt}: token should rotate");
+        token = t2;
         let _ = client.drain(Duration::from_millis(300)).await;
         drop(client);
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -503,16 +506,14 @@ async fn live_stress_malformed_data() {
         .unwrap();
 
     // Send empty text
-    client
-        .sink
-        .send(Message::Text("".into()))
-        .await
-        .unwrap();
+    client.sink.send(Message::Text("".into())).await.unwrap();
 
     // Send unknown variant
     client
         .sink
-        .send(Message::Text(r#"{"TotallyFakeMessage":{"foo":"bar"}}"#.into()))
+        .send(Message::Text(
+            r#"{"TotallyFakeMessage":{"foo":"bar"}}"#.into(),
+        ))
         .await
         .unwrap();
 

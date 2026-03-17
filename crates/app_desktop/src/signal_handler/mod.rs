@@ -5,6 +5,8 @@ mod member;
 mod room;
 mod space;
 
+pub use space::apply_space_permissions;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -90,8 +92,11 @@ pub fn process_signals(
                     w.set_current_space_invite(slint::SharedString::default());
                     w.set_space_search_query(slint::SharedString::default());
                     w.set_confirm_delete_channel_id(slint::SharedString::default());
+                    w.set_is_space_owner(false);
+                    space::apply_space_permissions(w, shared_types::SpaceRole::Member);
                     ui_shell::set_channels(w, &[]);
                     ui_shell::set_members(w, &[]);
+                    ui_shell::set_space_audit_log(w, &[]);
                     w.set_status_text("Saved space no longer exists on the server".into());
                     continue;
                 }
@@ -149,6 +154,21 @@ pub fn process_signals(
                     channel_id,
                     channel_name,
                 );
+            }
+            SignalMessage::UserStatusChanged { member_id, status } => {
+                member::handle_user_status_changed(w, state, member_id, status);
+            }
+            SignalMessage::MemberRoleChanged { user_id, role } => {
+                member::handle_member_role_changed(w, state, user_id, *role);
+            }
+            SignalMessage::ChannelTopicChanged { channel_id, topic } => {
+                channel::handle_channel_topic_changed(w, state, channel_id, topic);
+            }
+            SignalMessage::SpaceAuditLogSnapshot { entries } => {
+                member::handle_space_audit_snapshot(w, state, entries);
+            }
+            SignalMessage::SpaceAuditLogAppended { entry } => {
+                member::handle_space_audit_appended(w, state, entry);
             }
             SignalMessage::SpaceDeleted => {
                 space::handle_space_deleted(w, state, ctx);
@@ -298,6 +318,7 @@ pub fn process_signals(
                 w.set_reply_target_sender_name(slint::SharedString::default());
                 w.set_reply_target_preview(slint::SharedString::default());
                 w.set_is_space_owner(false);
+                space::apply_space_permissions(w, shared_types::SpaceRole::Member);
                 w.set_in_space_channel(false);
                 w.set_room_code(slint::SharedString::default());
                 w.set_is_muted(false);
@@ -312,6 +333,7 @@ pub fn process_signals(
                 >::new(1, 1)));
                 ui_shell::set_channels(w, &[]);
                 ui_shell::set_members(w, &[]);
+                ui_shell::set_space_audit_log(w, &[]);
                 crate::friends::sync_ui(w, state);
                 ctx.screen_share.stop_capture();
                 if w.get_notifications_enabled() {

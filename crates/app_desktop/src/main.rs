@@ -2,6 +2,7 @@
 // Users see only the Slint GUI window, not a terminal.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod automation;
 mod callbacks;
 mod direct_messages;
 mod friends;
@@ -26,8 +27,14 @@ fn main() {
 
     log::info!("Voxlink starting");
 
+    if let Some(exit_code) = automation::maybe_run_from_env() {
+        std::process::exit(exit_code);
+    }
+
     let config = config_store::load_config();
     log::info!("Config loaded");
+    let is_dark = config.dark_mode.unwrap_or(true);
+    let theme_preset = helpers::theme_preset_index(&config.theme_preset);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -73,6 +80,8 @@ fn main() {
     let screen_share = Arc::new(screen_share::ScreenShareController::new());
 
     let window = MainWindow::new().unwrap();
+    window.set_theme_preset(theme_preset);
+    window.set_dark_mode(is_dark);
     let member_widget = Rc::new(RefCell::new(None::<MemberWidgetWindow>));
     register_member_widget_initializer(
         &window,
@@ -89,7 +98,7 @@ fn main() {
             let state = state.borrow();
             ui_shell::sync_member_widget(state.space.as_ref(), &state.favorite_friends);
         }
-        ui_shell::sync_member_widget_theme(config.dark_mode.unwrap_or(true));
+        ui_shell::sync_member_widget_theme(is_dark, theme_preset);
         let _ = ui_shell::set_member_widget_visible(true);
     }
     window.set_member_widget_visible(config.member_widget_visible);
@@ -127,10 +136,6 @@ fn main() {
 
     // Set keybind display names on UI
     set_key_display(&window, &ptt_key, &mute_key, &deafen_key);
-
-    // Apply dark mode from config
-    let is_dark = config.dark_mode.unwrap_or(true);
-    window.set_dark_mode(is_dark);
 
     // Apply feedback sound, noise suppression, and volume from config
     window.set_feedback_sound(config.feedback_sound);
@@ -381,6 +386,7 @@ fn apply_config(
                 member_count: 0,
                 channel_count: 0,
                 is_owner: false,
+                self_role: shared_types::SpaceRole::Member,
             })
             .collect();
         ui_shell::set_spaces(window, &space_infos);
@@ -440,7 +446,11 @@ fn setup_logging() {
     let max_level = env_logger.filter();
 
     if let Some(path) = log_path {
-        if let Ok(file) = std::fs::File::create(&path) {
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let dual = DualLogger {
                 env_logger,
                 file: std::sync::Mutex::new(file),

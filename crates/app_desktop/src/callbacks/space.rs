@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use shared_types::{AppView, SignalMessage};
+use shared_types::{AppView, SignalMessage, SpaceRole};
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
@@ -237,6 +237,7 @@ pub fn setup_leave_space(
         w.set_visible_voice_channels(0);
         w.set_visible_members(0);
         w.set_is_space_owner(false);
+        crate::signal_handler::apply_space_permissions(&w, SpaceRole::Member);
         w.set_in_space_channel(false);
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
@@ -267,6 +268,7 @@ pub fn setup_leave_space(
         >::new(1, 1)));
         ui_shell::set_channels(&w, &[]);
         ui_shell::set_members(&w, &[]);
+        ui_shell::set_space_audit_log(&w, &[]);
         crate::friends::sync_ui(&w, &state);
 
         crate::helpers::sync_saved_spaces_ui(&w, None);
@@ -413,6 +415,33 @@ pub fn setup_server_mute_member(
             let net = network.lock().await;
             let _ = net
                 .send_signal(&SignalMessage::MuteMember { member_id, muted })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_member_role(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_member_role(move |user_id, role_index| {
+        let user_id = user_id.to_string();
+        if user_id.is_empty() {
+            return;
+        }
+        let role = match role_index {
+            2 => SpaceRole::Admin,
+            1 => SpaceRole::Moderator,
+            _ => SpaceRole::Member,
+        };
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetMemberRole { user_id, role })
                 .await;
         });
     });

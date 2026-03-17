@@ -26,6 +26,8 @@ pub struct AppConfig {
     pub deafen_key: Option<String>,
     #[serde(default)]
     pub dark_mode: Option<bool>,
+    #[serde(default = "default_theme_preset")]
+    pub theme_preset: String,
     #[serde(default)]
     pub saved_spaces: Vec<SavedSpace>,
     #[serde(default)]
@@ -91,6 +93,10 @@ fn default_server_address() -> String {
     "ws://129.158.231.26:9090".into()
 }
 
+fn default_theme_preset() -> String {
+    "voxlink".into()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -107,6 +113,7 @@ impl Default for AppConfig {
             mute_key: None,
             deafen_key: None,
             dark_mode: None,
+            theme_preset: default_theme_preset(),
             saved_spaces: Vec::new(),
             last_space_id: None,
             last_channel_id: None,
@@ -198,6 +205,7 @@ mod tests {
             mute_key: Some("m".into()),
             deafen_key: Some("d".into()),
             dark_mode: Some(true),
+            theme_preset: "space".into(),
             saved_spaces: vec![SavedSpace {
                 id: "s1".into(),
                 name: "Test Space".into(),
@@ -252,6 +260,7 @@ mod tests {
         assert_eq!(decoded.window_height, Some(600));
         assert_eq!(decoded.saved_spaces.len(), 1);
         assert_eq!(decoded.saved_spaces[0].name, "Test Space");
+        assert_eq!(decoded.theme_preset, "space");
         assert_eq!(decoded.last_space_id.as_deref(), Some("s1"));
         assert_eq!(decoded.last_channel_id.as_deref(), Some("c1"));
         assert!(decoded.member_widget_visible);
@@ -280,6 +289,7 @@ mod tests {
         assert!(config.last_room_code.is_none());
         assert!(config.window_width.is_none());
         assert!(config.window_height.is_none());
+        assert_eq!(config.theme_preset, "voxlink");
         assert!(config.saved_spaces.is_empty());
         assert!(config.last_space_id.is_none());
         assert!(config.last_channel_id.is_none());

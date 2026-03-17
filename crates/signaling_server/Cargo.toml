@@ -1,6 +1,6 @@
 [package]
 name = "signaling_server"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 
 [dependencies]
@@ -14,3 +14,4 @@ serde_json = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
+rand = { workspace = true }

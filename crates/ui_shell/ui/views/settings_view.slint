@@ -2,10 +2,90 @@ import { ScrollView } from "std-widgets.slint";
 import { VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
+component ThemePresetCard inherits Rectangle {
+    in property <string> label: "";
+    in property <string> detail: "";
+    in property <bool> selected: false;
+    in property <color> tone: VxTheme.accent;
+    in property <color> swatch-a: VxTheme.accent;
+    in property <color> swatch-b: VxTheme.accent-warm;
+    in property <color> swatch-c: VxTheme.bg-raised;
+    callback clicked();
+
+    border-radius: VxTheme.radius-card;
+    background: root.selected ? root.tone.transparentize(0.88) :
+                touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+    border-color: root.selected ? root.tone.transparentize(0.42) : VxTheme.border-subtle;
+    border-width: 1px;
+    clip: true;
+
+    animate background { duration: 90ms; easing: ease-out; }
+    animate border-color { duration: 90ms; easing: ease-out; }
+
+    Rectangle {
+        width: parent.width;
+        height: 2px;
+        background: root.selected ? root.tone : VxTheme.accent-subtle;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+                width: 24px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.swatch-a;
+            }
+            Rectangle {
+                width: 24px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.swatch-b;
+            }
+            Rectangle {
+                width: 24px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.swatch-c;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? root.tone : VxTheme.text-primary;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        Text {
+            text: root.detail;
+            color: VxTheme.text-muted;
+            font-size: 9px;
+            wrap: word-wrap;
+        }
+
+        if root.selected : VxStatusPill {
+            label: "Active";
+            tone: root.tone;
+            fill: root.tone.transparentize(0.84);
+        }
+    }
+}
+
 export component SettingsView inherits Rectangle {
     in property <bool> wide: false;
     in property <int> previous-view: 0;
     in property <bool> dark-mode: true;
+    in property <int> theme-preset: 0;
     in property <[string]> input-devices: [];
     in property <[string]> output-devices: [];
     in-out property <int> selected-input: 0;
@@ -25,6 +105,7 @@ export component SettingsView inherits Rectangle {
     in property <string> deafen-key-display: "";
     callback navigate(int);
     callback toggle-dark-mode();
+    callback select-theme-preset(int);
     callback refresh-devices();
     callback input-volume-changed(float);
     callback output-volume-changed(float);
@@ -42,7 +123,7 @@ export component SettingsView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: 24px;
+            padding: root.wide ? 22px : 14px;
             spacing: 18px;
 
             HorizontalLayout {
@@ -78,13 +159,27 @@ export component SettingsView inherits Rectangle {
                                     alignment: center;
                                     horizontal-stretch: 1;
                                     Text {
-                                        text: root.dark-mode ? "Dark console theme" : "Light console theme";
+                                        text:
+                                            root.theme-preset == 1 ? (root.dark-mode ? "360 party dark" : "360 party light") :
+                                            root.theme-preset == 2 ? (root.dark-mode ? "Deep space dark" : "Deep space light") :
+                                            root.theme-preset == 3 ? (root.dark-mode ? "Retro tech dark" : "Retro tech light") :
+                                            root.theme-preset == 4 ? (root.dark-mode ? "Amber CRT dark" : "Amber CRT light") :
+                                            root.theme-preset == 5 ? (root.dark-mode ? "Midnight noir dark" : "Midnight noir light") :
+                                            root.theme-preset == 6 ? (root.dark-mode ? "Arctic glass dark" : "Arctic glass light") :
+                                            root.dark-mode ? "Voxlink dark" : "Voxlink light";
                                         color: VxTheme.text-primary;
                                         font-size: 12px;
                                         font-weight: 700;
                                     }
                                     Text {
-                                        text: "The theme changes instantly without touching the audio pipeline.";
+                                        text:
+                                            root.theme-preset == 1 ? "Xbox 360 party energy with green glass surfaces and warm highlights." :
+                                            root.theme-preset == 2 ? "A colder orbital palette with blue-black surfaces and neon trim." :
+                                            root.theme-preset == 3 ? "Retro control-room styling with phosphor green and amber accents." :
+                                            root.theme-preset == 4 ? "Warm amber phosphor styling with CRT-era contrast and sepia depth." :
+                                            root.theme-preset == 5 ? "A stripped-back noir shell with ink-dark surfaces and cold blue trim." :
+                                            root.theme-preset == 6 ? "Frosted cyan glass with brighter surfaces and cleaner contrast." :
+                                            "The default premium shell. Theme changes apply instantly without touching the audio pipeline.";
                                         color: VxTheme.text-muted;
                                         font-size: 10px;
                                         wrap: word-wrap;
@@ -93,6 +188,110 @@ export component SettingsView inherits Rectangle {
                                 VxToggle {
                                     checked: root.dark-mode;
                                     toggled => { root.toggle-dark-mode(); }
+                                }
+                            }
+
+                            Divider {}
+
+                            VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "Theme preset"; }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Voxlink";
+                                        detail: "Default premium broadcast shell.";
+                                        selected: root.theme-preset == 0;
+                                        tone: #54d2ff;
+                                        swatch-a: #54d2ff;
+                                        swatch-b: #7ce5c8;
+                                        swatch-c: #13202d;
+                                        clicked => { root.select-theme-preset(0); }
+                                    }
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "360 Party";
+                                        detail: "Green-room glow with Xbox-era energy.";
+                                        selected: root.theme-preset == 1;
+                                        tone: #8be14f;
+                                        swatch-a: #8be14f;
+                                        swatch-b: #f3c65d;
+                                        swatch-c: #192715;
+                                        clicked => { root.select-theme-preset(1); }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Deep Space";
+                                        detail: "Orbital blues, violet trims, calmer contrast.";
+                                        selected: root.theme-preset == 2;
+                                        tone: #6cc9ff;
+                                        swatch-a: #6cc9ff;
+                                        swatch-b: #bb8cff;
+                                        swatch-c: #141c3a;
+                                        clicked => { root.select-theme-preset(2); }
+                                    }
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Retro Tech";
+                                        detail: "Old-school control console with phosphor edges.";
+                                        selected: root.theme-preset == 3;
+                                        tone: #5cf3a6;
+                                        swatch-a: #5cf3a6;
+                                        swatch-b: #ffca5c;
+                                        swatch-c: #111d18;
+                                        clicked => { root.select-theme-preset(3); }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Amber CRT";
+                                        detail: "Warm phosphor amber with old-school monitor depth.";
+                                        selected: root.theme-preset == 4;
+                                        tone: #ffbe4f;
+                                        swatch-a: #ffbe4f;
+                                        swatch-b: #fff0b2;
+                                        swatch-c: #291c0f;
+                                        clicked => { root.select-theme-preset(4); }
+                                    }
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Midnight Noir";
+                                        detail: "Minimal graphite shell with cool blue edge lighting.";
+                                        selected: root.theme-preset == 5;
+                                        tone: #90a8ff;
+                                        swatch-a: #90a8ff;
+                                        swatch-b: #cfd8f4;
+                                        swatch-c: #151921;
+                                        clicked => { root.select-theme-preset(5); }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ThemePresetCard {
+                                        horizontal-stretch: 1;
+                                        label: "Arctic Glass";
+                                        detail: "Frosted cyan surfaces with airy contrast and clean edges.";
+                                        selected: root.theme-preset == 6;
+                                        tone: #5fdaf4;
+                                        swatch-a: #5fdaf4;
+                                        swatch-b: #c8f6ff;
+                                        swatch-c: #13292f;
+                                        clicked => { root.select-theme-preset(6); }
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        background: transparent;
+                                    }
                                 }
                             }
                         }
@@ -269,7 +468,7 @@ export component SettingsView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 360px;
+                    width: 320px;
                     spacing: 18px;
 
                     VxCard {
@@ -581,16 +780,108 @@ export component SettingsView inherits Rectangle {
                         SectionLabel { text: "APPEARANCE"; }
                         HorizontalLayout {
                             spacing: 10px;
-                            Text {
-                                text: root.dark-mode ? "Dark theme" : "Light theme";
-                                color: VxTheme.text-primary;
-                                font-size: 12px;
-                                font-weight: 700;
+                            VerticalLayout {
                                 horizontal-stretch: 1;
+                                Text {
+                                    text:
+                                        root.theme-preset == 1 ? (root.dark-mode ? "360 party dark" : "360 party light") :
+                                        root.theme-preset == 2 ? (root.dark-mode ? "Deep space dark" : "Deep space light") :
+                                        root.theme-preset == 3 ? (root.dark-mode ? "Retro tech dark" : "Retro tech light") :
+                                        root.theme-preset == 4 ? (root.dark-mode ? "Amber CRT dark" : "Amber CRT light") :
+                                        root.theme-preset == 5 ? (root.dark-mode ? "Midnight noir dark" : "Midnight noir light") :
+                                        root.theme-preset == 6 ? (root.dark-mode ? "Arctic glass dark" : "Arctic glass light") :
+                                        root.dark-mode ? "Voxlink dark" : "Voxlink light";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: "Theme swaps are visual only and apply instantly.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 9px;
+                                    wrap: word-wrap;
+                                }
                             }
                             VxToggle {
                                 checked: root.dark-mode;
                                 toggled => { root.toggle-dark-mode(); }
+                            }
+                        }
+
+                        Divider {}
+
+                        VerticalLayout {
+                            spacing: 8px;
+                            ThemePresetCard {
+                                label: "Voxlink";
+                                detail: "Default premium broadcast shell.";
+                                selected: root.theme-preset == 0;
+                                tone: #54d2ff;
+                                swatch-a: #54d2ff;
+                                swatch-b: #7ce5c8;
+                                swatch-c: #13202d;
+                                clicked => { root.select-theme-preset(0); }
+                            }
+                            ThemePresetCard {
+                                label: "360 Party";
+                                detail: "Green-room glow with Xbox-era energy.";
+                                selected: root.theme-preset == 1;
+                                tone: #8be14f;
+                                swatch-a: #8be14f;
+                                swatch-b: #f3c65d;
+                                swatch-c: #192715;
+                                clicked => { root.select-theme-preset(1); }
+                            }
+                            ThemePresetCard {
+                                label: "Deep Space";
+                                detail: "Orbital blues, violet trims, calmer contrast.";
+                                selected: root.theme-preset == 2;
+                                tone: #6cc9ff;
+                                swatch-a: #6cc9ff;
+                                swatch-b: #bb8cff;
+                                swatch-c: #141c3a;
+                                clicked => { root.select-theme-preset(2); }
+                            }
+                            ThemePresetCard {
+                                label: "Retro Tech";
+                                detail: "Old-school control console with phosphor edges.";
+                                selected: root.theme-preset == 3;
+                                tone: #5cf3a6;
+                                swatch-a: #5cf3a6;
+                                swatch-b: #ffca5c;
+                                swatch-c: #111d18;
+                                clicked => { root.select-theme-preset(3); }
+                            }
+                            ThemePresetCard {
+                                label: "Amber CRT";
+                                detail: "Warm phosphor amber with old-school monitor depth.";
+                                selected: root.theme-preset == 4;
+                                tone: #ffbe4f;
+                                swatch-a: #ffbe4f;
+                                swatch-b: #fff0b2;
+                                swatch-c: #291c0f;
+                                clicked => { root.select-theme-preset(4); }
+                            }
+                            ThemePresetCard {
+                                label: "Midnight Noir";
+                                detail: "Minimal graphite shell with cool blue edge lighting.";
+                                selected: root.theme-preset == 5;
+                                tone: #90a8ff;
+                                swatch-a: #90a8ff;
+                                swatch-b: #cfd8f4;
+                                swatch-c: #151921;
+                                clicked => { root.select-theme-preset(5); }
+                            }
+                            ThemePresetCard {
+                                label: "Arctic Glass";
+                                detail: "Frosted cyan surfaces with airy contrast and clean edges.";
+                                selected: root.theme-preset == 6;
+                                tone: #5fdaf4;
+                                swatch-a: #5fdaf4;
+                                swatch-b: #c8f6ff;
+                                swatch-c: #13292f;
+                                clicked => { root.select-theme-preset(6); }
                             }
                         }
                     }

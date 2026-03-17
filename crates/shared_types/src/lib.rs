@@ -60,6 +60,8 @@ pub struct SpaceInfo {
     pub channel_count: u32,
     #[serde(default)]
     pub is_owner: bool,
+    #[serde(default)]
+    pub self_role: SpaceRole,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +71,15 @@ pub enum ChannelType {
     Text,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpaceRole {
+    Owner,
+    Admin,
+    Moderator,
+    #[default]
+    Member,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelInfo {
     pub id: String,
@@ -76,6 +87,8 @@ pub struct ChannelInfo {
     pub peer_count: u32,
     #[serde(default)]
     pub channel_type: ChannelType,
+    #[serde(default)]
+    pub topic: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,9 +98,29 @@ pub struct MemberInfo {
     pub user_id: Option<String>,
     pub name: String,
     #[serde(default)]
+    pub role: SpaceRole,
+    #[serde(default)]
     pub channel_id: Option<String>,
     #[serde(default)]
     pub channel_name: Option<String>,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpaceAuditEntry {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub actor_name: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub target_name: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -164,8 +197,10 @@ pub struct SpaceState {
     pub invite_code: String,
     pub channels: Vec<ChannelInfo>,
     pub members: Vec<MemberInfo>,
+    pub audit_log: Vec<SpaceAuditEntry>,
     pub active_channel_id: Option<String>,
     pub selected_text_channel_id: Option<String>,
+    pub self_role: SpaceRole,
     pub unread_text_channels: HashMap<String, u32>,
     pub typing_users: HashMap<String, Vec<String>>,
 }
@@ -462,6 +497,23 @@ pub enum SignalMessage {
         pinned: bool,
     },
 
+    // User status & Channel topics
+    SetUserStatus {
+        status: String,
+    },
+    UserStatusChanged {
+        member_id: String,
+        status: String,
+    },
+    SetChannelTopic {
+        channel_id: String,
+        topic: String,
+    },
+    ChannelTopicChanged {
+        channel_id: String,
+        topic: String,
+    },
+
     // Moderation (Milestone 6)
     KickMember {
         member_id: String,
@@ -473,12 +525,26 @@ pub enum SignalMessage {
     BanMember {
         member_id: String,
     },
+    SetMemberRole {
+        user_id: String,
+        role: SpaceRole,
+    },
     Kicked {
         reason: String,
     },
     MemberMuted {
         member_id: String,
         muted: bool,
+    },
+    MemberRoleChanged {
+        user_id: String,
+        role: SpaceRole,
+    },
+    SpaceAuditLogSnapshot {
+        entries: Vec<SpaceAuditEntry>,
+    },
+    SpaceAuditLogAppended {
+        entry: SpaceAuditEntry,
     },
 }
 
@@ -815,12 +881,14 @@ mod tests {
                 member_count: 1,
                 channel_count: 1,
                 is_owner: true,
+                self_role: SpaceRole::Owner,
             },
             channels: vec![ChannelInfo {
                 id: "c1".into(),
                 name: "General".into(),
                 peer_count: 0,
                 channel_type: ChannelType::Voice,
+                topic: String::new(),
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -847,19 +915,23 @@ mod tests {
                 member_count: 2,
                 channel_count: 1,
                 is_owner: false,
+                self_role: SpaceRole::Member,
             },
             channels: vec![ChannelInfo {
                 id: "c1".into(),
                 name: "General".into(),
                 peer_count: 1,
                 channel_type: ChannelType::Voice,
+                topic: String::new(),
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),
                 user_id: Some("u1".into()),
                 name: "Alice".into(),
+                role: SpaceRole::Member,
                 channel_id: Some("c1".into()),
                 channel_name: Some("General".into()),
+                status: String::new(),
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();

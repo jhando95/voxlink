@@ -5,6 +5,7 @@ import { AccentBar, Divider, SectionLabel, StatusDot, VxAvatar, VxLogo, VxStatus
 export component TopBar inherits Rectangle {
     in property <string> title: "";
     in property <string> subtitle: "";
+    in property <bool> compact: false;
     in property <bool> is-connected: false;
     in property <int> ping-ms: -1;
     in property <string> room-code: "";
@@ -17,7 +18,7 @@ export component TopBar inherits Rectangle {
     in property <string> update-version: "";
     callback nav-toggle();
 
-    height: 72px;
+    height: root.compact ? 64px : 72px;
     background: VxTheme.bg-panel;
 
     AccentBar {
@@ -29,15 +30,15 @@ export component TopBar inherits Rectangle {
         padding-left: 18px;
         padding-right: 18px;
         alignment: space-between;
-        spacing: 14px;
+        spacing: root.compact ? 10px : 14px;
 
         HorizontalLayout {
-            spacing: 12px;
+            spacing: root.compact ? 10px : 12px;
             alignment: center;
 
             if root.show-nav-button : Rectangle {
-                width: 42px;
-                height: 42px;
+                width: root.compact ? 38px : 42px;
+                height: root.compact ? 38px : 42px;
                 border-radius: VxTheme.radius-control;
                 background: nav-button-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
                 border-color: VxTheme.border-subtle;
@@ -60,29 +61,30 @@ export component TopBar inherits Rectangle {
                 }
             }
 
-            VerticalLayout {
-                alignment: center;
-                spacing: 3px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 3px;
 
                 Text {
                     text: root.title;
                     color: VxTheme.text-primary;
-                    font-size: 18px;
+                    font-size: root.compact ? 16px : 18px;
                     font-weight: 700;
                     vertical-alignment: center;
                 }
                 Text {
                     text: root.subtitle;
                     color: VxTheme.text-muted;
-                    font-size: 10px;
+                    font-size: 9px;
                     font-weight: 500;
                     vertical-alignment: center;
+                    visible: !root.compact || root.subtitle != "";
                 }
             }
         }
 
         HorizontalLayout {
-            spacing: 8px;
+            spacing: root.compact ? 6px : 8px;
             alignment: center;
 
             if root.room-code != "" : VxStatusPill {
@@ -160,6 +162,7 @@ export component TopBar inherits Rectangle {
 
 export component WorkspaceRail inherits Rectangle {
     in property <int> current-view: 0;
+    in property <bool> compact: false;
     in property <[SpaceData]> spaces: [];
     in property <string> current-space-id: "";
     in property <[MemberData]> members: [];
@@ -171,7 +174,7 @@ export component WorkspaceRail inherits Rectangle {
     callback navigate(int);
     callback select-space(string);
 
-    width: 272px;
+    width: root.compact ? 236px : 272px;
     background: VxTheme.bg-rail;
 
     Rectangle {
@@ -185,16 +188,16 @@ export component WorkspaceRail inherits Rectangle {
         spacing: 0px;
 
         Rectangle {
-            height: 82px;
+            height: root.compact ? 72px : 82px;
             background: transparent;
 
             HorizontalLayout {
-                padding-left: 18px;
-                padding-right: 18px;
-                spacing: 12px;
+                padding-left: root.compact ? 14px : 18px;
+                padding-right: root.compact ? 14px : 18px;
+                spacing: root.compact ? 10px : 12px;
                 alignment: center;
 
-                VxLogo { logo-size: 36px; }
+                VxLogo { logo-size: root.compact ? 32px : 36px; }
 
                 VerticalLayout {
                     alignment: center;
@@ -203,12 +206,12 @@ export component WorkspaceRail inherits Rectangle {
                     Text {
                         text: "VOXLINK";
                         color: VxTheme.text-primary;
-                        font-size: 13px;
+                        font-size: root.compact ? 12px : 13px;
                         font-weight: 800;
                         letter-spacing: 1.4px;
                     }
                     Text {
-                        text: "Voice-first command rail";
+                        text: root.compact ? "Voice rail" : "Voice-first command rail";
                         color: VxTheme.text-muted;
                         font-size: 9px;
                         font-weight: 500;
@@ -224,7 +227,7 @@ export component WorkspaceRail inherits Rectangle {
                 padding-left: 12px;
                 padding-right: 12px;
                 padding-bottom: 14px;
-                spacing: 14px;
+                spacing: root.compact ? 10px : 14px;
 
                 Rectangle {
                     border-radius: VxTheme.radius-card;
@@ -275,8 +278,12 @@ export component WorkspaceRail inherits Rectangle {
 
                         Text {
                             text: root.room-code != ""
-                                ? "Jump straight back into voice or sweep the inbox without searching the shell."
-                                : "Unread direct messages and friend presence stay visible here.";
+                                ? (root.compact
+                                    ? "Resume voice or inbox fast."
+                                    : "Jump straight back into voice or sweep the inbox without searching the shell.")
+                                : (root.compact
+                                    ? "Inbox and friend status stay visible."
+                                    : "Unread direct messages and friend presence stay visible here.");
                             color: VxTheme.text-secondary;
                             font-size: 9px;
                             wrap: word-wrap;

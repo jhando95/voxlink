@@ -1,4 +1,4 @@
-import { ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
+import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
 import { BottomNav, TopBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
@@ -33,6 +33,7 @@ export component MainWindow inherits Window {
     in-out property <string> server-address: "ws://127.0.0.1:9090";
     in-out property <bool> is-muted: false;
     in-out property <bool> is-deafened: false;
+    in-out property <bool> talking-while-muted: false;
     in-out property <bool> is-open-mic: true;
     in-out property <bool> is-connected: false;
     in-out property <float> mic-level: 0.0;
@@ -54,6 +55,8 @@ export component MainWindow inherits Window {
     in-out property <string> ptt-key-display: "Space";
     in-out property <string> mute-key-display: "M";
     in-out property <string> deafen-key-display: "D";
+    in-out property <int> theme-preset: 0;
+    changed theme-preset => { VxTheme.theme-preset = self.theme-preset; }
     in-out property <bool> dark-mode: true;
     changed dark-mode => { VxTheme.dark-mode = self.dark-mode; }
     in-out property <bool> feedback-sound: true;
@@ -97,8 +100,14 @@ export component MainWindow inherits Window {
     in-out property <string> current-space-name: "";
     in-out property <string> current-space-invite: "";
     in-out property <bool> is-space-owner: false;
+    in-out property <string> space-role-label: "Member";
+    in-out property <bool> can-manage-space-channels: false;
+    in-out property <bool> can-manage-space-members: false;
+    in-out property <bool> can-manage-space-roles: false;
+    in-out property <bool> can-view-space-audit: false;
     in-out property <[ChannelData]> channels: [];
     in-out property <[MemberData]> members: [];
+    in-out property <[AuditEntryData]> space-audit-entries: [];
     in-out property <string> new-channel-name: "";
     in-out property <bool> in-space-channel: false;
     in-out property <bool> show-quick-call: false;
@@ -148,9 +157,11 @@ export component MainWindow inherits Window {
 
     // Layout state
     property <bool> desktop-layout: true;
+    property <bool> shell-compact: true;
     property <bool> rail-open: desktop-layout || sidebar-expanded;
     changed width => {
         root.desktop-layout = self.width >= 1040px;
+        root.shell-compact = self.width < 1320px;
         if root.desktop-layout {
             root.sidebar-expanded = false;
         }
@@ -192,6 +203,7 @@ export component MainWindow inherits Window {
     callback copy-room-code();
     callback clear-keybind(string);
     callback toggle-dark-mode();
+    callback select-theme-preset(int);
     callback create-space();
     callback join-space();
     callback select-space(string);
@@ -220,6 +232,7 @@ export component MainWindow inherits Window {
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
+    callback set-member-role(string, int);
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -234,7 +247,8 @@ export component MainWindow inherits Window {
             spacing: 0px;
 
             if root.rail-open : WorkspaceRail {
-                width: root.desktop-layout ? 272px : 264px;
+                width: root.desktop-layout ? (root.shell-compact ? 236px : 272px) : 248px;
+                compact: root.shell-compact;
                 current-view: root.current-view;
                 spaces: root.spaces;
                 current-space-id: root.current-space-id;
@@ -267,6 +281,7 @@ export component MainWindow inherits Window {
                     spacing: 0px;
 
                     TopBar {
+                        compact: root.shell-compact;
                         title: root.context-title;
                         subtitle: root.context-subtitle;
                         is-connected: root.is-connected;
@@ -318,6 +333,7 @@ export component MainWindow inherits Window {
                             room-status: root.room-status;
                             is-muted: root.is-muted;
                             is-deafened: root.is-deafened;
+                            talking-while-muted: root.talking-while-muted;
                             is-open-mic: root.is-open-mic;
                             mic-level: root.mic-level;
                             ptt-key-display: root.ptt-key-display;
@@ -356,6 +372,7 @@ export component MainWindow inherits Window {
                             wide: root.desktop-layout;
                             previous-view: root.previous-view;
                             dark-mode: root.dark-mode;
+                            theme-preset: root.theme-preset;
                             input-devices: root.input-devices;
                             output-devices: root.output-devices;
                             selected-input <=> root.selected-input;
@@ -375,6 +392,7 @@ export component MainWindow inherits Window {
                             deafen-key-display: root.deafen-key-display;
                             navigate(view-index) => { root.navigate(view-index); }
                             toggle-dark-mode => { root.toggle-dark-mode(); }
+                            select-theme-preset(preset) => { root.select-theme-preset(preset); }
                             refresh-devices => { root.refresh-devices(); }
                             input-volume-changed(level) => { root.input-volume-changed(level); }
                             output-volume-changed(level) => { root.output-volume-changed(level); }
@@ -392,8 +410,14 @@ export component MainWindow inherits Window {
                             current-space-name: root.current-space-name;
                             current-space-invite: root.current-space-invite;
                             is-space-owner: root.is-space-owner;
+                            space-role-label: root.space-role-label;
+                            can-manage-space-channels: root.can-manage-space-channels;
+                            can-manage-space-members: root.can-manage-space-members;
+                            can-manage-space-roles: root.can-manage-space-roles;
+                            can-view-space-audit: root.can-view-space-audit;
                             channels: root.channels;
                             members: root.members;
+                            audit-entries: root.space-audit-entries;
                             search-query <=> root.space-search-query;
                             visible-text-channels: root.visible-text-channels;
                             visible-voice-channels: root.visible-voice-channels;
@@ -415,6 +439,7 @@ export component MainWindow inherits Window {
                             kick-member(member-id) => { root.kick-member(member-id); }
                             ban-member(member-id) => { root.ban-member(member-id); }
                             server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
+                            set-member-role(user-id, role-index) => { root.set-member-role(user-id, role-index); }
                             send-friend-request(user-id) => { root.send-friend-request(user-id); }
                             accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
                             decline-friend-request(user-id) => { root.decline-friend-request(user-id); }

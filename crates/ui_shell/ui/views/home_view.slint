@@ -29,12 +29,12 @@ export component HomeView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: 24px;
+            padding: root.wide ? 22px : 14px;
             spacing: 18px;
 
             VxCard {
                 HorizontalLayout {
-                    padding: 22px;
+                    padding: root.wide ? 20px : 16px;
                     spacing: 18px;
 
                     VxLogo { logo-size: 58px; }
@@ -239,7 +239,7 @@ export component HomeView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 340px;
+                    width: 308px;
                     spacing: 18px;
 
                     if root.join-code != "" : VxCard {

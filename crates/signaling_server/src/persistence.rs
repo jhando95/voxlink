@@ -24,6 +24,7 @@ pub struct ChannelRow {
     pub name: String,
     pub room_key: String,
     pub channel_type: String, // "voice" or "text"
+    pub topic: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +48,8 @@ pub struct UserRow {
     pub token: String,
     pub display_name: String,
     pub created_at: i64,
+    pub issued_at: i64,
+    pub last_seen_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,27 @@ pub struct BanRow {
     pub space_id: String,
     pub user_id: String,
     pub banned_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpaceRoleRow {
+    pub space_id: String,
+    pub user_id: String,
+    pub role: String,
+    pub assigned_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditLogRow {
+    pub id: String,
+    pub space_id: String,
+    pub actor_user_id: String,
+    pub actor_name: String,
+    pub action: String,
+    pub target_user_id: Option<String>,
+    pub target_name: Option<String>,
+    pub detail: String,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -146,13 +170,35 @@ impl Database {
                     user_id TEXT PRIMARY KEY,
                     token TEXT NOT NULL UNIQUE,
                     display_name TEXT NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    issued_at INTEGER NOT NULL DEFAULT 0,
+                    last_seen_at INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS bans (
                     space_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
                     banned_at INTEGER NOT NULL,
                     PRIMARY KEY (space_id, user_id),
+                    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS space_roles (
+                    space_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    assigned_at INTEGER NOT NULL,
+                    PRIMARY KEY (space_id, user_id),
+                    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS space_audit_log (
+                    id TEXT PRIMARY KEY,
+                    space_id TEXT NOT NULL,
+                    actor_user_id TEXT NOT NULL,
+                    actor_name TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target_user_id TEXT,
+                    target_name TEXT,
+                    detail TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
                     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS friend_requests (
@@ -185,6 +231,8 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_users_token ON users(token);
                 CREATE INDEX IF NOT EXISTS idx_bans_space ON bans(space_id);
+                CREATE INDEX IF NOT EXISTS idx_space_roles_space ON space_roles(space_id);
+                CREATE INDEX IF NOT EXISTS idx_space_audit_log_space ON space_audit_log(space_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_friend_requests_addressee ON friend_requests(addressee_id);
                 CREATE INDEX IF NOT EXISTS idx_friendships_low ON friendships(user_low_id);
                 CREATE INDEX IF NOT EXISTS idx_friendships_high ON friendships(user_high_id);
@@ -198,12 +246,20 @@ impl Database {
         self.ensure_message_column("reply_to_sender_name", "TEXT")?;
         self.ensure_message_column("reply_preview", "TEXT")?;
         self.ensure_message_column("pinned", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("channels", "topic", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("users", "status", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("users", "issued_at", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
     }
 
     fn ensure_message_column(&self, column: &str, definition: &str) -> Result<(), String> {
+        self.ensure_column("messages", column, definition)
+    }
+
+    fn ensure_column(&self, table: &str, column: &str, definition: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        let sql = format!("ALTER TABLE messages ADD COLUMN {column} {definition}");
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
         match conn.execute(&sql, []) {
             Ok(_) => Ok(()),
             Err(rusqlite::Error::SqliteFailure(err, _))
@@ -211,7 +267,7 @@ impl Database {
             {
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to migrate messages table: {e}")),
+            Err(e) => Err(format!("Failed to migrate {table} table: {e}")),
         }
     }
 
@@ -264,6 +320,16 @@ impl Database {
         .map_err(|e| format!("Delete channels error: {e}"))?;
         tx.execute("DELETE FROM bans WHERE space_id = ?1", params![space_id])
             .map_err(|e| format!("Delete bans error: {e}"))?;
+        tx.execute(
+            "DELETE FROM space_roles WHERE space_id = ?1",
+            params![space_id],
+        )
+        .map_err(|e| format!("Delete roles error: {e}"))?;
+        tx.execute(
+            "DELETE FROM space_audit_log WHERE space_id = ?1",
+            params![space_id],
+        )
+        .map_err(|e| format!("Delete audit log error: {e}"))?;
         tx.execute("DELETE FROM spaces WHERE id = ?1", params![space_id])
             .map_err(|e| format!("Delete space error: {e}"))?;
         tx.commit()
@@ -276,7 +342,7 @@ impl Database {
     pub fn load_channels_for_space(&self, space_id: &str) -> Result<Vec<ChannelRow>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, space_id, name, room_key, channel_type FROM channels WHERE space_id = ?1")
+            .prepare("SELECT id, space_id, name, room_key, channel_type, topic FROM channels WHERE space_id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
         let rows = stmt
             .query_map(params![space_id], |row| {
@@ -286,6 +352,7 @@ impl Database {
                     name: row.get(2)?,
                     room_key: row.get(3)?,
                     channel_type: row.get(4)?,
+                    topic: row.get(5)?,
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?;
@@ -296,11 +363,29 @@ impl Database {
     pub fn save_channel(&self, ch: &ChannelRow) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
-            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type],
+            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type, topic) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type, ch.topic.as_deref().unwrap_or("")],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
+    }
+
+    pub fn set_channel_topic(&self, channel_id: &str, topic: &str) {
+        if let Ok(conn) = self.lock_conn() {
+            let _ = conn.execute(
+                "UPDATE channels SET topic = ?1 WHERE id = ?2",
+                params![topic, channel_id],
+            );
+        }
+    }
+
+    pub fn set_user_status(&self, user_id: &str, status: &str) {
+        if let Ok(conn) = self.lock_conn() {
+            let _ = conn.execute(
+                "UPDATE users SET status = ?1 WHERE user_id = ?2",
+                params![status, user_id],
+            );
+        }
     }
 
     pub fn delete_channel(&self, channel_id: &str) -> Result<(), String> {
@@ -428,8 +513,15 @@ impl Database {
     pub fn save_user(&self, user: &UserRow) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
-            "INSERT OR REPLACE INTO users (user_id, token, display_name, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![user.user_id, user.token, user.display_name, user.created_at],
+            "INSERT OR REPLACE INTO users (user_id, token, display_name, created_at, issued_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                user.user_id,
+                user.token,
+                user.display_name,
+                user.created_at,
+                user.issued_at,
+                user.last_seen_at
+            ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
@@ -438,7 +530,9 @@ impl Database {
     pub fn find_user_by_token(&self, token: &str) -> Result<Option<UserRow>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare("SELECT user_id, token, display_name, created_at FROM users WHERE token = ?1")
+            .prepare(
+                "SELECT user_id, token, display_name, created_at, issued_at, last_seen_at FROM users WHERE token = ?1",
+            )
             .map_err(|e| format!("Query error: {e}"))?;
         let result = stmt
             .query_row(params![token], |row| {
@@ -447,6 +541,8 @@ impl Database {
                     token: row.get(1)?,
                     display_name: row.get(2)?,
                     created_at: row.get(3)?,
+                    issued_at: row.get(4)?,
+                    last_seen_at: row.get(5)?,
                 })
             })
             .ok();
@@ -457,7 +553,7 @@ impl Database {
         let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare(
-                "SELECT user_id, token, display_name, created_at FROM users WHERE user_id = ?1",
+                "SELECT user_id, token, display_name, created_at, issued_at, last_seen_at FROM users WHERE user_id = ?1",
             )
             .map_err(|e| format!("Query error: {e}"))?;
         let result = stmt
@@ -467,6 +563,8 @@ impl Database {
                     token: row.get(1)?,
                     display_name: row.get(2)?,
                     created_at: row.get(3)?,
+                    issued_at: row.get(4)?,
+                    last_seen_at: row.get(5)?,
                 })
             })
             .ok();
@@ -478,6 +576,25 @@ impl Database {
         conn.execute(
             "UPDATE users SET display_name = ?2 WHERE user_id = ?1",
             params![user_id, name],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn rotate_user_session(
+        &self,
+        user_id: &str,
+        token: &str,
+        name: &str,
+        issued_at: i64,
+        last_seen_at: i64,
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE users
+             SET token = ?2, display_name = ?3, issued_at = ?4, last_seen_at = ?5
+             WHERE user_id = ?1",
+            params![user_id, token, name, issued_at, last_seen_at],
         )
         .map_err(|e| format!("Update error: {e}"))?;
         Ok(())
@@ -800,6 +917,106 @@ impl Database {
             .map_err(|e| format!("Row error: {e}"))
     }
 
+    pub fn save_space_role(&self, role: &SpaceRoleRow) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO space_roles (space_id, user_id, role, assigned_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![role.space_id, role.user_id, role.role, role.assigned_at],
+        )
+        .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_space_role(&self, space_id: &str, user_id: &str) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let rows = conn
+            .execute(
+                "DELETE FROM space_roles WHERE space_id = ?1 AND user_id = ?2",
+                params![space_id, user_id],
+            )
+            .map_err(|e| format!("Delete error: {e}"))?;
+        Ok(rows > 0)
+    }
+
+    pub fn load_space_roles(&self, space_id: &str) -> Result<Vec<SpaceRoleRow>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT space_id, user_id, role, assigned_at
+                 FROM space_roles WHERE space_id = ?1 ORDER BY assigned_at ASC",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![space_id], |row| {
+                Ok(SpaceRoleRow {
+                    space_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    role: row.get(2)?,
+                    assigned_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))
+    }
+
+    pub fn save_audit_log_entry(&self, entry: &AuditLogRow) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO space_audit_log (
+                id, space_id, actor_user_id, actor_name, action, target_user_id, target_name, detail, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                entry.id,
+                entry.space_id,
+                entry.actor_user_id,
+                entry.actor_name,
+                entry.action,
+                entry.target_user_id,
+                entry.target_name,
+                entry.detail,
+                entry.created_at,
+            ],
+        )
+        .map_err(|e| format!("Insert error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn load_audit_log_for_space(
+        &self,
+        space_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AuditLogRow>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, space_id, actor_user_id, actor_name, action, target_user_id, target_name, detail, created_at
+                 FROM space_audit_log
+                 WHERE space_id = ?1
+                 ORDER BY created_at DESC
+                 LIMIT ?2",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![space_id, limit as i64], |row| {
+                Ok(AuditLogRow {
+                    id: row.get(0)?,
+                    space_id: row.get(1)?,
+                    actor_user_id: row.get(2)?,
+                    actor_name: row.get(3)?,
+                    action: row.get(4)?,
+                    target_user_id: row.get(5)?,
+                    target_name: row.get(6)?,
+                    detail: row.get(7)?,
+                    created_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))
+    }
+
     /// Get the highest numeric suffix from space/channel/message IDs to restore allocators.
     pub fn max_id_suffix(&self, table: &str, col: &str) -> Result<u64, String> {
         let conn = self.lock_conn()?;
@@ -896,6 +1113,7 @@ mod tests {
             name: "general".into(),
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "text".into(),
+            topic: None,
         })
         .unwrap();
         db.save_channel(&ChannelRow {
@@ -904,6 +1122,7 @@ mod tests {
             name: "general".into(),
             room_key: "sp:s2:ch:c2".into(),
             channel_type: "text".into(),
+            topic: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -979,6 +1198,7 @@ mod tests {
             name: "General".into(),
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "voice".into(),
+            topic: None,
         })
         .unwrap();
         let channels = db.load_channels_for_space("s1").unwrap();
@@ -1005,6 +1225,7 @@ mod tests {
                 name: name.into(),
                 room_key: format!("sp:s1:ch:{id}"),
                 channel_type: "text".into(),
+                topic: None,
             })
             .unwrap();
         }
@@ -1056,6 +1277,7 @@ mod tests {
             name: "General".into(),
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "text".into(),
+            topic: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -1102,11 +1324,22 @@ mod tests {
             token: "tok123".into(),
             display_name: "Alice".into(),
             created_at: 1000,
+            issued_at: 1000,
+            last_seen_at: 1000,
         })
         .unwrap();
         let user = db.find_user_by_token("tok123").unwrap().unwrap();
         assert_eq!(user.user_id, "u1");
         assert_eq!(user.display_name, "Alice");
+        assert_eq!(user.issued_at, 1000);
+        assert_eq!(user.last_seen_at, 1000);
+
+        db.rotate_user_session("u1", "tok456", "Alice 2", 2000, 3000)
+            .unwrap();
+        let rotated = db.find_user_by_token("tok456").unwrap().unwrap();
+        assert_eq!(rotated.display_name, "Alice 2");
+        assert_eq!(rotated.issued_at, 2000);
+        assert_eq!(rotated.last_seen_at, 3000);
 
         assert!(db.find_user_by_token("nonexistent").unwrap().is_none());
         let _ = std::fs::remove_file(path);
@@ -1133,6 +1366,55 @@ mod tests {
         .unwrap();
         assert!(db.is_banned("s1", "u1").unwrap());
         assert!(!db.is_banned("s1", "u2").unwrap());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn space_roles_and_audit_round_trip() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "Ops".into(),
+            invite_code: "OPS12345".into(),
+            owner_id: "u1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+        db.save_space_role(&SpaceRoleRow {
+            space_id: "s1".into(),
+            user_id: "u2".into(),
+            role: "admin".into(),
+            assigned_at: 10,
+        })
+        .unwrap();
+        db.save_audit_log_entry(&AuditLogRow {
+            id: "a1".into(),
+            space_id: "s1".into(),
+            actor_user_id: "u1".into(),
+            actor_name: "Alice".into(),
+            action: "role".into(),
+            target_user_id: Some("u2".into()),
+            target_name: Some("Bob".into()),
+            detail: "Bob is now admin".into(),
+            created_at: 11,
+        })
+        .unwrap();
+
+        let roles = db.load_space_roles("s1").unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].user_id, "u2");
+        assert_eq!(roles[0].role, "admin");
+
+        let audit_entries = db.load_audit_log_for_space("s1", 10).unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].action, "role");
+        assert_eq!(audit_entries[0].target_name.as_deref(), Some("Bob"));
+
+        assert!(db.delete_space_role("s1", "u2").unwrap());
+        assert!(db.load_space_roles("s1").unwrap().is_empty());
+
+        db.delete_space("s1").unwrap();
+        assert!(db.load_audit_log_for_space("s1", 10).unwrap().is_empty());
         let _ = std::fs::remove_file(path);
     }
 

@@ -3,7 +3,7 @@ slint::include_modules!();
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use shared_types::{AppView, PerfSnapshot};
+use shared_types::{AppView, PerfSnapshot, SpaceRole};
 use slint::ComponentHandle;
 
 thread_local! {
@@ -113,9 +113,10 @@ pub fn set_member_widget_visible(visible: bool) -> bool {
     })
 }
 
-pub fn sync_member_widget_theme(dark_mode: bool) {
+pub fn sync_member_widget_theme(dark_mode: bool, theme_preset: i32) {
     with_member_widget(|widget| {
         widget.set_dark_mode(dark_mode);
+        widget.set_theme_preset(theme_preset);
     });
 }
 
@@ -351,6 +352,7 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             is_voice: c.channel_type == shared_types::ChannelType::Voice,
             is_active: false,
             unread_count: 0,
+            topic: c.topic.clone().into(),
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
@@ -405,6 +407,7 @@ pub fn render_space(
                     .get(&channel.id)
                     .copied()
                     .unwrap_or(0) as i32,
+                topic: channel.topic.clone().into(),
             }
         })
         .collect();
@@ -426,6 +429,7 @@ pub fn render_space(
         favorite_ids
             .contains(stable_member_key(right))
             .cmp(&favorite_ids.contains(stable_member_key(left)))
+            .then_with(|| member_role_tier(right.role).cmp(&member_role_tier(left.role)))
             .then_with(|| right.channel_id.is_some().cmp(&left.channel_id.is_some()))
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
@@ -458,6 +462,20 @@ pub fn set_members(window: &MainWindow, members: &[shared_types::MemberInfo]) {
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_members(rc.into());
+}
+
+pub fn set_space_audit_log(window: &MainWindow, entries: &[shared_types::SpaceAuditEntry]) {
+    let model = entries
+        .iter()
+        .map(|entry| AuditEntryData {
+            actor_name: entry.actor_name.clone().into(),
+            action: entry.action.to_uppercase().into(),
+            target_name: entry.target_name.clone().into(),
+            detail: entry.detail.clone().into(),
+            timestamp: audit_entry_time(entry.timestamp).into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_space_audit_entries(std::rc::Rc::new(slint::VecModel::from(model)).into());
 }
 
 pub fn set_chat_messages(
@@ -494,7 +512,10 @@ fn member_data_from_info(
         user_id: stable_member_id(member).into(),
         name: member.name.clone().into(),
         initial: member_initial(&member.name),
+        role_label: member_role_label(member.role).into(),
+        role_tier: member_role_tier(member.role),
         channel_name: member.channel_name.clone().unwrap_or_default().into(),
+        status: member.status.clone().into(),
         is_online: true,
         is_in_voice: member.channel_id.is_some(),
         color_index: member_color_index(&member.name),
@@ -503,6 +524,41 @@ fn member_data_from_info(
         has_incoming_request,
         has_outgoing_request,
         is_self,
+    }
+}
+
+fn member_role_label(role: SpaceRole) -> &'static str {
+    match role {
+        SpaceRole::Owner => "Owner",
+        SpaceRole::Admin => "Admin",
+        SpaceRole::Moderator => "Mod",
+        SpaceRole::Member => "Member",
+    }
+}
+
+fn member_role_tier(role: SpaceRole) -> i32 {
+    match role {
+        SpaceRole::Member => 0,
+        SpaceRole::Moderator => 1,
+        SpaceRole::Admin => 2,
+        SpaceRole::Owner => 3,
+    }
+}
+
+fn audit_entry_time(timestamp: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let delta = now.saturating_sub(timestamp);
+    if delta < 60 {
+        format!("{delta}s ago")
+    } else if delta < 3600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86_400 {
+        format!("{}h ago", delta / 3600)
+    } else {
+        format!("{}d ago", delta / 86_400)
     }
 }
 
