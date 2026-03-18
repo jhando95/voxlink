@@ -260,6 +260,7 @@ async fn live_stress_space_full_lifecycle() {
         .send(&SignalMessage::CreateChannel {
             channel_name: "stress-chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = loop {
@@ -823,6 +824,7 @@ async fn live_stress_chat_flood() {
         .send(&SignalMessage::CreateChannel {
             channel_name: "flood".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = loop {

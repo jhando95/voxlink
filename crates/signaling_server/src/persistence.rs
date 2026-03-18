@@ -25,6 +25,7 @@ pub struct ChannelRow {
     pub room_key: String,
     pub channel_type: String, // "voice" or "text"
     pub topic: Option<String>,
+    pub voice_quality: Option<u8>, // 0=Low, 1=Standard, 2=High, 3=Ultra
 }
 
 #[derive(Debug, Clone)]
@@ -250,6 +251,7 @@ impl Database {
         self.ensure_column("users", "status", "TEXT NOT NULL DEFAULT ''")?;
         self.ensure_column("users", "issued_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("channels", "voice_quality", "INTEGER NOT NULL DEFAULT 2")?;
         Ok(())
     }
 
@@ -342,7 +344,7 @@ impl Database {
     pub fn load_channels_for_space(&self, space_id: &str) -> Result<Vec<ChannelRow>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, space_id, name, room_key, channel_type, topic FROM channels WHERE space_id = ?1")
+            .prepare("SELECT id, space_id, name, room_key, channel_type, topic, voice_quality FROM channels WHERE space_id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
         let rows = stmt
             .query_map(params![space_id], |row| {
@@ -353,6 +355,7 @@ impl Database {
                     room_key: row.get(3)?,
                     channel_type: row.get(4)?,
                     topic: row.get(5)?,
+                    voice_quality: row.get::<_, Option<u8>>(6).ok().flatten(),
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?;
@@ -363,8 +366,8 @@ impl Database {
     pub fn save_channel(&self, ch: &ChannelRow) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
-            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type, topic) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type, ch.topic.as_deref().unwrap_or("")],
+            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type, topic, voice_quality) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type, ch.topic.as_deref().unwrap_or(""), ch.voice_quality.unwrap_or(2)],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
@@ -1114,6 +1117,7 @@ mod tests {
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "text".into(),
             topic: None,
+            voice_quality: None,
         })
         .unwrap();
         db.save_channel(&ChannelRow {
@@ -1123,6 +1127,7 @@ mod tests {
             room_key: "sp:s2:ch:c2".into(),
             channel_type: "text".into(),
             topic: None,
+            voice_quality: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -1199,6 +1204,7 @@ mod tests {
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "voice".into(),
             topic: None,
+            voice_quality: None,
         })
         .unwrap();
         let channels = db.load_channels_for_space("s1").unwrap();
@@ -1226,6 +1232,7 @@ mod tests {
                 room_key: format!("sp:s1:ch:{id}"),
                 channel_type: "text".into(),
                 topic: None,
+                voice_quality: None,
             })
             .unwrap();
         }
@@ -1278,6 +1285,7 @@ mod tests {
             room_key: "sp:s1:ch:c1".into(),
             channel_type: "text".into(),
             topic: None,
+            voice_quality: None,
         })
         .unwrap();
         db.save_message(&MessageRow {

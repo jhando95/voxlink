@@ -29,9 +29,10 @@ pub fn handle_channel_joined(
     channel_id: &str,
     channel_name: &str,
     participants: &[shared_types::ParticipantInfo],
+    voice_quality: u8,
     ctx: &AudioContext,
 ) {
-    log::info!("Joined channel: {channel_name} ({channel_id})");
+    log::info!("Joined channel: {channel_name} ({channel_id}), quality={voice_quality}");
 
     let mut s = state.borrow_mut();
 
@@ -74,6 +75,16 @@ pub fn handle_channel_joined(
     ui_shell::set_participants(w, &s.room.participants);
     drop(s);
     crate::friends::sync_ui(w, state);
+
+    // Set voice quality bitrate before starting audio
+    {
+        let audio = ctx.audio.clone();
+        let quality = voice_quality;
+        ctx.rt_handle.spawn(async move {
+            let aud = audio.lock().await;
+            aud.set_voice_quality(quality);
+        });
+    }
 
     crate::helpers::start_audio_if_needed(
         &ctx.audio_started,

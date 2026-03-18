@@ -646,6 +646,7 @@ async fn create_text_channel(
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: channel_name.to_string(),
             channel_type: ChannelType::Text,
+            voice_quality: 2,
         })
         .await
         .map_err(|err| format!("Failed to create automation text channel: {err}"))?;

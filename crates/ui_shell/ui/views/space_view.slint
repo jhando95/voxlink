@@ -21,6 +21,7 @@ export component SpaceView inherits Rectangle {
     in property <int> visible-members: 0;
     in-out property <string> new-channel-name: "";
     in-out property <bool> new-channel-is-voice: true;
+    in-out property <int> new-channel-voice-quality: 2;
     in-out property <bool> confirm-delete-visible: false;
     in-out property <string> confirm-delete-channel-id: "";
     changed search-query => { root.search-changed(root.search-query); }
@@ -401,6 +402,16 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
 
+                                    VxStatusPill {
+                                        label: channel.voice-quality == 0 ? "Low"
+                                             : channel.voice-quality == 1 ? "Std"
+                                             : channel.voice-quality == 3 ? "Ultra"
+                                             : "High";
+                                        tone: channel.voice-quality == 3 ? VxTheme.warning
+                                            : channel.voice-quality == 0 ? VxTheme.text-muted
+                                            : VxTheme.text-secondary;
+                                        fill: VxTheme.bg-soft;
+                                    }
                                     if channel.is-active : VxStatusPill {
                                         label: "Connected";
                                         tone: VxTheme.accent;
@@ -447,6 +458,40 @@ export component SpaceView inherits Rectangle {
                                     small: true;
                                     ghost: true;
                                     clicked => { root.new-channel-is-voice = !root.new-channel-is-voice; }
+                                }
+                            }
+
+                            if root.new-channel-is-voice : HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                FieldLabel { text: "Quality:"; vertical-alignment: center; }
+                                VxButton {
+                                    label: "Low";
+                                    small: true;
+                                    ghost: root.new-channel-voice-quality != 0;
+                                    accent: root.new-channel-voice-quality == 0;
+                                    clicked => { root.new-channel-voice-quality = 0; }
+                                }
+                                VxButton {
+                                    label: "Standard";
+                                    small: true;
+                                    ghost: root.new-channel-voice-quality != 1;
+                                    accent: root.new-channel-voice-quality == 1;
+                                    clicked => { root.new-channel-voice-quality = 1; }
+                                }
+                                VxButton {
+                                    label: "High";
+                                    small: true;
+                                    ghost: root.new-channel-voice-quality != 2;
+                                    accent: root.new-channel-voice-quality == 2;
+                                    clicked => { root.new-channel-voice-quality = 2; }
+                                }
+                                VxButton {
+                                    label: "Ultra";
+                                    small: true;
+                                    ghost: root.new-channel-voice-quality != 3;
+                                    accent: root.new-channel-voice-quality == 3;
+                                    clicked => { root.new-channel-voice-quality = 3; }
                                 }
                             }
 

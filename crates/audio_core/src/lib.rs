@@ -10,7 +10,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig};
 use shared_types::{CHANNELS, FRAME_SIZE, SAMPLE_RATE};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use buffers::{CaptureRing, PeerPlayback};
@@ -178,6 +178,8 @@ pub struct AudioEngine {
     output_volume: Arc<AtomicU32>,
     /// Keybind feedback tone generator.
     feedback_tone: FeedbackTone,
+    /// Runtime bitrate in bps. Encoder reads this each frame for dynamic quality switching.
+    opus_bitrate: Arc<AtomicI32>,
     /// Set to true when a stream error occurs — signals the app to attempt recovery (#1)
     pub capture_error: Arc<AtomicBool>,
     pub playback_error: Arc<AtomicBool>,
@@ -203,6 +205,7 @@ impl AudioEngine {
             input_gain: Arc::new(AtomicU32::new(1000)),            // 1.0 default (unity gain)
             output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
             feedback_tone: FeedbackTone::new(),
+            opus_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
         })
@@ -434,6 +437,7 @@ impl AudioEngine {
         let mic_level = self.mic_level_raw.clone();
         let sensitivity = self.noise_gate_sensitivity.clone();
         let input_gain = self.input_gain.clone();
+        let opus_bitrate = self.opus_bitrate.clone();
 
         // All buffers pre-allocated once — zero allocation in the audio callback
         let mut capture_ring = CaptureRing::new(FRAME_SIZE * 4);
@@ -502,6 +506,10 @@ impl AudioEngine {
                         *out = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
                     }
 
+                    // Apply runtime bitrate (changed when joining channels with different quality)
+                    let target_bps = opus_bitrate.load(Ordering::Relaxed);
+                    opus_encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(target_bps)).ok();
+
                     match opus_encoder.encode(&pcm_i16, &mut opus_out) {
                         Ok(len) => {
                             let frame: Arc<[u8]> = Arc::from(&opus_out[..len]);
@@ -540,6 +548,17 @@ impl AudioEngine {
         self.clear_on_encoded_frame();
         self.mic_level_raw.store(0, Ordering::Relaxed);
         log::info!("Capture stopped");
+    }
+
+    /// Set voice quality by updating the runtime bitrate. Takes effect on the next encoded frame.
+    pub fn set_voice_quality(&self, quality: u8) {
+        let bps = shared_types::voice_quality_bitrate(quality);
+        self.opus_bitrate.store(bps, Ordering::Relaxed);
+        log::info!(
+            "Voice quality set to {} ({}bps)",
+            shared_types::voice_quality_label(quality),
+            bps
+        );
     }
 
     pub fn restart_capture(&mut self, device_name: Option<&str>) -> Result<()> {

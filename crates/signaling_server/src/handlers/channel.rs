@@ -13,6 +13,7 @@ pub async fn handle_create_channel(
     peer_id: &str,
     channel_name: String,
     channel_type: ChannelType,
+    voice_quality: u8,
     db: &Db,
 ) {
     if let Err(e) = validate_name(&channel_name) {
@@ -71,12 +72,14 @@ pub async fn handle_create_channel(
             },
         );
 
+        let quality = voice_quality.min(3);
         let meta = ChannelMeta {
             id: channel_id.clone(),
             name: channel_name.clone(),
             room_key,
             channel_type,
             topic: String::new(),
+            voice_quality: quality,
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -89,6 +92,7 @@ pub async fn handle_create_channel(
             peer_count: 0,
             channel_type,
             topic: String::new(),
+            voice_quality: quality,
         }
     };
 
@@ -98,6 +102,7 @@ pub async fn handle_create_channel(
     );
 
     // Persist channel to DB
+    let vq = channel_info.voice_quality;
     if let Some(ref db) = db {
         let db = db.clone();
         let cid = channel_info.id.clone();
@@ -125,6 +130,7 @@ pub async fn handle_create_channel(
                 room_key: rk,
                 channel_type: ct.into(),
                 topic: None,
+                voice_quality: Some(vq),
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
@@ -338,10 +344,10 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
             .channels
             .iter()
             .find(|ch| ch.id == channel_id)
-            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type))
+            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type, ch.voice_quality))
     });
 
-    let Some((room_key, channel_name, ch_type)) = channel_data else {
+    let Some((room_key, channel_name, ch_type, voice_quality)) = channel_data else {
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
             send_to(
@@ -436,6 +442,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                 channel_id: channel_id.clone(),
                 channel_name: channel_name.clone(),
                 participants,
+                voice_quality,
             },
         )
         .await;

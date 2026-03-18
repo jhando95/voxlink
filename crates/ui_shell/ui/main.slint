@@ -112,6 +112,7 @@ export component MainWindow inherits Window {
     in-out property <bool> in-space-channel: false;
     in-out property <bool> show-quick-call: false;
     in-out property <bool> new-channel-is-voice: true;
+    in-out property <int> new-channel-voice-quality: 2;
     in-out property <string> confirm-delete-channel-id: "";
     in-out property <string> space-search-query: "";
     in-out property <int> visible-text-channels: 0;
@@ -439,6 +440,7 @@ export component MainWindow inherits Window {
                             visible-members: root.visible-members;
                             new-channel-name <=> root.new-channel-name;
                             new-channel-is-voice <=> root.new-channel-is-voice;
+                            new-channel-voice-quality <=> root.new-channel-voice-quality;
                             confirm-delete-channel-id <=> root.confirm-delete-channel-id;
                             confirm-delete-visible <=> root.confirm-delete-visible;
                             navigate(view-index) => { root.navigate(view-index); }

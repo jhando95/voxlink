@@ -89,6 +89,33 @@ pub struct ChannelInfo {
     pub channel_type: ChannelType,
     #[serde(default)]
     pub topic: String,
+    /// Voice quality preset: 0=Low(24kbps), 1=Standard(48kbps), 2=High(64kbps), 3=Ultra(96kbps)
+    #[serde(default = "default_voice_quality")]
+    pub voice_quality: u8,
+}
+
+fn default_voice_quality() -> u8 {
+    2 // High (64kbps) — current default
+}
+
+/// Map voice quality preset index to Opus bitrate in bps
+pub fn voice_quality_bitrate(quality: u8) -> i32 {
+    match quality {
+        0 => 24000,  // Low — poor network, minimal bandwidth
+        1 => 48000,  // Standard — good voice clarity
+        3 => 96000,  // Ultra — near-transparent voice
+        _ => 64000,  // High (default) — excellent quality
+    }
+}
+
+/// Display label for voice quality preset
+pub fn voice_quality_label(quality: u8) -> &'static str {
+    match quality {
+        0 => "Low",
+        1 => "Standard",
+        3 => "Ultra",
+        _ => "High",
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +330,8 @@ pub enum SignalMessage {
         channel_name: String,
         #[serde(default)]
         channel_type: ChannelType,
+        #[serde(default = "default_voice_quality")]
+        voice_quality: u8,
     },
     DeleteChannel {
         channel_id: String,
@@ -389,6 +418,8 @@ pub enum SignalMessage {
         channel_id: String,
         channel_name: String,
         participants: Vec<ParticipantInfo>,
+        #[serde(default = "default_voice_quality")]
+        voice_quality: u8,
     },
     ChannelLeft,
     TextChannelSelected {
@@ -889,6 +920,7 @@ mod tests {
                 peer_count: 0,
                 channel_type: ChannelType::Voice,
                 topic: String::new(),
+                voice_quality: 2,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -923,6 +955,7 @@ mod tests {
                 peer_count: 1,
                 channel_type: ChannelType::Voice,
                 topic: String::new(),
+                voice_quality: 2,
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),
@@ -963,6 +996,7 @@ mod tests {
                 is_muted: false,
                 is_deafened: false,
             }],
+            voice_quality: 2,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
@@ -971,6 +1005,7 @@ mod tests {
                 channel_id,
                 channel_name,
                 participants,
+                voice_quality: _,
             } => {
                 assert_eq!(channel_id, "c1");
                 assert_eq!(channel_name, "General");

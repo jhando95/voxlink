@@ -1249,6 +1249,7 @@ async fn test_create_voice_channel() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "Gaming".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
 
@@ -1275,6 +1276,7 @@ async fn test_create_text_channel() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "general-chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
 
@@ -1305,6 +1307,7 @@ async fn test_channel_created_broadcast() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "Music".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
 
@@ -1341,6 +1344,7 @@ async fn test_owner_can_delete_channel_and_non_owner_cannot() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "notes".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
 
@@ -1423,6 +1427,7 @@ async fn test_owner_can_promote_admin_and_channel_access_updates() {
     bob.send_signal(&SignalMessage::CreateChannel {
         channel_name: "ops".to_string(),
         channel_type: shared_types::ChannelType::Text,
+        voice_quality: 2,
     })
     .await;
     match bob.recv_signal().await {
@@ -1455,6 +1460,7 @@ async fn test_owner_can_promote_admin_and_channel_access_updates() {
     bob.send_signal(&SignalMessage::CreateChannel {
         channel_name: "ops".to_string(),
         channel_type: shared_types::ChannelType::Text,
+        voice_quality: 2,
     })
     .await;
     match bob.recv_signal().await {
@@ -1538,6 +1544,7 @@ async fn test_join_voice_channel() {
             channel_id,
             channel_name,
             participants,
+            ..
         } => {
             assert_eq!(channel_id, general_id);
             assert_eq!(channel_name, "General");
@@ -1617,6 +1624,7 @@ async fn test_existing_peer_stays_in_channel_when_another_peer_joins() {
             channel_id,
             channel_name,
             participants,
+            ..
         } => {
             assert_eq!(channel_id, general_id);
             assert_eq!(channel_name, "General");
@@ -2002,6 +2010,7 @@ async fn test_cannot_join_text_channel() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
 
@@ -2149,6 +2158,7 @@ async fn test_create_channel_not_in_space() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "orphan".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
 
@@ -2222,6 +2232,7 @@ async fn test_channel_name_validation() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
 
@@ -2250,6 +2261,7 @@ async fn test_join_space_shows_channels_with_type() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let _ = alice.recv_signal().await; // ChannelCreated
@@ -2258,6 +2270,7 @@ async fn test_join_space_shows_channels_with_type() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "gaming".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
     let _ = alice.recv_signal().await; // ChannelCreated
@@ -2678,6 +2691,7 @@ async fn test_chat_edit_message() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".into(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let channel_id = match alice.recv_signal().await {
@@ -2765,6 +2779,7 @@ async fn test_chat_delete_message() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".into(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let channel_id = match alice.recv_signal().await {
@@ -2838,6 +2853,7 @@ async fn test_chat_react_to_message() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".into(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let channel_id = match alice.recv_signal().await {
@@ -3236,6 +3252,7 @@ async fn test_stress_concurrent_space_operations() {
             .send_signal(&SignalMessage::CreateChannel {
                 channel_name: format!("Extra-{i}"),
                 channel_type: shared_types::ChannelType::Voice,
+                voice_quality: 2,
             })
             .await;
         match alice.recv_signal().await {
@@ -3308,6 +3325,7 @@ async fn test_stress_concurrent_space_operations() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "Post-Stress".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     // Should get ChannelCreated (possibly after some other messages)
@@ -3386,6 +3404,7 @@ async fn test_stress_rapid_text_messages() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat-stress".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_channel_id = match alice.recv_signal().await {
@@ -3495,6 +3514,7 @@ async fn test_text_channel_message_lifecycle() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "text-chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -3631,6 +3651,7 @@ async fn test_text_channel_history_for_late_joiner() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "history-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -4126,6 +4147,7 @@ async fn test_typing_indicators() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "typing-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -4186,6 +4208,7 @@ async fn test_message_reactions() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "react-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -4454,6 +4477,7 @@ async fn test_message_content_validation() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "val-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -4564,6 +4588,7 @@ async fn test_concurrent_message_edits() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "edit-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let ch_id = match alice.recv_signal().await {
@@ -4647,6 +4672,7 @@ async fn test_delete_then_edit_message() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "de-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let ch_id = match alice.recv_signal().await {
@@ -4892,6 +4918,7 @@ async fn test_signal_rate_limiting() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "rl-ch".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let ch_id = match alice.recv_signal().await {
@@ -4969,6 +4996,7 @@ async fn test_space_owner_persists_across_reconnect() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "post-reconnect".to_string(),
             channel_type: shared_types::ChannelType::Voice,
+            voice_quality: 2,
         })
         .await;
     match alice2.recv_signal().await {
@@ -5375,6 +5403,7 @@ async fn test_many_channels_in_space() {
                 } else {
                     shared_types::ChannelType::Text
                 },
+                voice_quality: 2,
             })
             .await;
         match alice.recv_signal().await {
@@ -5443,6 +5472,7 @@ async fn test_unicode_text_messages() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch = match alice.recv_signal().await {
@@ -5542,6 +5572,7 @@ async fn test_concurrent_space_operations() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "chat".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
     let text_ch_id = match alice.recv_signal().await {
@@ -5595,6 +5626,7 @@ async fn test_concurrent_space_operations() {
         .send_signal(&SignalMessage::CreateChannel {
             channel_name: "after-concurrent".to_string(),
             channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
         })
         .await;
 

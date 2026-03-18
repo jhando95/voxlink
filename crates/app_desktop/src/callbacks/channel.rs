@@ -31,6 +31,7 @@ pub fn setup_create_channel(
         } else {
             shared_types::ChannelType::Text
         };
+        let voice_quality = w.get_new_channel_voice_quality() as u8;
         let network = network.clone();
         let window_weak = window_weak.clone();
         rt_handle.spawn(async move {
@@ -39,6 +40,7 @@ pub fn setup_create_channel(
                 .send_signal(&SignalMessage::CreateChannel {
                     channel_name,
                     channel_type,
+                    voice_quality,
                 })
                 .await
             {

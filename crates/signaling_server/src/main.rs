@@ -170,6 +170,7 @@ struct ChannelMeta {
     room_key: String, // internal room code for audio relay, e.g. "sp:s1:ch:c1"
     channel_type: shared_types::ChannelType,
     topic: String,
+    voice_quality: u8, // 0=Low, 1=Standard, 2=High, 3=Ultra
 }
 
 struct ServerState {
@@ -499,6 +500,7 @@ async fn main() {
                         room_key: cr.room_key.clone(),
                         channel_type: ct,
                         topic: cr.topic.clone().unwrap_or_default(),
+                        voice_quality: cr.voice_quality.unwrap_or(2),
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -1010,12 +1012,14 @@ async fn handle_signal(
         SignalMessage::CreateChannel {
             channel_name,
             channel_type,
+            voice_quality,
         } => {
             handlers::channel::handle_create_channel(
                 state,
                 peer_id,
                 channel_name,
                 channel_type,
+                voice_quality,
                 db,
             )
             .await;

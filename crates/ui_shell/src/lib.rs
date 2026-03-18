@@ -353,6 +353,7 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             is_active: false,
             unread_count: 0,
             topic: c.topic.clone().into(),
+            voice_quality: c.voice_quality as i32,
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
@@ -408,6 +409,7 @@ pub fn render_space(
                     .copied()
                     .unwrap_or(0) as i32,
                 topic: channel.topic.clone().into(),
+                voice_quality: channel.voice_quality as i32,
             }
         })
         .collect();

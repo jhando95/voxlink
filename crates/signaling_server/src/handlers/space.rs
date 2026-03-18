@@ -275,6 +275,7 @@ pub async fn handle_create_space(
         room_key: room_key.clone(),
         channel_type: ChannelType::Voice,
         topic: String::new(),
+        voice_quality: 2, // High (64kbps) default
     };
 
     let space = Space {
@@ -309,6 +310,7 @@ pub async fn handle_create_space(
         peer_count: 0,
         channel_type: ChannelType::Voice,
         topic: String::new(),
+        voice_quality: 2,
     }];
 
     log::info!("Space {} created by {peer_id}", space_id);
@@ -354,6 +356,7 @@ pub async fn handle_create_space(
                 room_key: rk,
                 channel_type: "voice".into(),
                 topic: None,
+                voice_quality: Some(2),
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
@@ -503,6 +506,7 @@ pub async fn handle_join_space(
                     peer_count,
                     channel_type: ch.channel_type,
                     topic: ch.topic.clone(),
+                    voice_quality: ch.voice_quality,
                 }
             })
             .collect();

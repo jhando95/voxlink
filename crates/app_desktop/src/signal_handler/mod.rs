@@ -123,6 +123,7 @@ pub fn process_signals(
                 channel_id,
                 channel_name,
                 participants,
+                voice_quality,
             } => {
                 channel::handle_channel_joined(
                     w,
@@ -130,6 +131,7 @@ pub fn process_signals(
                     channel_id,
                     channel_name,
                     participants,
+                    *voice_quality,
                     ctx,
                 );
             }
