@@ -134,6 +134,8 @@ export component MainWindow inherits Window {
     in-out property <string> reply-target-message-id: "";
     in-out property <string> reply-target-sender-name: "";
     in-out property <string> reply-target-preview: "";
+    in-out property <[ChatMessage]> chat-search-results: [];
+    in-out property <string> chat-search-query: "";
 
     // Notifications
     in-out property <bool> notifications-enabled: true;
@@ -237,6 +239,10 @@ export component MainWindow inherits Window {
     callback ban-member(string);
     callback server-mute-member(string, bool);
     callback set-member-role(string, int);
+    callback set-user-status(string);
+    callback set-channel-topic(string, string);
+    callback search-messages(string);
+    callback set-profile(string);
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -330,6 +336,8 @@ export component MainWindow inherits Window {
                             show-quick-call <=> root.show-quick-call;
                             join-code <=> root.join-code;
                             room-password <=> root.room-password;
+                            direct-message-threads: root.direct-message-threads;
+                            unread-direct-messages-count: root.unread-direct-messages-count;
                             connect-server => { root.connect-server(); }
                             disconnect-server => { root.disconnect-server(); }
                             find-server => { root.find-server(); }
@@ -338,6 +346,7 @@ export component MainWindow inherits Window {
                             join-space => { root.join-space(); }
                             create-room => { root.create-room(); }
                             join-room(code) => { root.join-room(code); }
+                            open-direct-message(user-id) => { root.open-direct-message(user-id); }
                         }
 
                         if root.current-view == 1 : RoomView {
@@ -457,6 +466,9 @@ export component MainWindow inherits Window {
                             ban-member(member-id) => { root.ban-member(member-id); }
                             server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
                             set-member-role(user-id, role-index) => { root.set-member-role(user-id, role-index); }
+                            set-user-status(status) => { root.set-user-status(status); }
+                            set-channel-topic(channel-id, topic) => { root.set-channel-topic(channel-id, topic); }
+                            set-profile(bio) => { root.set-profile(bio); }
                             send-friend-request(user-id) => { root.send-friend-request(user-id); }
                             accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
                             decline-friend-request(user-id) => { root.decline-friend-request(user-id); }
@@ -488,6 +500,9 @@ export component MainWindow inherits Window {
                             delete-text-message(message-id) => { root.delete-text-message(message-id); }
                             react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
                             toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
+                            chat-search-results: root.chat-search-results;
+                            chat-search-query <=> root.chat-search-query;
+                            search-messages(query) => { root.search-messages(query); }
                         }
 
                         if root.current-view == 3 : SystemView {

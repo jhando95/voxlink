@@ -446,3 +446,64 @@ pub fn setup_set_member_role(
         });
     });
 }
+
+pub fn setup_set_user_status(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_user_status(move |status| {
+        let status = status.to_string().trim().to_string();
+        if status.is_empty() {
+            return;
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetUserStatus { status })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_channel_topic(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_topic(move |channel_id, topic| {
+        let channel_id = channel_id.to_string();
+        let topic = topic.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelTopic { channel_id, topic })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_profile(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_profile(move |bio| {
+        let bio = bio.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetProfile { bio })
+                .await;
+        });
+    });
+}

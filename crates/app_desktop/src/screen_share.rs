@@ -649,11 +649,15 @@ fn enumerate_windows() -> Result<Vec<CaptureSource>, String> {
         let width = window.width().unwrap_or_default();
         let height = window.height().unwrap_or_default();
         if width < 360 || height < 220 {
+            log::debug!(
+                "Skipping window (pid {pid}): too small ({width}x{height} < 360x220)"
+            );
             continue;
         }
         let title = window.title().unwrap_or_default().trim().to_string();
         let app_name = window.app_name().unwrap_or_default().trim().to_string();
         if title.is_empty() && app_name.is_empty() {
+            log::debug!("Skipping window (pid {pid}): empty title and app name");
             continue;
         }
         let id = match window.id() {

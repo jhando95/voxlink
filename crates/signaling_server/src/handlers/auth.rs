@@ -53,11 +53,15 @@ pub async fn handle_authenticate(
         if !tok.is_empty() {
             let db_clone = db_ref.clone();
             let tok_clone = tok.clone();
-            let found = tokio::task::spawn_blocking(move || {
+            let found = match tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
                 db_clone.find_user_by_token(&tok_clone).unwrap_or(None)
-            })
-            .await
-            .unwrap_or(None);
+            })).await {
+                Ok(result) => result.unwrap_or(None),
+                Err(_) => {
+                    log::warn!("DB timeout: find_user_by_token for peer {peer_id}");
+                    None
+                }
+            };
 
             if let Some(user) = found {
                 let rotated_token = generate_token();
@@ -68,19 +72,23 @@ pub async fn handle_authenticate(
                 let uid = user_id.clone();
                 let tok = rotated_token.clone();
                 let name = rotated_name.clone();
-                let rotate_result = tokio::task::spawn_blocking(move || {
+                let rotate_result = tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
                     db_clone.rotate_user_session(&uid, &tok, &name, now, now)
-                })
+                }))
                 .await;
 
                 let token_to_send = match rotate_result {
-                    Ok(Ok(())) => rotated_token,
-                    Ok(Err(e)) => {
+                    Ok(Ok(Ok(()))) => rotated_token,
+                    Ok(Ok(Err(e))) => {
                         log::error!("Failed to rotate session token for {user_id}: {e}");
                         user.token
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         log::error!("Failed to join token rotation task for {user_id}: {e}");
+                        user.token
+                    }
+                    Err(_) => {
+                        log::warn!("DB timeout: rotate_user_session for {user_id}");
                         user.token
                     }
                 };
@@ -126,7 +134,7 @@ pub async fn handle_authenticate(
     let uid = user_id.clone();
     let tok = new_token.clone();
     let name = user_name.clone();
-    let save_result = tokio::task::spawn_blocking(move || {
+    let save_result = tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
         db_clone.save_user(&crate::persistence::UserRow {
             user_id: uid,
             token: tok,
@@ -135,12 +143,12 @@ pub async fn handle_authenticate(
             issued_at: now,
             last_seen_at: now,
         })
-    })
+    }))
     .await;
 
     match save_result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(e))) => {
             log::error!("Failed to persist user: {e}");
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id) {
@@ -149,12 +157,17 @@ pub async fn handle_authenticate(
             send_error(state, peer_id, "Authentication is temporarily unavailable").await;
             return false;
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::error!("Failed to join auth persistence task: {e}");
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id) {
                 *peer.user_id.lock().await = None;
             }
+            send_error(state, peer_id, "Authentication is temporarily unavailable").await;
+            return false;
+        }
+        Err(_) => {
+            log::warn!("DB timeout: save_user for peer {peer_id}");
             send_error(state, peer_id, "Authentication is temporarily unavailable").await;
             return false;
         }

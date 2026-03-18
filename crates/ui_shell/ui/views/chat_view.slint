@@ -18,6 +18,11 @@ export component ChatView inherits Rectangle {
     in-out property <string> reply-target-message-id: "";
     in-out property <string> reply-target-sender-name: "";
     in-out property <string> reply-target-preview: "";
+    in property <[ChatMessage]> chat-search-results: [];
+    in-out property <string> chat-search-query: "";
+    callback search-messages(string);
+    property <bool> show-pinned-panel: true;
+    property <bool> show-search-panel: false;
     property <bool> typing-active: false;
     changed chat-input => {
         let next = root.chat-input != "";
@@ -71,6 +76,16 @@ export component ChatView inherits Rectangle {
                     soft: true;
                     clicked => { root.navigate(root.chat-back-view); }
                 }
+                if !root.chat-is-direct-message : VxButton {
+                    label: root.show-search-panel ? "Close Search" : "Search";
+                    soft: true;
+                    clicked => {
+                        root.show-search-panel = !root.show-search-panel;
+                        if !root.show-search-panel {
+                            root.chat-search-query = "";
+                        }
+                    }
+                }
                 VxStatusPill {
                     label: root.chat-messages.length + " messages";
                     tone: VxTheme.accent;
@@ -99,10 +114,19 @@ export component ChatView inherits Rectangle {
                         tone: root.chat-is-direct-message ? VxTheme.accent : VxTheme.text-secondary;
                         fill: root.chat-is-direct-message ? VxTheme.accent-subtle : VxTheme.bg-panel;
                     }
-                    if !root.chat-is-direct-message : VxStatusPill {
-                        label: root.chat-pinned-messages.length + " pinned";
-                        tone: root.chat-pinned-messages.length > 0 ? VxTheme.warning : VxTheme.text-muted;
-                        fill: root.chat-pinned-messages.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                    if !root.chat-is-direct-message : Rectangle {
+                        height: 22px;
+                        pinned-toggle-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.show-pinned-panel = !root.show-pinned-panel; }
+                        }
+                        VxStatusPill {
+                            label: (root.show-pinned-panel ? "Hide " : "Show ") + root.chat-pinned-messages.length + " pinned";
+                            tone: root.chat-pinned-messages.length > 0 ? VxTheme.warning : VxTheme.text-muted;
+                            fill: pinned-toggle-touch.has-hover
+                                ? VxTheme.card-hover-bg
+                                : (root.chat-pinned-messages.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft);
+                        }
                     }
                     if root.reply-target-message-id != "" : VxStatusPill {
                         label: "Reply ready";
@@ -166,7 +190,7 @@ export component ChatView inherits Rectangle {
 
                 Divider {}
 
-                if !root.chat-is-direct-message && root.chat-pinned-messages.length > 0 : Rectangle {
+                if !root.chat-is-direct-message && root.chat-pinned-messages.length > 0 && root.show-pinned-panel : Rectangle {
                     background: VxTheme.bg-soft;
                     VerticalLayout {
                         padding-left: 16px;
@@ -211,6 +235,85 @@ export component ChatView inherits Rectangle {
                         }
                     }
                 }
+
+                if root.show-search-panel : Rectangle {
+                    background: VxTheme.bg-soft;
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            SectionLabel { text: "SEARCH"; }
+                            VxStatusPill {
+                                label: root.chat-search-results.length + " results";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            search-input := VxInput {
+                                placeholder: "Search messages...";
+                                text <=> root.chat-search-query;
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if root.chat-search-query != "" {
+                                        root.search-messages(root.chat-search-query);
+                                    }
+                                }
+                            }
+                            VxButton {
+                                label: "Go";
+                                small: true;
+                                clicked => {
+                                    if root.chat-search-query != "" {
+                                        root.search-messages(root.chat-search-query);
+                                    }
+                                }
+                            }
+                        }
+
+                        for result in root.chat-search-results : Rectangle {
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.bg-panel;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 4px;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: result.sender-name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: result.timestamp;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                }
+                                Text {
+                                    text: result.content;
+                                    color: VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                    max-height: 42px;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider {}
 
                 ScrollView {
                     vertical-stretch: 1;
@@ -414,10 +517,14 @@ export component ChatView inherits Rectangle {
                                         wrap: word-wrap;
                                     }
 
-                                    if msg.reactions != "" : VxStatusPill {
-                                        label: msg.reactions;
-                                        tone: VxTheme.text-secondary;
-                                        fill: VxTheme.bg-soft;
+                                    if msg.reactions != "" : HorizontalLayout {
+                                        spacing: 6px;
+                                        // Reaction pills rendered as a row of emoji+count badges
+                                        VxStatusPill {
+                                            label: msg.reactions;
+                                            tone: VxTheme.text-secondary;
+                                            fill: VxTheme.bg-soft;
+                                        }
                                     }
                                 }
                             }

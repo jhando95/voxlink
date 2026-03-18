@@ -18,10 +18,34 @@ use tokio_tungstenite::tungstenite::Message;
 // ─── Limits ───
 
 const MAX_NAME_LEN: usize = 32;
-const MAX_ROOM_PEERS: usize = 10;
-const MAX_CONNECTIONS_PER_IP: u32 = 20;
-const RATE_LIMIT_PER_SEC: u32 = 100;
 const MAX_PASSWORD_LEN: usize = 64;
+const DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Server limits, configurable via environment variables with sensible defaults.
+struct ServerLimits {
+    max_room_peers: usize,
+    max_connections_per_ip: u32,
+    max_channel_messages: usize,
+    max_audio_fps: u32,
+    max_screen_fps: u32,
+    rate_limit_per_sec: u32,
+}
+
+fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
+    max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
+    max_connections_per_ip: env_or("VOXLINK_MAX_CONNECTIONS_PER_IP", 20),
+    max_channel_messages: env_or("VOXLINK_MAX_CHANNEL_MESSAGES", 100),
+    max_audio_fps: env_or("VOXLINK_MAX_AUDIO_FPS", 100),
+    max_screen_fps: env_or("VOXLINK_MAX_SCREEN_FPS", 60),
+    rate_limit_per_sec: env_or("VOXLINK_RATE_LIMIT_PER_SEC", 100),
+});
 
 // ─── Server stream: either plain TCP or TLS ───
 
@@ -101,6 +125,8 @@ struct Peer {
     typing_channel_id: Mutex<Option<String>>,
     typing_dm_user_id: Mutex<Option<String>>,
     watched_friend_ids: Mutex<HashSet<String>>,
+    /// Peer's remote IP address (for brute-force rate limiting)
+    ip: IpAddr,
     // Rate limiting
     msg_count: AtomicU32,
     rate_window: Mutex<Instant>,
@@ -146,7 +172,10 @@ struct Room {
 }
 
 /// Max text messages stored per channel (in-memory ring buffer).
-const MAX_CHANNEL_MESSAGES: usize = 100;
+/// Now configurable via VOXLINK_MAX_CHANNEL_MESSAGES env var.
+fn max_channel_messages() -> usize {
+    LIMITS.max_channel_messages
+}
 const MAX_SPACE_AUDIT_ENTRIES: usize = 64;
 
 #[allow(dead_code)]
@@ -158,7 +187,7 @@ struct Space {
     channels: Vec<ChannelMeta>,
     member_ids: Vec<String>,
     member_roles: HashMap<String, shared_types::SpaceRole>,
-    /// Text messages per channel_id, capped at MAX_CHANNEL_MESSAGES.
+    /// Text messages per channel_id, capped at LIMITS.max_channel_messages.
     text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>>,
     audit_log: VecDeque<shared_types::SpaceAuditEntry>,
     created_at: Instant,
@@ -185,6 +214,8 @@ struct ServerState {
     next_message_id: u64,
     next_audit_id: u64,
     connections_per_ip: HashMap<IpAddr, u32>,
+    /// Rate limit for failed JoinSpace attempts per IP: (failure_count, window_start)
+    join_failures: HashMap<IpAddr, (u32, Instant)>,
 }
 
 impl ServerState {
@@ -200,6 +231,7 @@ impl ServerState {
             next_message_id: 1,
             next_audit_id: 1,
             connections_per_ip: HashMap::new(),
+            join_failures: HashMap::new(),
         }
     }
 
@@ -424,6 +456,17 @@ async fn main() {
         .format_timestamp_millis()
         .init();
 
+    // Force-initialize limits from env vars and log them
+    log::info!(
+        "Server limits: max_room_peers={}, max_connections_per_ip={}, max_channel_messages={}, max_audio_fps={}, max_screen_fps={}, rate_limit_per_sec={}",
+        LIMITS.max_room_peers,
+        LIMITS.max_connections_per_ip,
+        LIMITS.max_channel_messages,
+        LIMITS.max_audio_fps,
+        LIMITS.max_screen_fps,
+        LIMITS.rate_limit_per_sec,
+    );
+
     let addr = std::env::var("PV_ADDR").unwrap_or_else(|_| "0.0.0.0:9090".into());
 
     // TLS setup (optional)
@@ -518,7 +561,7 @@ async fn main() {
                     HashMap::new();
                 for cr in &channels_rows {
                     if cr.channel_type == "text" {
-                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, MAX_CHANNEL_MESSAGES)
+                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, max_channel_messages())
                         {
                             let dq: VecDeque<_> = msgs
                                 .into_iter()
@@ -663,43 +706,65 @@ async fn main() {
         });
     }
 
-    while let Ok((stream, addr)) = listener.accept().await {
-        // Per-IP connection limit
-        {
-            let mut s = state.write().await;
-            let count = s.connections_per_ip.entry(addr.ip()).or_insert(0);
-            if *count >= MAX_CONNECTIONS_PER_IP {
-                log::warn!("Connection limit reached for {}", addr.ip());
-                continue;
-            }
-            *count += 1;
-        }
-
-        let state = state.clone();
-        let metrics = metrics.clone();
-        let tls = tls_acceptor.clone();
-        let db = db.clone();
-        tokio::spawn(async move {
-            metrics
-                .connection_attempts_total
-                .fetch_add(1, Ordering::Relaxed);
-            let server_stream = if let Some(acceptor) = tls {
-                match acceptor.accept(stream).await {
-                    Ok(tls_stream) => ServerStream::Tls(Box::new(tls_stream)),
-                    Err(e) => {
-                        log::warn!("TLS handshake failed from {addr}: {e}");
-                        decrement_ip(&state, addr.ip()).await;
-                        return;
+    // Graceful shutdown: accept loop races against ctrl_c / SIGTERM
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                let Ok((stream, addr)) = result else { break };
+                // Per-IP connection limit
+                {
+                    let mut s = state.write().await;
+                    let count = s.connections_per_ip.entry(addr.ip()).or_insert(0);
+                    if *count >= LIMITS.max_connections_per_ip {
+                        log::warn!("Connection limit reached for {}", addr.ip());
+                        continue;
                     }
+                    *count += 1;
                 }
-            } else {
-                ServerStream::Plain(stream)
-            };
 
-            handle_connection(state.clone(), metrics, server_stream, addr, db).await;
-            decrement_ip(&state, addr.ip()).await;
-        });
+                let state = state.clone();
+                let metrics = metrics.clone();
+                let tls = tls_acceptor.clone();
+                let db = db.clone();
+                tokio::spawn(async move {
+                    metrics
+                        .connection_attempts_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    let server_stream = if let Some(acceptor) = tls {
+                        match acceptor.accept(stream).await {
+                            Ok(tls_stream) => ServerStream::Tls(Box::new(tls_stream)),
+                            Err(e) => {
+                                log::warn!("TLS handshake failed from {addr}: {e}");
+                                decrement_ip(&state, addr.ip()).await;
+                                return;
+                            }
+                        }
+                    } else {
+                        ServerStream::Plain(stream)
+                    };
+
+                    handle_connection(state.clone(), metrics, server_stream, addr, db).await;
+                    decrement_ip(&state, addr.ip()).await;
+                });
+            }
+            _ = tokio::signal::ctrl_c() => {
+                log::info!("Shutdown signal received, notifying all peers...");
+                break;
+            }
+        }
     }
+
+    // Broadcast ServerShutdown to all connected peers before exiting
+    {
+        let s = state.read().await;
+        let shutdown_msg = SignalMessage::ServerShutdown;
+        for peer in s.peers.values() {
+            send_to(peer, &shutdown_msg).await;
+        }
+    }
+    // Give peers a moment to receive the message
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    log::info!("Server shut down gracefully");
 }
 
 fn load_tls_config(
@@ -802,6 +867,7 @@ async fn handle_connection(
                 typing_channel_id: Mutex::new(None),
                 typing_dm_user_id: Mutex::new(None),
                 watched_friend_ids: Mutex::new(HashSet::new()),
+                ip: addr.ip(),
                 msg_count: AtomicU32::new(0),
                 rate_window: Mutex::new(Instant::now()),
                 audio_frame_count: AtomicU32::new(0),
@@ -917,7 +983,7 @@ async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
         true
     } else {
         let count = peer.msg_count.fetch_add(1, Ordering::Relaxed);
-        count < RATE_LIMIT_PER_SEC
+        count < LIMITS.rate_limit_per_sec
     }
 }
 
@@ -1186,6 +1252,17 @@ async fn handle_signal(
         SignalMessage::SetMemberRole { user_id, role } => {
             handlers::space::handle_set_member_role(state, peer_id, user_id, role, db).await;
         }
+        SignalMessage::SearchMessages {
+            channel_id,
+            query,
+            limit,
+        } => {
+            handlers::chat::handle_search_messages(state, peer_id, channel_id, query, limit, db)
+                .await;
+        }
+        SignalMessage::SetProfile { bio } => {
+            handle_set_profile(state, peer_id, bio, db).await;
+        }
         _ => {}
     }
 }
@@ -1206,8 +1283,7 @@ async fn send_error(state: &State, peer_id: &str, message: &str) {
 
 // ─── Audio Relay ───
 
-const MAX_AUDIO_FRAMES_PER_SEC: u32 = 100; // 50fps normal, 100 allows burst
-const MAX_SCREEN_FRAMES_PER_SEC: u32 = 60;
+// Audio/screen frame rate limits now read from LIMITS (env-configurable).
 
 async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
     // #3: Reject oversized audio frames
@@ -1233,7 +1309,7 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
             peer.audio_frame_count.store(1, Ordering::Relaxed);
         } else {
             let count = peer.audio_frame_count.fetch_add(1, Ordering::Relaxed);
-            if count >= MAX_AUDIO_FRAMES_PER_SEC {
+            if count >= LIMITS.max_audio_fps {
                 return;
             }
         }
@@ -1267,9 +1343,12 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
 
     // Single-peer fast path (common case): avoid Arc overhead
     if others.len() == 1 {
+        let peer_id_dbg = others[0].id.clone();
         let fut = async {
             let mut tx = others[0].tx.lock().await;
-            let _ = tx.send(Message::Binary(frame.into())).await;
+            if let Err(e) = tx.send(Message::Binary(frame.into())).await {
+                log::debug!("Audio frame send failed for peer {peer_id_dbg}: {e}");
+            }
         };
         let _ = tokio::time::timeout(send_timeout, fut).await;
         return;
@@ -1281,10 +1360,13 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
         .map(|peer| {
             let frame_copy = frame.clone();
             let timeout_dur = send_timeout;
+            let peer_id_dbg = peer.id.clone();
             async move {
                 let fut = async {
                     let mut tx = peer.tx.lock().await;
-                    let _ = tx.send(Message::Binary(frame_copy.into())).await;
+                    if let Err(e) = tx.send(Message::Binary(frame_copy.into())).await {
+                        log::debug!("Audio frame send failed for peer {peer_id_dbg}: {e}");
+                    }
                 };
                 let _ = tokio::time::timeout(timeout_dur, fut).await;
             }
@@ -1294,7 +1376,28 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
 }
 
 async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
+    // Bounds-check sender_id length to prevent u8 overflow in frame header
+    if sender_id.len() > 255 {
+        log::warn!("Screen relay: sender_id too long ({} bytes), dropping frame", sender_id.len());
+        return;
+    }
+
+    // Validate sender_id is valid UTF-8 (it comes from &str so it is, but guard
+    // against future refactors that might pass raw bytes)
+    if std::str::from_utf8(sender_id.as_bytes()).is_err() {
+        log::warn!("Screen relay: sender_id is not valid UTF-8, dropping frame");
+        return;
+    }
+
     if data.len() > shared_types::MAX_SCREEN_FRAME_SIZE {
+        // Send error back to sender instead of silently dropping
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(sender_id) {
+            let msg = SignalMessage::Error {
+                message: "Screen share frame too large, reduce quality".into(),
+            };
+            send_to(peer, &msg).await;
+        }
         return;
     }
 
@@ -1312,7 +1415,7 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
             peer.screen_frame_count.store(1, Ordering::Relaxed);
         } else {
             let count = peer.screen_frame_count.fetch_add(1, Ordering::Relaxed);
-            if count >= MAX_SCREEN_FRAMES_PER_SEC {
+            if count >= LIMITS.max_screen_fps {
                 return;
             }
         }
@@ -1358,9 +1461,12 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
 
     // Single-peer fast path: avoid clone overhead
     if others.len() == 1 {
+        let peer_id_dbg = others[0].id.clone();
         let fut = async {
             let mut tx = others[0].tx.lock().await;
-            let _ = tx.send(Message::Binary(frame.into())).await;
+            if let Err(e) = tx.send(Message::Binary(frame.into())).await {
+                log::debug!("Screen frame send failed for peer {peer_id_dbg}: {e}");
+            }
         };
         let _ = tokio::time::timeout(send_timeout, fut).await;
         return;
@@ -1370,10 +1476,13 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
         .into_iter()
         .map(|peer| {
             let frame_copy = frame.clone();
+            let peer_id_dbg = peer.id.clone();
             async move {
                 let fut = async {
                     let mut tx = peer.tx.lock().await;
-                    let _ = tx.send(Message::Binary(frame_copy.into())).await;
+                    if let Err(e) = tx.send(Message::Binary(frame_copy.into())).await {
+                        log::debug!("Screen frame send failed for peer {peer_id_dbg}: {e}");
+                    }
                 };
                 let _ = tokio::time::timeout(send_timeout, fut).await;
             }
@@ -1455,7 +1564,9 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
 async fn send_to(peer: &Peer, msg: &SignalMessage) {
     if let Ok(json) = serde_json::to_string(msg) {
         let mut tx = peer.tx.lock().await;
-        let _ = tx.send(Message::Text(json.into())).await;
+        if let Err(e) = tx.send(Message::Text(json.into())).await {
+            log::debug!("Signaling send failed for peer {}: {e}", peer.id);
+        }
     }
 }
 
@@ -1477,11 +1588,13 @@ async fn handle_set_user_status(state: &State, peer_id: &str, status: String, db
     if let (Some(db), Some(uid)) = (db, user_id) {
         let db = db.clone();
         let status_clone = status.clone();
-        tokio::task::spawn_blocking(move || {
+        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
             db.set_user_status(&uid, &status_clone);
-        })
-        .await
-        .ok();
+        })).await {
+            Err(_) => log::warn!("DB timeout: set_user_status for peer {peer_id}"),
+            Ok(Err(e)) => log::warn!("DB task panicked in set_user_status: {e}"),
+            Ok(Ok(())) => {}
+        }
     }
 
     // Broadcast to space members
@@ -1489,6 +1602,44 @@ async fn handle_set_user_status(state: &State, peer_id: &str, status: String, db
         let notify = SignalMessage::UserStatusChanged {
             member_id: peer_id.to_string(),
             status,
+        };
+        handlers::broadcast_to_space(state, &space_id, peer_id, &notify).await;
+    }
+}
+
+async fn handle_set_profile(state: &State, peer_id: &str, bio: String, db: &Db) {
+    let bio = bio.chars().take(256).collect::<String>();
+
+    let (space_id, user_id) = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        let space_id = peer.space_id.lock().await.clone();
+        let user_id = peer.user_id.lock().await.clone();
+        (space_id, user_id)
+    };
+
+    // Persist bio to DB
+    if let (Some(db), Some(uid)) = (db, &user_id) {
+        let db = db.clone();
+        let uid = uid.clone();
+        let bio_clone = bio.clone();
+        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
+            db.set_user_bio(&uid, &bio_clone);
+        })).await {
+            Err(_) => log::warn!("DB timeout: set_user_bio for peer {peer_id}"),
+            Ok(Err(e)) => log::warn!("DB task panicked in set_user_bio: {e}"),
+            Ok(Ok(())) => {}
+        }
+    }
+
+    // Broadcast to space members
+    if let Some(space_id) = space_id {
+        let user_id_str = user_id.unwrap_or_else(|| peer_id.to_string());
+        let notify = SignalMessage::ProfileUpdated {
+            user_id: user_id_str,
+            bio,
         };
         handlers::broadcast_to_space(state, &space_id, peer_id, &notify).await;
     }
@@ -1539,11 +1690,13 @@ async fn handle_set_channel_topic(
         let db = db.clone();
         let cid = channel_id.clone();
         let t = topic.clone();
-        tokio::task::spawn_blocking(move || {
+        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
             db.set_channel_topic(&cid, &t);
-        })
-        .await
-        .ok();
+        })).await {
+            Err(_) => log::warn!("DB timeout: set_channel_topic for channel {channel_id}"),
+            Ok(Err(e)) => log::warn!("DB task panicked in set_channel_topic: {e}"),
+            Ok(Ok(())) => {}
+        }
     }
 
     let notify = SignalMessage::ChannelTopicChanged {

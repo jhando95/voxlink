@@ -1,5 +1,5 @@
 use crate::{send_error, send_to, validate_name, validate_password, validate_room_code};
-use crate::{Peer, Room, State, MAX_ROOM_PEERS};
+use crate::{Peer, Room, State, LIMITS};
 use shared_types::{ParticipantInfo, SignalMessage};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -133,7 +133,7 @@ pub async fn handle_join_room(
                     }
                 }
 
-                if room.peer_ids.len() >= MAX_ROOM_PEERS {
+                if room.peer_ids.len() >= LIMITS.max_room_peers {
                     if let Some(peer) = s.peers.get(peer_id).cloned() {
                         drop(s);
                         send_to(
@@ -141,7 +141,7 @@ pub async fn handle_join_room(
                             &SignalMessage::Error {
                                 message: format!(
                                     "Room is full (max {} participants)",
-                                    MAX_ROOM_PEERS
+                                    LIMITS.max_room_peers
                                 ),
                             },
                         )

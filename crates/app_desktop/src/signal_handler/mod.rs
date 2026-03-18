@@ -274,7 +274,7 @@ pub fn process_signals(
                 emoji,
                 user_name,
             } => {
-                chat::handle_message_reaction(w, channel_id, message_id, emoji, user_name);
+                chat::handle_message_reaction(w, state, channel_id, message_id, emoji, user_name);
             }
             SignalMessage::MessagePinned {
                 channel_id,
@@ -344,6 +344,20 @@ pub fn process_signals(
             }
             SignalMessage::MemberMuted { member_id, muted } => {
                 room::handle_peer_mute_changed(w, state, member_id, *muted);
+            }
+            SignalMessage::ServerShutdown => {
+                log::info!("Server is shutting down");
+                w.set_status_text("Server restarting, reconnecting...".into());
+                w.set_room_status("Server restarting...".into());
+            }
+            SignalMessage::SearchResults {
+                channel_id,
+                messages,
+            } => {
+                chat::handle_search_results(w, state, channel_id, messages);
+            }
+            SignalMessage::ProfileUpdated { user_id, bio } => {
+                member::handle_profile_updated(w, state, user_id, bio);
             }
             _ => {}
         }

@@ -39,6 +39,13 @@ export component SpaceView inherits Rectangle {
     callback ban-member(string);
     callback server-mute-member(string, bool);
     callback set-member-role(string, int);
+    callback set-user-status(string);
+    callback set-channel-topic(string, string);
+    callback set-profile(string);
+    in-out property <string> user-status-input: "";
+    in-out property <string> user-bio-input: "";
+    in-out property <string> topic-edit-channel-id: "";
+    in-out property <string> topic-edit-value: "";
     callback send-friend-request(string);
     callback accept-friend-request(string);
     callback decline-friend-request(string);
@@ -77,6 +84,58 @@ export component SpaceView inherits Rectangle {
                         label: root.space-role-label + " access";
                         tone: VxTheme.accent;
                         fill: VxTheme.accent-subtle;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        VxInput {
+                            text <=> root.user-status-input;
+                            placeholder: "Set your status";
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if root.user-status-input != "" {
+                                    root.set-user-status(root.user-status-input);
+                                    root.user-status-input = "";
+                                }
+                            }
+                        }
+                        VxButton {
+                            label: "Set";
+                            small: true;
+                            soft: true;
+                            enabled: root.user-status-input != "";
+                            clicked => {
+                                if root.user-status-input != "" {
+                                    root.set-user-status(root.user-status-input);
+                                    root.user-status-input = "";
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        VxInput {
+                            text <=> root.user-bio-input;
+                            placeholder: "Set your bio";
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if root.user-bio-input != "" {
+                                    root.set-profile(root.user-bio-input);
+                                    root.user-bio-input = "";
+                                }
+                            }
+                        }
+                        VxButton {
+                            label: "Save";
+                            small: true;
+                            soft: true;
+                            enabled: root.user-bio-input != "";
+                            clicked => {
+                                if root.user-bio-input != "" {
+                                    root.set-profile(root.user-bio-input);
+                                    root.user-bio-input = "";
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -159,7 +218,8 @@ export component SpaceView inherits Rectangle {
                             }
 
                             for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 0px : 58px;
+                                height: channel.is-voice ? 0px :
+                                    (root.topic-edit-channel-id == channel.id ? 100px : 58px);
                                 visible: !channel.is-voice;
                                 border-radius: VxTheme.radius-card;
                                 background: channel.is-active ? VxTheme.tab-active-bg :
@@ -175,78 +235,123 @@ export component SpaceView inherits Rectangle {
                                     clicked => { root.select-text-channel(channel.id); }
                                 }
 
-                                HorizontalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    spacing: 12px;
-                                    alignment: center;
-
-                                    Rectangle {
-                                        width: 36px;
-                                        height: 36px;
-                                        border-radius: 10px;
-                                        background: channel.is-active || channel.unread-count > 0
-                                            ? VxTheme.accent-subtle
-                                            : VxTheme.bg-panel;
-                                        border-color: channel.is-active || channel.unread-count > 0
-                                            ? VxTheme.accent-border
-                                            : VxTheme.border-subtle;
-                                        border-width: 1px;
-                                        Text {
-                                            text: "TXT";
-                                            color: channel.is-active || channel.unread-count > 0
-                                                ? VxTheme.accent
-                                                : VxTheme.text-secondary;
-                                            font-size: 10px;
-                                            font-weight: 800;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    VerticalLayout {
+                                VerticalLayout {
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        height: 58px;
+                                        spacing: 12px;
                                         alignment: center;
-                                        horizontal-stretch: 1;
-                                        spacing: 2px;
-                                        Text {
-                                            text: channel.name;
-                                            color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
-                                            font-size: 12px;
-                                            font-weight: 700;
+
+                                        Rectangle {
+                                            width: 36px;
+                                            height: 36px;
+                                            border-radius: 10px;
+                                            background: channel.is-active || channel.unread-count > 0
+                                                ? VxTheme.accent-subtle
+                                                : VxTheme.bg-panel;
+                                            border-color: channel.is-active || channel.unread-count > 0
+                                                ? VxTheme.accent-border
+                                                : VxTheme.border-subtle;
+                                            border-width: 1px;
+                                            Text {
+                                                text: "TXT";
+                                                color: channel.is-active || channel.unread-count > 0
+                                                    ? VxTheme.accent
+                                                    : VxTheme.text-secondary;
+                                                font-size: 10px;
+                                                font-weight: 800;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
                                         }
-                                        Text {
-                                            text: channel.topic != ""
-                                                ? channel.topic
-                                                : channel.unread-count > 0
-                                                    ? channel.unread-count + " new messages"
-                                                    : channel.is-active ? "Recent conversation" : "Persistent text channel";
-                                            color: VxTheme.text-muted;
-                                            font-size: 9px;
-                                            overflow: elide;
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: channel.name;
+                                                color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                                font-size: 12px;
+                                                font-weight: 700;
+                                            }
+                                            Text {
+                                                text: channel.topic != ""
+                                                    ? channel.topic
+                                                    : channel.unread-count > 0
+                                                        ? channel.unread-count + " new messages"
+                                                        : channel.is-active ? "Recent conversation" : "Persistent text channel";
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                overflow: elide;
+                                            }
+                                        }
+
+                                        if channel.unread-count > 0 : VxStatusPill {
+                                            label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                        if channel.unread-count == 0 : VxStatusPill {
+                                            label: channel.is-active ? "Recent" : "Open";
+                                            tone: channel.is-active ? VxTheme.success : VxTheme.accent;
+                                            fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
+                                        }
+                                        if root.can-manage-space-channels : VxButton {
+                                            label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
+                                            small: true;
+                                            soft: root.topic-edit-channel-id != channel.id;
+                                            accent: root.topic-edit-channel-id == channel.id;
+                                            clicked => {
+                                                if root.topic-edit-channel-id == channel.id {
+                                                    root.set-channel-topic(channel.id, root.topic-edit-value);
+                                                    root.topic-edit-channel-id = "";
+                                                    root.topic-edit-value = "";
+                                                } else {
+                                                    root.topic-edit-channel-id = channel.id;
+                                                    root.topic-edit-value = channel.topic;
+                                                }
+                                            }
+                                        }
+                                        if root.can-manage-space-channels : VxButton {
+                                            label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                            small: true;
+                                            danger: root.confirm-delete-channel-id == channel.id;
+                                            soft: root.confirm-delete-channel-id != channel.id;
+                                            clicked => {
+                                                if root.confirm-delete-channel-id == channel.id {
+                                                    root.confirm-delete-channel-id = "";
+                                                    root.delete-channel(channel.id);
+                                                } else {
+                                                    root.confirm-delete-channel-id = channel.id;
+                                                }
+                                            }
                                         }
                                     }
 
-                                    if channel.unread-count > 0 : VxStatusPill {
-                                        label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
-                                        tone: VxTheme.accent;
-                                        fill: VxTheme.accent-subtle;
-                                    }
-                                    if channel.unread-count == 0 : VxStatusPill {
-                                        label: channel.is-active ? "Recent" : "Open";
-                                        tone: channel.is-active ? VxTheme.success : VxTheme.accent;
-                                        fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
-                                    }
-                                    if root.can-manage-space-channels : VxButton {
-                                        label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
-                                        small: true;
-                                        danger: root.confirm-delete-channel-id == channel.id;
-                                        soft: root.confirm-delete-channel-id != channel.id;
-                                        clicked => {
-                                            if root.confirm-delete-channel-id == channel.id {
-                                                root.confirm-delete-channel-id = "";
-                                                root.delete-channel(channel.id);
-                                            } else {
-                                                root.confirm-delete-channel-id = channel.id;
+                                    if root.topic-edit-channel-id == channel.id : HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        padding-bottom: 10px;
+                                        spacing: 8px;
+                                        VxInput {
+                                            text <=> root.topic-edit-value;
+                                            placeholder: "Channel topic";
+                                            horizontal-stretch: 1;
+                                            accepted => {
+                                                root.set-channel-topic(channel.id, root.topic-edit-value);
+                                                root.topic-edit-channel-id = "";
+                                                root.topic-edit-value = "";
+                                            }
+                                        }
+                                        VxButton {
+                                            label: "Cancel";
+                                            small: true;
+                                            ghost: true;
+                                            clicked => {
+                                                root.topic-edit-channel-id = "";
+                                                root.topic-edit-value = "";
                                             }
                                         }
                                     }
@@ -898,7 +1003,7 @@ export component SpaceView inherits Rectangle {
                             font-size: 10px;
                         }
                         for channel in root.channels : Rectangle {
-                            height: 56px;
+                            height: !channel.is-voice && root.topic-edit-channel-id == channel.id ? 96px : 56px;
                             border-radius: VxTheme.radius-card;
                             background: channel.is-active ? VxTheme.tab-active-bg :
                                         channel.unread-count > 0 ? VxTheme.accent-subtle :
@@ -919,47 +1024,92 @@ export component SpaceView inherits Rectangle {
                                 }
                             }
 
-                            HorizontalLayout {
-                                padding-left: 12px;
-                                padding-right: 12px;
-                                spacing: 10px;
-                                alignment: center;
-                                Text {
-                                    text: channel.is-voice ? "VC" : "TXT";
-                                    color: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
-                                    font-size: 10px;
-                                    font-weight: 800;
+                            VerticalLayout {
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    height: 56px;
+                                    spacing: 10px;
+                                    alignment: center;
+                                    Text {
+                                        text: channel.is-voice ? "VC" : "TXT";
+                                        color: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
+                                        font-size: 10px;
+                                        font-weight: 800;
+                                    }
+                                    Text {
+                                        text: channel.name;
+                                        color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        horizontal-stretch: 1;
+                                    }
+                                    if channel.unread-count > 0 : Text {
+                                        text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
+                                        color: VxTheme.accent;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                    }
+                                    if channel.peer-count > 0 : Text {
+                                        text: channel.peer-count + "";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                    }
+                                    if root.can-manage-space-channels && !channel.is-voice : VxButton {
+                                        label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
+                                        small: true;
+                                        soft: root.topic-edit-channel-id != channel.id;
+                                        accent: root.topic-edit-channel-id == channel.id;
+                                        clicked => {
+                                            if root.topic-edit-channel-id == channel.id {
+                                                root.set-channel-topic(channel.id, root.topic-edit-value);
+                                                root.topic-edit-channel-id = "";
+                                                root.topic-edit-value = "";
+                                            } else {
+                                                root.topic-edit-channel-id = channel.id;
+                                                root.topic-edit-value = channel.topic;
+                                            }
+                                        }
+                                    }
+                                    if root.can-manage-space-channels : VxButton {
+                                        label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                        small: true;
+                                        danger: root.confirm-delete-channel-id == channel.id;
+                                        soft: root.confirm-delete-channel-id != channel.id;
+                                        clicked => {
+                                            if root.confirm-delete-channel-id == channel.id {
+                                                root.confirm-delete-channel-id = "";
+                                                root.delete-channel(channel.id);
+                                            } else {
+                                                root.confirm-delete-channel-id = channel.id;
+                                            }
+                                        }
+                                    }
                                 }
-                                Text {
-                                    text: channel.name;
-                                    color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
-                                    font-size: 12px;
-                                    font-weight: 700;
-                                    horizontal-stretch: 1;
-                                }
-                                if channel.unread-count > 0 : Text {
-                                    text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
-                                    color: VxTheme.accent;
-                                    font-size: 10px;
-                                    font-weight: 700;
-                                }
-                                if channel.peer-count > 0 : Text {
-                                    text: channel.peer-count + "";
-                                    color: VxTheme.text-muted;
-                                    font-size: 10px;
-                                    font-weight: 700;
-                                }
-                                if root.can-manage-space-channels : VxButton {
-                                    label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
-                                    small: true;
-                                    danger: root.confirm-delete-channel-id == channel.id;
-                                    soft: root.confirm-delete-channel-id != channel.id;
-                                    clicked => {
-                                        if root.confirm-delete-channel-id == channel.id {
-                                            root.confirm-delete-channel-id = "";
-                                            root.delete-channel(channel.id);
-                                        } else {
-                                            root.confirm-delete-channel-id = channel.id;
+
+                                if root.topic-edit-channel-id == channel.id && !channel.is-voice : HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    padding-bottom: 10px;
+                                    spacing: 8px;
+                                    VxInput {
+                                        text <=> root.topic-edit-value;
+                                        placeholder: "Channel topic";
+                                        horizontal-stretch: 1;
+                                        accepted => {
+                                            root.set-channel-topic(channel.id, root.topic-edit-value);
+                                            root.topic-edit-channel-id = "";
+                                            root.topic-edit-value = "";
+                                        }
+                                    }
+                                    VxButton {
+                                        label: "Cancel";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => {
+                                            root.topic-edit-channel-id = "";
+                                            root.topic-edit-value = "";
                                         }
                                     }
                                 }

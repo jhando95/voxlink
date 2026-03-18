@@ -98,6 +98,10 @@ fn default_voice_quality() -> u8 {
     2 // High (64kbps) — current default
 }
 
+fn default_search_limit() -> u32 {
+    50
+}
+
 /// Map voice quality preset index to Opus bitrate in bps
 pub fn voice_quality_bitrate(quality: u8) -> i32 {
     match quality {
@@ -132,6 +136,8 @@ pub struct MemberInfo {
     pub channel_name: Option<String>,
     #[serde(default)]
     pub status: String,
+    #[serde(default)]
+    pub bio: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -232,6 +238,15 @@ pub struct SpaceState {
     pub typing_users: HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingMessage {
+    pub channel_id: String,
+    pub content: String,
+    pub is_direct: bool,
+    pub retry_count: u8,
+    pub queued_at: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AppState {
     pub current_view: AppView,
@@ -244,6 +259,7 @@ pub struct AppState {
     pub active_direct_message_user_id: Option<String>,
     pub direct_typing_users: HashMap<String, Vec<String>>,
     pub direct_message_threads: Vec<DirectMessageThread>,
+    pub pending_messages: Vec<PendingMessage>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -576,6 +592,30 @@ pub enum SignalMessage {
     },
     SpaceAuditLogAppended {
         entry: SpaceAuditEntry,
+    },
+
+    /// Server is shutting down gracefully
+    ServerShutdown,
+
+    // M10: Message Search
+    SearchMessages {
+        channel_id: String,
+        query: String,
+        #[serde(default = "default_search_limit")]
+        limit: u32,
+    },
+    SearchResults {
+        channel_id: String,
+        messages: Vec<TextMessageData>,
+    },
+
+    // M11: User Profiles
+    SetProfile {
+        bio: String,
+    },
+    ProfileUpdated {
+        user_id: String,
+        bio: String,
     },
 }
 
@@ -965,6 +1005,7 @@ mod tests {
                 channel_id: Some("c1".into()),
                 channel_name: Some("General".into()),
                 status: String::new(),
+                bio: String::new(),
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();

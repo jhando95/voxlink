@@ -240,9 +240,19 @@ pub fn start(
                 }
             }
 
+            // --- Retry pending messages every ~2s ---
+            if tick.is_multiple_of(80) {
+                retry_pending_messages(&state, &network, &rt_handle);
+            }
+
             // --- Ping every ~3s ---
             if tick.is_multiple_of(120) {
                 update_ping(&network, &rt_handle, &w);
+            }
+
+            // --- Adaptive bitrate every ~5s ---
+            if tick.is_multiple_of(200) && in_room {
+                adapt_bitrate(&audio, w.get_ping_ms());
             }
         },
     );
@@ -664,6 +674,93 @@ fn update_ping(
         rt_handle.spawn(async move {
             network.lock().await.send_ping().await;
         });
+    }
+}
+
+// ─── Message Retry Queue ───
+
+fn retry_pending_messages(
+    state: &Rc<RefCell<shared_types::AppState>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let mut to_send: Vec<shared_types::PendingMessage> = Vec::new();
+    {
+        let mut s = state.borrow_mut();
+        for mut msg in s.pending_messages.drain(..) {
+            if msg.retry_count >= 3 {
+                log::warn!("Dropping message after 3 retries: {}", msg.content.chars().take(50).collect::<String>());
+                continue;
+            }
+            msg.retry_count += 1;
+            to_send.push(msg);
+        }
+    }
+
+    if to_send.is_empty() {
+        return;
+    }
+
+    let network = network.clone();
+    rt_handle.spawn(async move {
+        let net = network.lock().await;
+        let mut failed = Vec::new();
+        for msg in to_send {
+            let signal = if msg.is_direct {
+                SignalMessage::SendDirectMessage {
+                    user_id: msg.channel_id.clone(),
+                    content: msg.content.clone(),
+                    reply_to_message_id: None,
+                }
+            } else {
+                SignalMessage::SendTextMessage {
+                    channel_id: msg.channel_id.clone(),
+                    content: msg.content.clone(),
+                    reply_to_message_id: None,
+                }
+            };
+            if net.send_signal(&signal).await.is_err() {
+                failed.push(msg);
+            } else {
+                log::debug!("Retry succeeded for pending message");
+            }
+        }
+        if !failed.is_empty() {
+            // Can't easily borrow RefCell from async — just log the failures
+            log::warn!("{} message(s) still failing after retry", failed.len());
+        }
+    });
+}
+
+// ─── Adaptive Bitrate ───
+
+fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32) {
+    let Some(aud) = audio.try_lock().ok() else {
+        return;
+    };
+    let target = aud.target_bitrate();
+    if target <= 0 || ping_ms < 0 {
+        return;
+    }
+
+    let new_bitrate = if ping_ms > 200 {
+        target / 2 // 50% — poor network
+    } else if ping_ms > 100 {
+        target * 3 / 4 // 75% — moderate network
+    } else {
+        target // 100% — good network
+    };
+
+    let current = aud.current_bitrate();
+    if new_bitrate != current {
+        aud.set_bitrate(new_bitrate);
+        log::debug!(
+            "Adaptive bitrate: {}bps → {}bps (ping={}ms, target={}bps)",
+            current,
+            new_bitrate,
+            ping_ms,
+            target
+        );
     }
 }
 

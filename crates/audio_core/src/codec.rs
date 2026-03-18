@@ -320,6 +320,64 @@ impl Agc {
     }
 }
 
+// ─── Playback AGC (per-peer volume normalization) ───
+// Slower-adapting AGC for playback: normalizes peers to consistent volume
+// without affecting the manual volume slider. Prevents loud peers from
+// dominating the mix and quiet peers from being inaudible.
+
+pub(crate) struct PlaybackAgc {
+    rms_estimate: f32,
+    gain: f32,
+    target_rms: f32,
+    max_gain: f32,
+    min_gain: f32,
+}
+
+const PLAYBACK_AGC_RMS_ATTACK: f32 = 0.001; // ~1s to adapt to louder signal (slower than capture)
+const PLAYBACK_AGC_RMS_RELEASE: f32 = 0.0005; // ~2s to adapt to quieter signal
+const PLAYBACK_AGC_GAIN_SMOOTH: f32 = 0.002; // slower gain changes for natural sound
+
+impl PlaybackAgc {
+    pub fn new() -> Self {
+        Self {
+            rms_estimate: 0.05,
+            gain: 1.0,
+            target_rms: 0.15, // slightly louder target for playback clarity
+            max_gain: 6.0,    // +15dB max boost (less aggressive than capture)
+            min_gain: 0.15,   // -16dB max cut
+        }
+    }
+
+    /// Process decoded samples in-place before mixing.
+    #[inline]
+    pub fn process(&mut self, samples: &mut [f32]) {
+        let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
+        let frame_rms = (sum_sq / samples.len().max(1) as f32).sqrt();
+
+        let alpha = if frame_rms > self.rms_estimate {
+            PLAYBACK_AGC_RMS_ATTACK
+        } else {
+            PLAYBACK_AGC_RMS_RELEASE
+        };
+        self.rms_estimate = self.rms_estimate * (1.0 - alpha) + frame_rms * alpha;
+
+        let target_gain = if self.rms_estimate > 0.001 {
+            (self.target_rms / self.rms_estimate).clamp(self.min_gain, self.max_gain)
+        } else {
+            1.0
+        };
+
+        for s in samples.iter_mut() {
+            self.gain += (target_gain - self.gain) * PLAYBACK_AGC_GAIN_SMOOTH;
+            *s *= self.gain;
+            // Soft limiter
+            if s.abs() > 0.95 {
+                *s *= 0.95 / s.abs();
+            }
+        }
+    }
+}
+
 // ─── Comfort Noise Generator ───
 // Injects very low-level noise when the gate closes to avoid jarring dead silence.
 // Uses a simple linear-feedback shift register (LFSR) — zero allocation, no rand crate.

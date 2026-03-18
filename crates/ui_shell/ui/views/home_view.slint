@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { SpaceData, VxTheme } from "../theme.slint";
+import { DirectMessageThreadData, SpaceData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
@@ -14,6 +14,8 @@ export component HomeView inherits Rectangle {
     in-out property <bool> show-quick-call: false;
     in-out property <string> join-code: "";
     in-out property <string> room-password: "";
+    in property <[DirectMessageThreadData]> direct-message-threads: [];
+    in property <int> unread-direct-messages-count: 0;
     callback connect-server();
     callback disconnect-server();
     callback find-server();
@@ -22,6 +24,7 @@ export component HomeView inherits Rectangle {
     callback join-space();
     callback create-room();
     callback join-room(string);
+    callback open-direct-message(string);
 
     background: transparent;
 
@@ -248,6 +251,113 @@ export component HomeView inherits Rectangle {
 
                                     VxStatusPill {
                                         label: "Open";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "DIRECT MESSAGES"; }
+                                if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                    label: root.unread-direct-messages-count + " unread";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
+                                }
+                            }
+
+                            if root.direct-message-threads.length == 0 : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 5px;
+                                    Text {
+                                        text: "No conversations yet.";
+                                        color: VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: "Open a direct message from a friend card and it will appear here.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            for thread in root.direct-message-threads : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: dm-wide-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: thread.unread-count > 0 ? VxTheme.accent-border :
+                                              thread.is-in-voice ? VxTheme.speaking-border :
+                                              dm-wide-touch.has-hover ? VxTheme.card-hover-border :
+                                              thread.is-online ? VxTheme.border-strong : VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                dm-wide-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.open-direct-message(thread.user-id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding: 12px;
+                                    spacing: 10px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 32px;
+                                        initial: thread.initial;
+                                        color-index: thread.color-index;
+                                        show-status: true;
+                                        is-online: thread.is-online;
+                                        is-speaking: thread.is-in-voice;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            Text {
+                                                text: thread.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: thread.meta;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: thread.preview;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    if thread.unread-count > 0 : VxStatusPill {
+                                        label: thread.unread-count + "";
                                         tone: VxTheme.accent;
                                         fill: VxTheme.accent-subtle;
                                     }
@@ -626,6 +736,90 @@ export component HomeView inherits Rectangle {
                                         color: VxTheme.text-muted;
                                         font-size: 9px;
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "DIRECT MESSAGES"; }
+                            if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                label: root.unread-direct-messages-count + " unread";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                        }
+
+                        if root.direct-message-threads.length == 0 : Text {
+                            text: "Recent direct messages will appear here.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+
+                        for thread in root.direct-message-threads : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: dm-compact-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: thread.unread-count > 0 ? VxTheme.accent-border :
+                                          dm-compact-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            dm-compact-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.open-direct-message(thread.user-id); }
+                            }
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 6px;
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 28px;
+                                        initial: thread.initial;
+                                        color-index: thread.color-index;
+                                        show-status: true;
+                                        is-online: thread.is-online;
+                                        is-speaking: thread.is-in-voice;
+                                    }
+
+                                    Text {
+                                        text: thread.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    Text {
+                                        text: thread.meta;
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+
+                                    if thread.unread-count > 0 : VxStatusPill {
+                                        label: thread.unread-count + "";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                }
+
+                                Text {
+                                    text: thread.preview;
+                                    color: VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    overflow: elide;
                                 }
                             }
                         }

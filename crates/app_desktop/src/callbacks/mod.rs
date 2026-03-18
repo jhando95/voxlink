@@ -88,6 +88,8 @@ pub fn setup(
     space::setup_ban_member(window, network, rt_handle);
     space::setup_server_mute_member(window, network, rt_handle);
     space::setup_set_member_role(window, network, rt_handle);
+    space::setup_set_user_status(window, network, rt_handle);
+    space::setup_set_channel_topic(window, network, rt_handle);
 
     // Channel
     channel::setup_create_channel(window, network, rt_handle);
@@ -139,4 +141,6 @@ pub fn setup(
     chat::setup_delete_text_message(window, network, rt_handle);
     chat::setup_react_to_message(window, network, rt_handle);
     chat::setup_toggle_pin_message(window, network, rt_handle);
+    chat::setup_search_messages(window, network, rt_handle);
+    space::setup_set_profile(window, network, rt_handle);
 }

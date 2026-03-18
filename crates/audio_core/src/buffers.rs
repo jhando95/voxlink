@@ -138,11 +138,13 @@ use super::{
     JITTER_INITIAL, JITTER_MAX_FRAMES, JITTER_MIN_FRAMES, JITTER_STABLE_THRESHOLD,
     MAX_PEER_BUFFER_SAMPLES,
 };
+use super::codec::PlaybackAgc;
 
 pub(crate) struct PeerPlayback {
     pub buffer: RingBuf,
     pub volume: f32,
     pub primed: bool,
+    pub playback_agc: PlaybackAgc,
     target_frames: u16,
     underrun_ticks: u16,
     stable_ticks: u16,
@@ -154,6 +156,7 @@ impl PeerPlayback {
             buffer: RingBuf::with_capacity(MAX_PEER_BUFFER_SAMPLES),
             volume: 1.0,
             primed: false,
+            playback_agc: PlaybackAgc::new(),
             target_frames: JITTER_INITIAL,
             underrun_ticks: 0,
             stable_ticks: 0,

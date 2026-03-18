@@ -129,6 +129,29 @@ pub fn handle_space_audit_snapshot(
     ui_shell::set_space_audit_log(w, entries);
 }
 
+pub fn handle_profile_updated(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    user_id: &str,
+    bio: &str,
+) {
+    // Update bio in member list if visible
+    if let Some(ref mut space) = state.borrow_mut().space {
+        if let Some(member) = space.members.iter_mut().find(|m| {
+            m.user_id.as_deref() == Some(user_id) || m.id == user_id
+        }) {
+            member.bio = bio.to_string();
+        }
+    }
+    let members = state
+        .borrow()
+        .space
+        .as_ref()
+        .map(|s| s.members.clone())
+        .unwrap_or_default();
+    ui_shell::set_members(w, &members);
+}
+
 pub fn handle_space_audit_appended(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,

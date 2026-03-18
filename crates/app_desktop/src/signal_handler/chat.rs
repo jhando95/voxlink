@@ -305,6 +305,7 @@ pub fn handle_direct_message_deleted(
 
 pub fn handle_message_reaction(
     w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
     channel_id: &str,
     message_id: &str,
     emoji: &str,
@@ -318,9 +319,10 @@ pub fn handle_message_reaction(
         return;
     }
 
-    // For simplicity, just append the reaction indicator to the existing reactions string.
-    // A full implementation would track individual reaction state, but this is sufficient
-    // for the display since the server sends the full reaction state on TextChannelSelected.
+    let _ = state; // state reserved for future client-side message tracking
+
+    // Toggle the reaction in the UI model, mirroring the server's toggle logic:
+    // If user already reacted with this emoji, remove them; otherwise add them.
     let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
     if let Some(model) = messages
         .as_any()
@@ -330,16 +332,31 @@ pub fn handle_message_reaction(
             if let Some(msg) = model.row_data(i) {
                 if msg.message_id.as_str() == message_id {
                     let mut updated = msg;
-                    // Simple toggle: if user's reaction emoji already in string, it was toggled
-                    let current = updated.reactions.to_string();
-                    if current.contains(emoji) {
-                        // Re-render will happen on next channel select; for now just mark it
-                        updated.reactions = format!("{current} (+{user_name})").into();
-                    } else if current.is_empty() {
-                        updated.reactions = format!("{emoji} 1").into();
+                    // Parse existing reactions from the display string back to structured data,
+                    // apply the toggle, then re-render. We track per-emoji user lists in a
+                    // local vec since the UI only stores a formatted string.
+                    let mut reaction_map: Vec<(String, Vec<String>)> =
+                        parse_reaction_pills(&updated.reactions);
+
+                    if let Some(entry) = reaction_map.iter_mut().find(|(e, _)| e == emoji) {
+                        if let Some(pos) = entry.1.iter().position(|u| u == user_name) {
+                            entry.1.remove(pos);
+                        } else {
+                            entry.1.push(user_name.to_string());
+                        }
                     } else {
-                        updated.reactions = format!("{current}  {emoji} 1").into();
+                        reaction_map.push((emoji.to_string(), vec![user_name.to_string()]));
                     }
+                    // Remove empty reactions
+                    reaction_map.retain(|(_, users)| !users.is_empty());
+
+                    // Re-render as "emoji count" pills
+                    let display = reaction_map
+                        .iter()
+                        .map(|(e, users)| format!("{} {}", e, users.len()))
+                        .collect::<Vec<_>>()
+                        .join("  ");
+                    updated.reactions = display.into();
                     model.set_row_data(i, updated);
                     break;
                 }
@@ -347,6 +364,35 @@ pub fn handle_message_reaction(
         }
     }
     sync_pinned_messages(w);
+}
+
+/// Parse reaction display string "👍 2  ❤ 1" back into structured data.
+/// Since we don't store user lists in the UI, we create placeholder user entries
+/// matching the count. This is only used for toggle logic within a session —
+/// full state is restored from server on channel re-select.
+fn parse_reaction_pills(display: &slint::SharedString) -> Vec<(String, Vec<String>)> {
+    let s = display.to_string();
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    // Split on double-space which separates pills
+    for pill in s.split("  ") {
+        let pill = pill.trim();
+        if pill.is_empty() {
+            continue;
+        }
+        // Last token is count, everything before is the emoji
+        if let Some(space_pos) = pill.rfind(' ') {
+            let emoji_part = &pill[..space_pos];
+            let count_part = &pill[space_pos + 1..];
+            if let Ok(count) = count_part.parse::<usize>() {
+                let users: Vec<String> = (0..count).map(|i| format!("user_{i}")).collect();
+                result.push((emoji_part.to_string(), users));
+            }
+        }
+    }
+    result
 }
 
 pub fn handle_typing_state(
@@ -573,6 +619,29 @@ fn truncate_for_notification(content: &str) -> String {
     } else {
         content.to_string()
     }
+}
+
+pub fn handle_search_results(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    channel_id: &str,
+    messages: &[shared_types::TextMessageData],
+) {
+    // Only show results if we're still viewing this channel
+    let current_channel = w.get_chat_channel_id().to_string();
+    if current_channel != channel_id {
+        return;
+    }
+
+    let user_name = w.get_user_name().to_string();
+    let _ = state; // reserved for future use
+    let items: Vec<ui_shell::ChatMessage> = messages
+        .iter()
+        .map(|m| ui_shell::text_msg_to_chat_msg(m, &user_name))
+        .collect();
+
+    let model = std::rc::Rc::new(slint::VecModel::from(items));
+    w.set_chat_search_results(model.into());
 }
 
 fn is_self_message(

@@ -309,3 +309,32 @@ pub fn setup_react_to_message(
         });
     });
 }
+
+pub fn setup_search_messages(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let weak = window.as_weak();
+    window.on_search_messages(move |query| {
+        let Some(w) = weak.upgrade() else { return };
+        let channel_id = w.get_chat_channel_id().to_string();
+        let query = query.to_string();
+        if channel_id.is_empty() || query.is_empty() {
+            return;
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SearchMessages {
+                    channel_id,
+                    query,
+                    limit: 50,
+                })
+                .await;
+        });
+    });
+}

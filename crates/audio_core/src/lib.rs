@@ -180,6 +180,8 @@ pub struct AudioEngine {
     feedback_tone: FeedbackTone,
     /// Runtime bitrate in bps. Encoder reads this each frame for dynamic quality switching.
     opus_bitrate: Arc<AtomicI32>,
+    /// Target (base) bitrate from voice quality setting. Adaptive bitrate reduces from this.
+    target_bitrate: Arc<AtomicI32>,
     /// Set to true when a stream error occurs — signals the app to attempt recovery (#1)
     pub capture_error: Arc<AtomicBool>,
     pub playback_error: Arc<AtomicBool>,
@@ -206,6 +208,7 @@ impl AudioEngine {
             output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
             feedback_tone: FeedbackTone::new(),
             opus_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
+            target_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
         })
@@ -553,12 +556,28 @@ impl AudioEngine {
     /// Set voice quality by updating the runtime bitrate. Takes effect on the next encoded frame.
     pub fn set_voice_quality(&self, quality: u8) {
         let bps = shared_types::voice_quality_bitrate(quality);
+        self.target_bitrate.store(bps, Ordering::Relaxed);
         self.opus_bitrate.store(bps, Ordering::Relaxed);
         log::info!(
             "Voice quality set to {} ({}bps)",
             shared_types::voice_quality_label(quality),
             bps
         );
+    }
+
+    /// Set the runtime Opus bitrate directly (used by adaptive bitrate logic).
+    pub fn set_bitrate(&self, bitrate: i32) {
+        self.opus_bitrate.store(bitrate, Ordering::Relaxed);
+    }
+
+    /// Get the target (base) bitrate from the voice quality setting.
+    pub fn target_bitrate(&self) -> i32 {
+        self.target_bitrate.load(Ordering::Relaxed)
+    }
+
+    /// Get the current runtime bitrate.
+    pub fn current_bitrate(&self) -> i32 {
+        self.opus_bitrate.load(Ordering::Relaxed)
     }
 
     pub fn restart_capture(&mut self, device_name: Option<&str>) -> Result<()> {
@@ -705,17 +724,21 @@ impl AudioEngine {
             return false;
         };
 
+        if pcm_i16.is_empty() {
+            return false;
+        }
+
+        // Convert i16 → f32, apply per-peer playback AGC, then push to ring buffer
+        let mut f32_buf: Vec<f32> = pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)).collect();
+        peer.playback_agc.process(&mut f32_buf);
+
         let mut sum_sq: f32 = 0.0;
-        for &sample in pcm_i16 {
-            let s = sample as f32 * (1.0 / 32767.0);
+        for &s in &f32_buf {
             sum_sq += s * s;
             peer.buffer.push(s);
         }
 
-        if pcm_i16.is_empty() {
-            return false;
-        }
-        let rms = (sum_sq / pcm_i16.len() as f32).sqrt();
+        let rms = (sum_sq / f32_buf.len() as f32).sqrt();
         rms >= 0.003
     }
 

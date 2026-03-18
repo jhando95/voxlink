@@ -4,6 +4,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use rand::Rng;
+
 use shared_types::{AppView, SignalMessage};
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
@@ -96,6 +98,7 @@ pub fn drain_screen_share_frame(
         }
         Err(e) => {
             log::warn!("Failed to decode screen share frame: {e}");
+            w.set_screen_share_owner_name("Decode error - stream may be corrupted".into());
         }
     }
 }
@@ -248,10 +251,13 @@ pub fn check_connection(
                         }
                     }
                 });
-                // Exponential backoff: double the interval, cap at 1200 ticks (~30s)
+                // Exponential backoff with jitter: cap at 1200 ticks (~30s)
                 let mut interval = reconnect_interval.borrow_mut();
                 *interval = (*interval * 2).min(1200);
-                *cooldown = *interval;
+                // Add random jitter (±25% of interval) to prevent thundering herd
+                let jitter_range = (*interval / 4).max(1);
+                let jitter = rand::thread_rng().gen_range(0..jitter_range * 2) as i64 - jitter_range as i64;
+                *cooldown = ((*interval as i64 + jitter).max(1)) as u64;
             }
         }
     }

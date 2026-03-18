@@ -2,6 +2,9 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Token lifetime: 90 days in seconds
+const TOKEN_LIFETIME_SECS: i64 = 90 * 86400;
+
 /// Persists spaces, channels, and messages to SQLite.
 /// Only cold data is stored — runtime state (peers, rooms) stays in-memory.
 pub struct Database {
@@ -252,6 +255,7 @@ impl Database {
         self.ensure_column("users", "issued_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("channels", "voice_quality", "INTEGER NOT NULL DEFAULT 2")?;
+        self.ensure_column("users", "bio", "TEXT NOT NULL DEFAULT ''")?;
         Ok(())
     }
 
@@ -391,6 +395,27 @@ impl Database {
         }
     }
 
+    pub fn set_user_bio(&self, user_id: &str, bio: &str) {
+        if let Ok(conn) = self.lock_conn() {
+            let _ = conn.execute(
+                "UPDATE users SET bio = ?1 WHERE user_id = ?2",
+                params![bio, user_id],
+            );
+        }
+    }
+
+    pub fn get_user_bio(&self, user_id: &str) -> String {
+        let Ok(conn) = self.lock_conn() else {
+            return String::new();
+        };
+        conn.query_row(
+            "SELECT bio FROM users WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    }
+
     pub fn delete_channel(&self, channel_id: &str) -> Result<(), String> {
         let mut conn = self.lock_conn()?;
         let tx = conn
@@ -502,6 +527,46 @@ impl Database {
         Ok(rows > 0)
     }
 
+    pub fn search_messages(
+        &self,
+        channel_id: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageRow>, String> {
+        let conn = self.lock_conn()?;
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, channel_id, sender_id, sender_name, content, timestamp, edited,
+                        reply_to_message_id, reply_to_sender_name, reply_preview, pinned
+                 FROM messages WHERE channel_id = ?1 AND content LIKE ?2 ESCAPE '\\'
+                 ORDER BY timestamp DESC LIMIT ?3",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let rows = stmt
+            .query_map(params![channel_id, pattern, limit as i64], |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    sender_id: row.get(2)?,
+                    sender_name: row.get(3)?,
+                    content: row.get(4)?,
+                    timestamp: row.get(5)?,
+                    edited: row.get::<_, i64>(6)? != 0,
+                    reply_to_message_id: row.get(7)?,
+                    reply_to_sender_name: row.get(8)?,
+                    reply_preview: row.get(9)?,
+                    pinned: row.get::<_, i64>(10)? != 0,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        let mut msgs: Vec<_> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))?;
+        msgs.reverse();
+        Ok(msgs)
+    }
+
     pub fn get_message_sender(&self, message_id: &str) -> Result<Option<String>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
@@ -549,6 +614,18 @@ impl Database {
                 })
             })
             .ok();
+        // Check token expiry: tokens older than TOKEN_LIFETIME_SECS are treated as invalid.
+        // The caller (auth handler) will fall through to creating a new identity.
+        if let Some(ref user) = result {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            if user.issued_at + TOKEN_LIFETIME_SECS < now {
+                log::info!("Token expired for user {}", user.user_id);
+                return Ok(None);
+            }
+        }
         Ok(result)
     }
 
@@ -1327,27 +1404,32 @@ mod tests {
     #[test]
     fn user_auth_round_trip() {
         let (db, path) = temp_db();
+        // Use a recent timestamp so token expiry check passes
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         db.save_user(&UserRow {
             user_id: "u1".into(),
             token: "tok123".into(),
             display_name: "Alice".into(),
-            created_at: 1000,
-            issued_at: 1000,
-            last_seen_at: 1000,
+            created_at: now,
+            issued_at: now,
+            last_seen_at: now,
         })
         .unwrap();
         let user = db.find_user_by_token("tok123").unwrap().unwrap();
         assert_eq!(user.user_id, "u1");
         assert_eq!(user.display_name, "Alice");
-        assert_eq!(user.issued_at, 1000);
-        assert_eq!(user.last_seen_at, 1000);
+        assert_eq!(user.issued_at, now);
+        assert_eq!(user.last_seen_at, now);
 
-        db.rotate_user_session("u1", "tok456", "Alice 2", 2000, 3000)
+        db.rotate_user_session("u1", "tok456", "Alice 2", now + 1000, now + 2000)
             .unwrap();
         let rotated = db.find_user_by_token("tok456").unwrap().unwrap();
         assert_eq!(rotated.display_name, "Alice 2");
-        assert_eq!(rotated.issued_at, 2000);
-        assert_eq!(rotated.last_seen_at, 3000);
+        assert_eq!(rotated.issued_at, now + 1000);
+        assert_eq!(rotated.last_seen_at, now + 2000);
 
         assert!(db.find_user_by_token("nonexistent").unwrap().is_none());
         let _ = std::fs::remove_file(path);

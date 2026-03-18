@@ -397,21 +397,44 @@ pub async fn handle_join_space(
         return;
     }
 
+    // Brute-force protection: check if this IP has too many recent failed JoinSpace attempts
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            let ip = peer.ip;
+            if let Some(&(count, window_start)) = s.join_failures.get(&ip) {
+                if window_start.elapsed().as_secs() < 60 && count >= 5 {
+                    drop(s);
+                    send_error(state, peer_id, "Too many failed join attempts, try again later").await;
+                    return;
+                }
+            }
+        }
+    }
+
     // Resolve space_id and check ban before taking write lock
     let (space_id, check_id) = {
         let s = state.read().await;
         let space_id = match s.invite_index.get(&invite_code).cloned() {
             Some(id) => id,
             None => {
-                if let Some(peer) = s.peers.get(peer_id).cloned() {
+                // Record failed attempt for brute-force protection
+                if let Some(peer) = s.peers.get(peer_id) {
+                    let ip = peer.ip;
                     drop(s);
-                    send_to(
-                        &peer,
-                        &SignalMessage::Error {
-                            message: "Invalid invite code".into(),
-                        },
-                    )
-                    .await;
+                    {
+                        let mut sw = state.write().await;
+                        let entry = sw.join_failures.entry(ip).or_insert((0, Instant::now()));
+                        if entry.1.elapsed().as_secs() >= 60 {
+                            *entry = (1, Instant::now());
+                        } else {
+                            entry.0 += 1;
+                        }
+                    }
+                    send_error(state, peer_id, "Invalid invite code").await;
+                } else {
+                    drop(s);
+                    send_error(state, peer_id, "Invalid invite code").await;
                 }
                 return;
             }
@@ -440,6 +463,17 @@ pub async fn handle_join_space(
         if banned {
             send_error(state, peer_id, "You are banned from this space").await;
             return;
+        }
+    }
+
+    // Reset join failure counter on successful invite code match
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            let ip = peer.ip;
+            drop(s);
+            let mut sw = state.write().await;
+            sw.join_failures.remove(&ip);
         }
     }
 
@@ -540,6 +574,7 @@ pub async fn handle_join_space(
                     channel_id: ch_id,
                     channel_name: ch_name,
                     status: p.status.lock().await.clone(),
+                    bio: String::new(),
                 });
             }
         }
@@ -565,6 +600,7 @@ pub async fn handle_join_space(
                 channel_id: None,
                 channel_name: None,
                 status: p.status.lock().await.clone(),
+                bio: String::new(),
             })
         } else {
             None
