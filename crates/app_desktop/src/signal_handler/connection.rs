@@ -115,6 +115,9 @@ pub fn check_connection(
     screen_share: &Arc<crate::screen_share::ScreenShareController>,
     rt_handle: &tokio::runtime::Handle,
     perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
+    audio_started: &Rc<RefCell<bool>>,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    audio_active_flag: &Arc<AtomicBool>,
 ) {
     // If the lock is held (e.g. during leave_room async), skip this check
     // to avoid falsely detecting a disconnect.
@@ -132,10 +135,24 @@ pub fn check_connection(
     w.set_is_connected(connected);
     network_flag.store(connected, Ordering::Relaxed);
 
-    // Connection just lost — start with short cooldown
+    // Connection just lost — stop audio, reset state, start reconnect cooldown
     if !connected && prev_connected {
         log::warn!("Connection lost, will attempt reconnect");
         screen_share.stop_capture();
+
+        // Stop audio streams and reset audio_started so reconnect can restart them.
+        // Without this, start_audio_if_needed bails on reconnect because audio_started
+        // is still true, and the media session callback never gets re-wired.
+        *audio_started.borrow_mut() = false;
+        audio_active_flag.store(false, Ordering::Relaxed);
+        let audio = audio.clone();
+        rt_handle.spawn(async move {
+            let mut aud = audio.lock().await;
+            aud.stop_capture();
+            aud.stop_playback();
+            log::info!("Audio stopped after disconnect — will restart on reconnect");
+        });
+
         w.set_status_text("Reconnecting...".into());
         w.set_room_status("Connection lost, reconnecting...".into());
         w.set_has_screen_share(false);

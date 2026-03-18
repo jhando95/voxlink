@@ -85,6 +85,9 @@ pub fn start(
     let deafen_cooldown = Rc::new(RefCell::new(0u64));
     let listen_state: Rc<RefCell<Option<ListenState>>> = Rc::new(RefCell::new(None));
     let screen_frame_timer_tick = screen_frame_timer.clone();
+    let audio_started_conn = audio_started.clone();
+    let audio_conn = audio.clone();
+    let audio_flag_conn = audio_active_flag.clone();
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -233,6 +236,9 @@ pub fn start(
                     &screen_share,
                     &rt_handle,
                     &perf,
+                    &audio_started_conn,
+                    &audio_conn,
+                    &audio_flag_conn,
                 );
 
                 if in_room {

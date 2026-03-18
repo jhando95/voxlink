@@ -253,42 +253,56 @@ pub fn setup_play_speaker_test(
         let audio = audio.clone();
         let window_weak = window_weak.clone();
         rt_handle.spawn(async move {
-            let mut aud = audio.lock().await;
-            let device_name = aud
-                .list_output_devices()
-                .get(selected_output)
-                .map(|device| device.name.clone());
+            let ww_timeout = window_weak.clone();
+            // Timeout the entire speaker test to prevent getting stuck
+            let result = tokio::time::timeout(Duration::from_secs(3), async {
+                let mut aud = audio.lock().await;
+                let device_name = aud
+                    .list_output_devices()
+                    .get(selected_output)
+                    .map(|device| device.name.clone());
 
-            if device_name.is_none() {
-                if let Some(w) = window_weak.upgrade() {
-                    w.set_speaker_test_active(false);
-                    w.set_status_text("No speaker route available".into());
-                }
-                return;
-            }
-
-            let preview_playback = !in_live_call;
-            if preview_playback {
-                if let Err(e) = aud.start_playback(device_name.as_deref()) {
-                    log::error!("Failed to start speaker test playback: {e}");
+                if device_name.is_none() {
                     if let Some(w) = window_weak.upgrade() {
                         w.set_speaker_test_active(false);
-                        w.set_status_text("Speaker test could not start".into());
+                        w.set_status_text("No speaker route available".into());
                     }
                     return;
                 }
-            }
 
-            aud.play_output_preview();
-            drop(aud);
+                log::info!("Speaker test on: {:?}", device_name);
 
-            sleep(Duration::from_millis(320)).await;
+                let preview_playback = !in_live_call;
+                if preview_playback {
+                    if let Err(e) = aud.start_playback(device_name.as_deref()) {
+                        log::error!("Failed to start speaker test playback: {e}");
+                        if let Some(w) = window_weak.upgrade() {
+                            w.set_speaker_test_active(false);
+                            w.set_status_text("Speaker test could not start".into());
+                        }
+                        return;
+                    }
+                }
 
-            if preview_playback {
-                audio.lock().await.stop_playback();
-            }
-            if let Some(w) = window_weak.upgrade() {
-                w.set_speaker_test_active(false);
+                aud.play_output_preview();
+                drop(aud);
+
+                sleep(Duration::from_millis(320)).await;
+
+                if preview_playback {
+                    audio.lock().await.stop_playback();
+                }
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_speaker_test_active(false);
+                }
+            }).await;
+
+            if result.is_err() {
+                log::error!("Speaker test timed out — resetting state");
+                if let Some(w) = ww_timeout.upgrade() {
+                    w.set_speaker_test_active(false);
+                    w.set_status_text("Speaker test timed out".into());
+                }
             }
         });
     });

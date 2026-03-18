@@ -380,6 +380,7 @@ pub fn start_audio_if_needed(
     window_weak: Option<slint::Weak<MainWindow>>,
 ) {
     if *started.borrow() {
+        log::debug!("start_audio_if_needed: already started, skipping");
         return;
     }
     *started.borrow_mut() = true;
@@ -390,36 +391,83 @@ pub fn start_audio_if_needed(
     rt_handle.spawn(async move {
         let mut audio_ok = true;
 
-        // Scope the audio lock so it's released before media.start(),
-        // which also needs to lock audio to set the encoded-frame callback.
+        // Step 1: Wire the media session (encoded-frame callback) FIRST.
+        // This ensures frames have somewhere to go before capture starts producing them.
+        {
+            let m = media.lock().await;
+            if let Err(e) = m.start().await {
+                log::error!("Failed to start media session: {e}");
+            } else {
+                log::info!("Media session wired — audio frames will be sent to network");
+            }
+        }
+
+        // Step 2: Start capture and playback streams.
         {
             let mut aud = audio.lock().await;
-            if let Err(e) = aud.start_capture(input_device.as_deref()) {
-                log::error!("Failed to start capture: {e}");
-                audio_ok = false;
-                if let Some(ref ww) = window_weak {
-                    if let Some(w) = ww.upgrade() {
-                        w.set_room_status("Mic error — check audio settings".into());
+
+            // Start capture (microphone)
+            match aud.start_capture(input_device.as_deref()) {
+                Ok(()) => log::info!("Capture started on: {:?}", input_device.as_deref().unwrap_or("default")),
+                Err(e) => {
+                    log::error!("Failed to start capture: {e}");
+                    audio_ok = false;
+                    // Try default device as fallback
+                    if input_device.is_some() {
+                        log::info!("Trying default input device as fallback...");
+                        if let Err(e2) = aud.start_capture(None) {
+                            log::error!("Default input device also failed: {e2}");
+                            if let Some(ref ww) = window_weak {
+                                if let Some(w) = ww.upgrade() {
+                                    w.set_room_status("Mic error — check audio settings".into());
+                                }
+                            }
+                        } else {
+                            log::info!("Fallback to default input device succeeded");
+                            audio_ok = true;
+                        }
+                    } else if let Some(ref ww) = window_weak {
+                        if let Some(w) = ww.upgrade() {
+                            w.set_room_status("Mic error — check audio settings".into());
+                        }
                     }
                 }
             }
-            if let Err(e) = aud.start_playback(output_device.as_deref()) {
-                log::error!("Failed to start playback: {e}");
-                audio_ok = false;
-                if let Some(ref ww) = window_weak {
-                    if let Some(w) = ww.upgrade() {
-                        w.set_room_status("Speaker error — check audio settings".into());
+
+            // Start playback (speakers)
+            match aud.start_playback(output_device.as_deref()) {
+                Ok(()) => log::info!("Playback started on: {:?}", output_device.as_deref().unwrap_or("default")),
+                Err(e) => {
+                    log::error!("Failed to start playback: {e}");
+                    audio_ok = false;
+                    // Try default device as fallback
+                    if output_device.is_some() {
+                        log::info!("Trying default output device as fallback...");
+                        if let Err(e2) = aud.start_playback(None) {
+                            log::error!("Default output device also failed: {e2}");
+                            if let Some(ref ww) = window_weak {
+                                if let Some(w) = ww.upgrade() {
+                                    w.set_room_status("Speaker error — check audio settings".into());
+                                }
+                            }
+                        } else {
+                            log::info!("Fallback to default output device succeeded");
+                            audio_ok = true;
+                        }
+                    } else if let Some(ref ww) = window_weak {
+                        if let Some(w) = ww.upgrade() {
+                            w.set_room_status("Speaker error — check audio settings".into());
+                        }
                     }
                 }
             }
         }
-        // Now audio lock is released — media.start() can safely acquire it
-        let m = media.lock().await;
-        if let Err(e) = m.start().await {
-            log::error!("Failed to start media session: {e}");
-        }
+
         if audio_ok {
             flag.store(true, Ordering::Relaxed);
+            log::info!("Audio pipeline fully active — capture + playback + media session");
+        } else {
+            log::warn!("Audio pipeline started with errors — some functionality may be degraded");
         }
     });
 }

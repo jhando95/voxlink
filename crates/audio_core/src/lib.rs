@@ -360,12 +360,16 @@ impl AudioEngine {
     pub fn set_on_encoded_frame<F: Fn(Arc<[u8]>) + Send + 'static>(&self, callback: F) {
         if let Ok(mut cb) = self.on_encoded_frame.lock() {
             *cb = Some(Box::new(callback));
+            log::info!("on_encoded_frame callback set — audio frames will be forwarded to network");
+        } else {
+            log::error!("Failed to set on_encoded_frame — callback lock poisoned");
         }
     }
 
     pub fn clear_on_encoded_frame(&self) {
         if let Ok(mut cb) = self.on_encoded_frame.lock() {
             *cb = None;
+            log::info!("on_encoded_frame callback cleared");
         }
     }
 
@@ -446,6 +450,7 @@ impl AudioEngine {
         let mut capture_ring = CaptureRing::new(FRAME_SIZE * 4);
         let mut frame_buf = [0.0f32; FRAME_SIZE];
         let mut pcm_i16 = [0i16; FRAME_SIZE];
+        let mut frames_encoded: u64 = 0;
         let mut opus_out = [0u8; OPUS_MAX_PACKET];
         let mut noise_gate = NoiseGate::new(sensitivity);
         let mut hp_filter = HighPassFilter::new();
@@ -515,10 +520,19 @@ impl AudioEngine {
 
                     match opus_encoder.encode(&pcm_i16, &mut opus_out) {
                         Ok(len) => {
+                            frames_encoded += 1;
                             let frame: Arc<[u8]> = Arc::from(&opus_out[..len]);
                             if let Ok(cb) = on_frame.try_lock() {
                                 if let Some(ref f) = *cb {
                                     f(frame);
+                                    // Log first frame and periodic status
+                                    if frames_encoded == 1 {
+                                        log::info!("First audio frame encoded and sent ({len} bytes)");
+                                    } else if frames_encoded == 250 {
+                                        log::info!("Audio pipeline healthy: 250 frames encoded (~5s)");
+                                    }
+                                } else if frames_encoded <= 3 {
+                                    log::warn!("Audio frame #{frames_encoded} encoded but no callback set — frame lost");
                                 }
                             }
                         }
