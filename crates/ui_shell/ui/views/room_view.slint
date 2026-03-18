@@ -33,6 +33,7 @@ export component RoomView inherits Rectangle {
     in property <string> screen-share-quality-detail: "";
     in-out property <bool> show-copied: false;
     in-out property <string> selected-peer-id: "";
+    in-out property <float> selected-peer-volume: 1.0;
     in-out property <bool> show-share-config: false;
     callback copy-room-code();
     callback leave-room();
@@ -304,7 +305,12 @@ export component RoomView inherits Rectangle {
                                 mouse-cursor: p.id != "self" ? pointer : default;
                                 clicked => {
                                     if p.id != "self" {
-                                        root.selected-peer-id = root.selected-peer-id == p.id ? "" : p.id;
+                                        if root.selected-peer-id == p.id {
+                                            root.selected-peer-id = "";
+                                        } else {
+                                            root.selected-peer-id = p.id;
+                                            root.selected-peer-volume = p.volume;
+                                        }
                                     }
                                 }
                             }
@@ -430,32 +436,43 @@ export component RoomView inherits Rectangle {
 
                 // Per-peer volume slider (shows when a peer is selected)
                 if root.selected-peer-id != "" : Rectangle {
-                    height: 40px;
+                    height: 52px;
                     border-radius: VxTheme.radius-control;
                     background: VxTheme.bg-soft;
-                    border-color: VxTheme.border-subtle;
+                    border-color: VxTheme.accent-border;
                     border-width: 1px;
 
                     HorizontalLayout {
                         padding-left: 14px;
                         padding-right: 14px;
-                        spacing: 12px;
+                        spacing: 10px;
                         alignment: center;
 
                         Text {
                             text: "Volume";
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             font-weight: 600;
                             vertical-alignment: center;
                         }
 
                         VxSlider {
                             horizontal-stretch: 1;
-                            // Find the selected peer's volume — iterate to match
-                            // Slint doesn't support array.find(), so use first participant as fallback
-                            value: 1.0;
-                            changed(val) => { root.volume-changed(root.selected-peer-id, val); }
+                            value <=> root.selected-peer-volume;
+                            changed(val) => {
+                                root.selected-peer-volume = val;
+                                root.volume-changed(root.selected-peer-id, val);
+                            }
+                        }
+
+                        Text {
+                            text: Math.round(root.selected-peer-volume * 100) + "%";
+                            color: VxTheme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                            min-width: 36px;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
                         }
 
                         VxButton {

@@ -465,39 +465,46 @@ export component VxSlider inherits Rectangle {
     in-out property <float> value: 1.0;
     callback changed(float);
 
-    height: 22px;
+    height: 32px;
+    min-width: 80px;
     background: transparent;
 
+    // Track background
     Rectangle {
         x: 0px;
-        y: (parent.height - 6px) / 2;
+        y: (parent.height - 8px) / 2;
         width: parent.width;
-        height: 6px;
-        border-radius: 3px;
+        height: 8px;
+        border-radius: 4px;
         background: VxTheme.border-subtle;
 
+        // Filled portion
         Rectangle {
             width: parent.width * root.value;
             height: parent.height;
-            border-radius: 3px;
+            border-radius: 4px;
             background: VxTheme.accent;
             animate width { duration: 50ms; easing: ease-out; }
         }
     }
 
+    // Handle
     Rectangle {
-        x: (parent.width - 16px) * root.value;
-        y: (parent.height - 16px) / 2;
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
+        x: (parent.width - 22px) * root.value;
+        y: (parent.height - 22px) / 2;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
         background: touch.pressed ? VxTheme.text-primary :
                     touch.has-hover ? VxTheme.accent : VxTheme.bg-panel;
         border-color: touch.pressed ? VxTheme.text-primary : VxTheme.accent;
-        border-width: 2px;
+        border-width: 2.5px;
+        drop-shadow-blur: touch.has-hover ? 4px : 0px;
+        drop-shadow-color: VxTheme.accent.transparentize(0.7);
 
         animate background { duration: 80ms; easing: ease-out; }
         animate border-color { duration: 80ms; easing: ease-out; }
+        animate drop-shadow-blur { duration: 120ms; }
     }
 
     touch := TouchArea {

@@ -388,27 +388,32 @@ pub fn start_audio_if_needed(
     let media = media.clone();
     let flag = audio_flag.clone();
     rt_handle.spawn(async move {
-        let mut aud = audio.lock().await;
         let mut audio_ok = true;
 
-        if let Err(e) = aud.start_capture(input_device.as_deref()) {
-            log::error!("Failed to start capture: {e}");
-            audio_ok = false;
-            if let Some(ref ww) = window_weak {
-                if let Some(w) = ww.upgrade() {
-                    w.set_room_status("Mic error — check audio settings".into());
+        // Scope the audio lock so it's released before media.start(),
+        // which also needs to lock audio to set the encoded-frame callback.
+        {
+            let mut aud = audio.lock().await;
+            if let Err(e) = aud.start_capture(input_device.as_deref()) {
+                log::error!("Failed to start capture: {e}");
+                audio_ok = false;
+                if let Some(ref ww) = window_weak {
+                    if let Some(w) = ww.upgrade() {
+                        w.set_room_status("Mic error — check audio settings".into());
+                    }
+                }
+            }
+            if let Err(e) = aud.start_playback(output_device.as_deref()) {
+                log::error!("Failed to start playback: {e}");
+                audio_ok = false;
+                if let Some(ref ww) = window_weak {
+                    if let Some(w) = ww.upgrade() {
+                        w.set_room_status("Speaker error — check audio settings".into());
+                    }
                 }
             }
         }
-        if let Err(e) = aud.start_playback(output_device.as_deref()) {
-            log::error!("Failed to start playback: {e}");
-            audio_ok = false;
-            if let Some(ref ww) = window_weak {
-                if let Some(w) = ww.upgrade() {
-                    w.set_room_status("Speaker error — check audio settings".into());
-                }
-            }
-        }
+        // Now audio lock is released — media.start() can safely acquire it
         let m = media.lock().await;
         if let Err(e) = m.start().await {
             log::error!("Failed to start media session: {e}");
