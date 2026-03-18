@@ -9,8 +9,12 @@ use shared_types::SAMPLE_RATE;
 
 /// Duration of the feedback beep in milliseconds.
 const TONE_MS: u32 = 80;
+/// Duration of the speaker preview tone in milliseconds (longer so user can clearly hear it).
+const PREVIEW_TONE_MS: u32 = 300;
 /// Volume of the feedback beep (0.0–1.0).
 const TONE_VOLUME: f32 = 0.25;
+/// Volume of the speaker preview tone (louder for clear audibility).
+const PREVIEW_VOLUME: f32 = 0.45;
 /// Fade envelope length in samples (~2ms)
 const FADE_SAMPLES: usize = 96;
 
@@ -51,10 +55,12 @@ fn generate_tone(freq: f32) -> Vec<f32> {
     buf
 }
 
+const PREVIEW_SAMPLES: usize = (SAMPLE_RATE * PREVIEW_TONE_MS / 1000) as usize;
+
 fn generate_preview_tone() -> Vec<f32> {
-    let mut buf = vec![0.0f32; TONE_SAMPLES];
+    let mut buf = vec![0.0f32; PREVIEW_SAMPLES];
     let tau = std::f32::consts::TAU;
-    let split = TONE_SAMPLES / 2;
+    let split = PREVIEW_SAMPLES / 2;
     for (i, sample) in buf.iter_mut().enumerate() {
         let t = i as f32 / SAMPLE_RATE as f32;
         let freq = if i < split {
@@ -64,12 +70,12 @@ fn generate_preview_tone() -> Vec<f32> {
         };
         let envelope = if i < FADE_SAMPLES {
             i as f32 / FADE_SAMPLES as f32
-        } else if i > TONE_SAMPLES - FADE_SAMPLES {
-            (TONE_SAMPLES - i) as f32 / FADE_SAMPLES as f32
+        } else if i > PREVIEW_SAMPLES - FADE_SAMPLES {
+            (PREVIEW_SAMPLES - i) as f32 / FADE_SAMPLES as f32
         } else {
             1.0
         };
-        *sample = (tau * freq * t).sin() * TONE_VOLUME * envelope;
+        *sample = (tau * freq * t).sin() * PREVIEW_VOLUME * envelope;
     }
     buf
 }
@@ -161,10 +167,11 @@ mod tests {
     #[test]
     fn tone_generation_all_actions() {
         let tone = FeedbackTone::new();
+        let expected_lens = [TONE_SAMPLES, TONE_SAMPLES, TONE_SAMPLES, TONE_SAMPLES, PREVIEW_SAMPLES];
         for (i, t) in tone.tones.iter().enumerate() {
-            assert_eq!(t.len(), TONE_SAMPLES, "Tone {i} wrong length");
+            assert_eq!(t.len(), expected_lens[i], "Tone {i} wrong length");
             // Verify non-silent in middle region (single sample may hit a zero crossing)
-            let mid = TONE_SAMPLES / 2;
+            let mid = t.len() / 2;
             let peak = t[mid.saturating_sub(25)..=(mid + 25).min(t.len() - 1)]
                 .iter()
                 .map(|s| s.abs())
@@ -172,7 +179,7 @@ mod tests {
             assert!(peak > 0.01, "Tone {i} silent in middle region");
             // Verify fade-in/out
             assert!(t[0].abs() < 0.01, "Tone {i} no fade-in");
-            assert!(t[TONE_SAMPLES - 1].abs() < 0.01, "Tone {i} no fade-out");
+            assert!(t[t.len() - 1].abs() < 0.01, "Tone {i} no fade-out");
         }
     }
 

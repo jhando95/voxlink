@@ -296,7 +296,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app_desktop"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "audio_core",
  "config_store",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "audio_core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "audiopus",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "config_store"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "directories",
  "log",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "integration_tests"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "futures-util",
  "serde_json",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "media_transport"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "audio_core",
@@ -3298,7 +3298,7 @@ dependencies = [
 
 [[package]]
 name = "net_control"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -4060,7 +4060,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf_metrics"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "shared_types",
  "sysinfo",
@@ -4996,7 +4996,7 @@ dependencies = [
 
 [[package]]
 name = "shared_types"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -5020,7 +5020,7 @@ dependencies = [
 
 [[package]]
 name = "signaling_server"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "env_logger",
  "futures-util",
@@ -5871,7 +5871,7 @@ dependencies = [
 
 [[package]]
 name = "ui_shell"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "log",
  "shared_types",
@@ -6091,7 +6091,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voice_engine"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "log",
  "shared_types",

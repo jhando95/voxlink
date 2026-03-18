@@ -198,10 +198,14 @@ pub fn setup_toggle_mic_preview(
             let mut aud = audio.lock().await;
             if is_active {
                 aud.stop_capture();
-                if let Some(w) = window_weak.upgrade() {
-                    w.set_mic_preview_active(false);
-                    w.set_mic_level(0.0);
-                }
+                log::info!("Mic preview stopped");
+                let ww = window_weak.clone();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(w) = ww.upgrade() {
+                        w.set_mic_preview_active(false);
+                        w.set_mic_level(0.0);
+                    }
+                }).ok();
                 return;
             }
 
@@ -209,19 +213,44 @@ pub fn setup_toggle_mic_preview(
                 .list_input_devices()
                 .get(selected_input)
                 .map(|device| device.name.clone());
+            log::info!("Starting mic preview on: {:?}", device_name.as_deref().unwrap_or("default"));
             match aud.start_capture(device_name.as_deref()) {
                 Ok(()) => {
-                    if let Some(w) = window_weak.upgrade() {
-                        w.set_mic_preview_active(true);
-                    }
+                    log::info!("Mic preview started successfully");
+                    let ww = window_weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(w) = ww.upgrade() {
+                            w.set_mic_preview_active(true);
+                        }
+                    }).ok();
                 }
                 Err(e) => {
                     log::error!("Failed to start mic preview: {e}");
-                    if let Some(w) = window_weak.upgrade() {
-                        w.set_mic_preview_active(false);
-                        w.set_mic_level(0.0);
-                        w.set_status_text("Mic check could not start".into());
+                    // Try default device as fallback
+                    if device_name.is_some() {
+                        log::info!("Trying default input device as fallback...");
+                        match aud.start_capture(None) {
+                            Ok(()) => {
+                                log::info!("Mic preview started on default device");
+                                let ww = window_weak.clone();
+                                slint::invoke_from_event_loop(move || {
+                                    if let Some(w) = ww.upgrade() {
+                                        w.set_mic_preview_active(true);
+                                    }
+                                }).ok();
+                                return;
+                            }
+                            Err(e2) => log::error!("Default input device also failed: {e2}"),
+                        }
                     }
+                    let ww = window_weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(w) = ww.upgrade() {
+                            w.set_mic_preview_active(false);
+                            w.set_mic_level(0.0);
+                            w.set_status_text("Mic check could not start".into());
+                        }
+                    }).ok();
                 }
             }
         });
@@ -253,57 +282,76 @@ pub fn setup_play_speaker_test(
         let audio = audio.clone();
         let window_weak = window_weak.clone();
         rt_handle.spawn(async move {
-            let ww_timeout = window_weak.clone();
-            // Timeout the entire speaker test to prevent getting stuck
-            let result = tokio::time::timeout(Duration::from_secs(3), async {
-                let mut aud = audio.lock().await;
-                let device_name = aud
-                    .list_output_devices()
-                    .get(selected_output)
-                    .map(|device| device.name.clone());
+            // Helper to reset state via event loop (guaranteed to work from any thread)
+            let reset = {
+                let ww = window_weak.clone();
+                move |msg: Option<&str>| {
+                    let ww = ww.clone();
+                    let msg = msg.map(|s| s.to_string());
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(w) = ww.upgrade() {
+                            w.set_speaker_test_active(false);
+                            if let Some(m) = msg {
+                                w.set_status_text(m.into());
+                            }
+                        }
+                    }).ok();
+                }
+            };
 
-                if device_name.is_none() {
-                    if let Some(w) = window_weak.upgrade() {
-                        w.set_speaker_test_active(false);
-                        w.set_status_text("No speaker route available".into());
-                    }
+            // Try to acquire audio lock with timeout — don't wait forever
+            let lock_result = tokio::time::timeout(
+                Duration::from_secs(2),
+                audio.lock(),
+            ).await;
+
+            let mut aud = match lock_result {
+                Ok(guard) => guard,
+                Err(_) => {
+                    log::error!("Speaker test: audio lock timeout");
+                    reset(Some("Audio busy — try again"));
                     return;
                 }
+            };
 
-                log::info!("Speaker test on: {:?}", device_name);
+            let device_name = aud
+                .list_output_devices()
+                .get(selected_output)
+                .map(|device| device.name.clone());
 
-                let preview_playback = !in_live_call;
-                if preview_playback {
-                    if let Err(e) = aud.start_playback(device_name.as_deref()) {
-                        log::error!("Failed to start speaker test playback: {e}");
-                        if let Some(w) = window_weak.upgrade() {
-                            w.set_speaker_test_active(false);
-                            w.set_status_text("Speaker test could not start".into());
-                        }
-                        return;
-                    }
+            if device_name.is_none() {
+                reset(Some("No speaker route available"));
+                return;
+            }
+
+            log::info!("Speaker test on: {:?}", device_name);
+
+            let preview_playback = !in_live_call;
+            if preview_playback {
+                if let Err(e) = aud.start_playback(device_name.as_deref()) {
+                    log::error!("Failed to start speaker test playback: {e}");
+                    reset(Some("Speaker test could not start"));
+                    return;
                 }
-
+                // Give the output device time to initialize before triggering the tone
+                drop(aud);
+                sleep(Duration::from_millis(50)).await;
+                let aud = audio.lock().await;
                 aud.play_output_preview();
                 drop(aud);
-
-                sleep(Duration::from_millis(320)).await;
-
-                if preview_playback {
-                    audio.lock().await.stop_playback();
-                }
-                if let Some(w) = window_weak.upgrade() {
-                    w.set_speaker_test_active(false);
-                }
-            }).await;
-
-            if result.is_err() {
-                log::error!("Speaker test timed out — resetting state");
-                if let Some(w) = ww_timeout.upgrade() {
-                    w.set_speaker_test_active(false);
-                    w.set_status_text("Speaker test timed out".into());
-                }
+            } else {
+                aud.play_output_preview();
+                drop(aud);
             }
+
+            // Wait for tone to finish playing (300ms preview tone + buffer latency)
+            sleep(Duration::from_millis(600)).await;
+
+            if preview_playback {
+                audio.lock().await.stop_playback();
+            }
+            reset(None);
+            log::info!("Speaker test complete");
         });
     });
 }
