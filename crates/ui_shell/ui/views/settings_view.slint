@@ -99,6 +99,9 @@ export component SettingsView inherits Rectangle {
     in-out property <float> noise-suppression: 0.5;
     in property <bool> feedback-sound: true;
     in property <bool> notifications-enabled: true;
+    in property <bool> minimize-to-tray: true;
+    in property <bool> neural-noise-suppression: false;
+    in property <bool> echo-cancellation: false;
     in-out property <string> listening-keybind: "";
     in property <string> ptt-key-display: "";
     in property <string> mute-key-display: "";
@@ -115,6 +118,9 @@ export component SettingsView inherits Rectangle {
     callback noise-suppression-changed(float);
     callback toggle-feedback-sound();
     callback toggle-notifications();
+    callback toggle-minimize-to-tray();
+    callback toggle-neural-noise-suppression();
+    callback toggle-echo-cancellation();
     callback clear-keybind(string);
 
     background: transparent;
@@ -463,6 +469,54 @@ export component SettingsView inherits Rectangle {
                                     font-weight: 700;
                                 }
                             }
+
+                            Divider {}
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "AI noise suppression";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Neural network removes background noise";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                }
+                                VxToggle {
+                                    checked: root.neural-noise-suppression;
+                                    toggled => { root.toggle-neural-noise-suppression(); }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Echo cancellation";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Reduces speaker audio picked up by your mic";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
+                                }
+                                VxToggle {
+                                    checked: root.echo-cancellation;
+                                    toggled => { root.toggle-echo-cancellation(); }
+                                }
+                            }
                         }
                     }
                 }
@@ -662,6 +716,20 @@ export component SettingsView inherits Rectangle {
                                 VxToggle {
                                     checked: root.notifications-enabled;
                                     toggled => { root.toggle-notifications(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Minimize to system tray on close";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.minimize-to-tray;
+                                    toggled => { root.toggle-minimize-to-tray(); }
                                 }
                             }
                         }

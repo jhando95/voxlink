@@ -1,4 +1,5 @@
 use shared_types::FRAME_SIZE;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 // ─── Capture ring buffer ───
 // Zero-allocation input accumulator. Replaces Vec + drain() which is O(n).
@@ -57,9 +58,116 @@ impl CaptureRing {
     }
 }
 
-// ─── Playback ring buffer ───
-// Fixed-size ring for per-peer output mixing. Zero-allocation mix_into().
+// ─── SPSC Ring Buffer (lock-free) ───
+// Single-producer single-consumer ring buffer using atomic cursors.
+// Producer (decode thread) calls push(), consumer (playback callback) calls mix_into().
+// Zero lock contention on the audio hot path.
 
+pub(crate) struct SpscRingBuf {
+    data: Box<[f32]>,
+    cap: usize,
+    /// Write cursor — only modified by producer, read by consumer
+    write: AtomicUsize,
+    /// Read cursor — only modified by consumer, read by producer
+    read: AtomicUsize,
+}
+
+impl SpscRingBuf {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            data: vec![0.0; capacity].into_boxed_slice(),
+            cap: capacity,
+            write: AtomicUsize::new(0),
+            read: AtomicUsize::new(0),
+        }
+    }
+
+    /// Number of samples available for reading.
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        let w = self.write.load(Ordering::Acquire);
+        let r = self.read.load(Ordering::Acquire);
+        (w + self.cap - r) % self.cap
+    }
+
+    /// Push a single sample. If the ring is full, the sample is dropped (bounded latency).
+    /// Called from the decode/producer side only.
+    #[inline]
+    pub fn push(&self, sample: f32) {
+        let w = self.write.load(Ordering::Relaxed);
+        let r = self.read.load(Ordering::Acquire);
+        let next_w = (w + 1) % self.cap;
+        if next_w == r {
+            // Ring full — drop sample to bound latency
+            return;
+        }
+        // Safety: only the producer writes to data[w], and consumer never reads past read cursor.
+        // We use UnsafeCell-free approach: the data slot at `w` is not being read by consumer
+        // because consumer's read cursor hasn't reached it yet (next_w != r check above).
+        let ptr = self.data.as_ptr() as *mut f32;
+        unsafe {
+            *ptr.add(w) = sample;
+        }
+        self.write.store(next_w, Ordering::Release);
+    }
+
+    /// Push a slice of samples. Drops any samples that don't fit.
+    #[inline]
+    pub fn push_slice(&self, samples: &[f32]) {
+        for &s in samples {
+            self.push(s);
+        }
+    }
+
+    /// Mix available samples into `dest` with volume scaling. Zero-allocation.
+    /// Called from the playback/consumer side only.
+    /// Returns how many samples were consumed.
+    #[inline]
+    pub fn mix_into(&self, dest: &mut [f32], volume: f32) -> usize {
+        let w = self.write.load(Ordering::Acquire);
+        let r = self.read.load(Ordering::Relaxed);
+        let available = (w + self.cap - r) % self.cap;
+        let count = dest.len().min(available);
+        if count == 0 {
+            return 0;
+        }
+
+        let cap = self.cap;
+        let first = cap - r;
+
+        if count <= first {
+            for i in 0..count {
+                dest[i] += self.data[(r + i) % cap] * volume;
+            }
+        } else {
+            for i in 0..first {
+                dest[i] += self.data[r + i] * volume;
+            }
+            let remaining = count - first;
+            for i in 0..remaining {
+                dest[first + i] += self.data[i] * volume;
+            }
+        }
+
+        self.read.store((r + count) % cap, Ordering::Release);
+        count
+    }
+
+    /// Discard all buffered samples.
+    pub fn clear(&self) {
+        let w = self.write.load(Ordering::Relaxed);
+        self.read.store(w, Ordering::Release);
+    }
+}
+
+// Safety: SpscRingBuf is designed for cross-thread use (producer + consumer).
+// The atomic cursors ensure proper synchronization.
+unsafe impl Send for SpscRingBuf {}
+unsafe impl Sync for SpscRingBuf {}
+
+// ─── Playback ring buffer (legacy, used in tests) ───
+
+#[cfg(test)]
 pub(crate) struct RingBuf {
     data: Vec<f32>,
     read: usize,
@@ -67,6 +175,7 @@ pub(crate) struct RingBuf {
     pub len: usize,
 }
 
+#[cfg(test)]
 impl RingBuf {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
@@ -119,84 +228,125 @@ impl RingBuf {
         count
     }
 
-    pub fn clear(&mut self) {
-        self.read = 0;
-        self.write = 0;
-        self.len = 0;
-    }
 }
 
-// ─── Per-peer mixing state with adaptive jitter buffer ───
+// ─── Per-peer playback state (lock-free) ───
 //
-// Self-tuning playout delay per peer.
-// Instead of a fixed buffer depth, each peer's playback adapts:
-//   - Starts with 40ms buffer (2 frames)
-//   - On underrun: increases target depth (+20ms), re-primes
-//   - After 10s stable: decreases target depth (-20ms)
+// Wraps an SPSC ring buffer with per-peer volume, AGC, and jitter adaptation.
+// The playback callback holds `Arc<PeerPlaybackShared>` directly — no mutex needed.
 
+use std::sync::Arc;
 use super::{
     JITTER_INITIAL, JITTER_MAX_FRAMES, JITTER_MIN_FRAMES, JITTER_STABLE_THRESHOLD,
     MAX_PEER_BUFFER_SAMPLES,
 };
 use super::codec::PlaybackAgc;
 
+pub(crate) struct PeerPlaybackShared {
+    pub ring: SpscRingBuf,
+    /// Per-peer volume (0.0–1.0 stored as 0–1000). Atomic for lock-free access.
+    pub volume: AtomicU32,
+    /// Whether this peer has been primed (enough data buffered to start playout)
+    pub primed: std::sync::atomic::AtomicBool,
+    /// Jitter target frames — atomic so playback callback can read
+    pub target_frames: AtomicU32,
+    /// Underrun counter — incremented by playback callback, read by decode side for adaptation
+    pub underrun_count: AtomicU32,
+    /// Callback count — incremented by playback callback to track activity
+    pub callback_count: AtomicU32,
+}
+
+impl PeerPlaybackShared {
+    pub fn new() -> Self {
+        Self {
+            ring: SpscRingBuf::new(MAX_PEER_BUFFER_SAMPLES),
+            volume: AtomicU32::new(1000), // 1.0
+            primed: std::sync::atomic::AtomicBool::new(false),
+            target_frames: AtomicU32::new(JITTER_INITIAL as u32),
+            underrun_count: AtomicU32::new(0),
+            callback_count: AtomicU32::new(0),
+        }
+    }
+
+    /// Check if peer has enough buffered data to start playout.
+    #[inline]
+    pub fn is_ready(&self) -> bool {
+        self.primed.load(Ordering::Relaxed)
+            || self.ring.len() >= (self.target_frames.load(Ordering::Relaxed) as usize * FRAME_SIZE)
+    }
+
+    /// Get volume as f32
+    #[inline]
+    pub fn volume_f32(&self) -> f32 {
+        self.volume.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+}
+
+/// Per-peer decode-side state (held under the peer_buffers Mutex, NOT on the playback path).
 pub(crate) struct PeerPlayback {
-    pub buffer: RingBuf,
-    pub volume: f32,
-    pub primed: bool,
+    pub shared: Arc<PeerPlaybackShared>,
     pub playback_agc: PlaybackAgc,
-    target_frames: u16,
-    underrun_ticks: u16,
-    stable_ticks: u16,
+    // Jitter adaptation state (only accessed from decode side)
+    last_underrun_count: u32,
+    last_callback_count: u32,
+    consecutive_underrun_checks: u16,
+    stable_checks: u16,
+    /// Exponential expansion threshold: starts at 3, doubles each expansion
+    expansion_threshold: u16,
 }
 
 impl PeerPlayback {
     pub fn new() -> Self {
         Self {
-            buffer: RingBuf::with_capacity(MAX_PEER_BUFFER_SAMPLES),
-            volume: 1.0,
-            primed: false,
+            shared: Arc::new(PeerPlaybackShared::new()),
             playback_agc: PlaybackAgc::new(),
-            target_frames: JITTER_INITIAL,
-            underrun_ticks: 0,
-            stable_ticks: 0,
+            last_underrun_count: 0,
+            last_callback_count: 0,
+            consecutive_underrun_checks: 0,
+            stable_checks: 0,
+            expansion_threshold: 3, // First expansion at 3 underruns, then 6, 12, ...
         }
     }
 
-    /// Called after each output callback to adapt playout depth.
-    #[inline]
-    pub fn adapt(&mut self, consumed: usize, requested: usize) {
-        if consumed < requested {
-            self.underrun_ticks += 1;
-            self.stable_ticks = 0;
-            if self.underrun_ticks >= 3 && self.target_frames < JITTER_MAX_FRAMES {
-                self.target_frames += 1;
-                self.primed = false;
-                self.underrun_ticks = 0;
-                log::debug!(
-                    "Jitter buffer expanded to {}ms",
-                    self.target_frames as u32 * 20
-                );
+    /// Check underrun/stable counters from the playback callback and adapt jitter depth.
+    /// Called periodically from the decode side (e.g. on each decoded frame).
+    pub fn adapt_from_atomics(&mut self) {
+        let underruns = self.shared.underrun_count.load(Ordering::Relaxed);
+        let callbacks = self.shared.callback_count.load(Ordering::Relaxed);
+        let new_underruns = underruns.wrapping_sub(self.last_underrun_count);
+        let new_callbacks = callbacks.wrapping_sub(self.last_callback_count);
+        self.last_underrun_count = underruns;
+        self.last_callback_count = callbacks;
+
+        if new_callbacks == 0 {
+            return; // No activity since last check
+        }
+
+        let target = self.shared.target_frames.load(Ordering::Relaxed) as u16;
+
+        if new_underruns > 0 {
+            self.consecutive_underrun_checks += 1;
+            self.stable_checks = 0;
+            // Exponential expansion trigger: first at 3 underruns, then 6, 12, ...
+            // Prevents rapid expansion from transient network bursts.
+            if self.consecutive_underrun_checks >= self.expansion_threshold && target < JITTER_MAX_FRAMES {
+                let new_target = target + 1;
+                self.shared.target_frames.store(new_target as u32, Ordering::Relaxed);
+                self.shared.primed.store(false, Ordering::Relaxed);
+                self.consecutive_underrun_checks = 0;
+                self.expansion_threshold = (self.expansion_threshold * 2).min(24); // cap at 24
+                log::debug!("Jitter buffer expanded to {}ms (next threshold: {})", new_target as u32 * 20, self.expansion_threshold);
             }
         } else {
-            self.underrun_ticks = 0;
-            self.stable_ticks += 1;
-            if self.stable_ticks > JITTER_STABLE_THRESHOLD && self.target_frames > JITTER_MIN_FRAMES
-            {
-                self.target_frames -= 1;
-                self.stable_ticks = 0;
-                log::debug!(
-                    "Jitter buffer reduced to {}ms",
-                    self.target_frames as u32 * 20
-                );
+            self.consecutive_underrun_checks = 0;
+            self.stable_checks += 1;
+            if self.stable_checks > JITTER_STABLE_THRESHOLD && target > JITTER_MIN_FRAMES {
+                let new_target = target - 1;
+                self.shared.target_frames.store(new_target as u32, Ordering::Relaxed);
+                self.stable_checks = 0;
+                log::debug!("Jitter buffer reduced to {}ms", new_target as u32 * 20);
             }
         }
-    }
-
-    /// Returns true if this peer has enough buffered data to start playout.
-    #[inline]
-    pub fn is_ready(&self) -> bool {
-        self.primed || self.buffer.len >= (self.target_frames as usize * FRAME_SIZE)
     }
 }
 
@@ -280,6 +430,91 @@ mod tests {
     }
 
     #[test]
+    fn spsc_ring_push_and_mix() {
+        let ring = SpscRingBuf::new(1024);
+        for i in 0..100 {
+            ring.push(i as f32);
+        }
+        assert_eq!(ring.len(), 100);
+
+        let mut dest = [0.0f32; 50];
+        let consumed = ring.mix_into(&mut dest, 1.0);
+        assert_eq!(consumed, 50);
+        assert_eq!(ring.len(), 50);
+        assert_eq!(dest[0], 0.0);
+        assert_eq!(dest[49], 49.0);
+    }
+
+    #[test]
+    fn spsc_ring_full_drops_samples() {
+        let ring = SpscRingBuf::new(11); // capacity 11, usable 10 (SPSC needs 1 slot gap)
+        for i in 0..20 {
+            ring.push(i as f32);
+        }
+        // Should hold 10 samples (capacity - 1 for SPSC gap)
+        assert_eq!(ring.len(), 10);
+
+        let mut dest = [0.0f32; 10];
+        let consumed = ring.mix_into(&mut dest, 1.0);
+        assert_eq!(consumed, 10);
+        // First 10 samples should be 0..10, extras were dropped
+        assert_eq!(dest[0], 0.0);
+        assert_eq!(dest[9], 9.0);
+    }
+
+    #[test]
+    fn spsc_ring_clear() {
+        let ring = SpscRingBuf::new(1024);
+        for i in 0..100 {
+            ring.push(i as f32);
+        }
+        assert_eq!(ring.len(), 100);
+        ring.clear();
+        assert_eq!(ring.len(), 0);
+    }
+
+    #[test]
+    fn spsc_ring_concurrent_push_read() {
+        use std::sync::Arc;
+
+        let ring = Arc::new(SpscRingBuf::new(4096));
+        let ring_producer = ring.clone();
+        let ring_consumer = ring.clone();
+
+        // Producer: push 10000 samples
+        let producer = std::thread::spawn(move || {
+            for i in 0..10000u32 {
+                ring_producer.push(i as f32);
+                // Occasional yield to interleave with consumer
+                if i % 100 == 0 {
+                    std::thread::yield_now();
+                }
+            }
+        });
+
+        // Consumer: read all samples
+        let consumer = std::thread::spawn(move || {
+            let mut total_consumed = 0usize;
+            let mut buf = [0.0f32; 64];
+            loop {
+                let n = ring_consumer.mix_into(&mut buf, 1.0);
+                total_consumed += n;
+                if total_consumed >= 10000 {
+                    break;
+                }
+                if n == 0 {
+                    std::thread::yield_now();
+                }
+            }
+            total_consumed
+        });
+
+        producer.join().unwrap();
+        let total = consumer.join().unwrap();
+        assert_eq!(total, 10000);
+    }
+
+    #[test]
     fn ring_buf_mix_into() {
         let mut ring = RingBuf::with_capacity(1024);
         for i in 0..100 {
@@ -314,18 +549,48 @@ mod tests {
     #[test]
     fn peer_playback_jitter_adaptation() {
         let mut peer = PeerPlayback::new();
-        assert_eq!(peer.target_frames, JITTER_INITIAL);
+        assert_eq!(
+            peer.shared.target_frames.load(Ordering::Relaxed),
+            JITTER_INITIAL as u32
+        );
 
-        // Simulate 3 consecutive underruns → should expand
-        peer.adapt(0, FRAME_SIZE);
-        peer.adapt(0, FRAME_SIZE);
-        peer.adapt(0, FRAME_SIZE);
-        assert_eq!(peer.target_frames, JITTER_INITIAL + 1);
-
-        // Simulate stable operation for JITTER_STABLE_THRESHOLD + 1 ticks → should contract
-        for _ in 0..=JITTER_STABLE_THRESHOLD {
-            peer.adapt(FRAME_SIZE, FRAME_SIZE);
+        // Simulate 3 consecutive underrun checks via atomic counters
+        // Each adapt_from_atomics() reads the delta from last check
+        for i in 0..3u32 {
+            // Simulate playback callback reporting underruns
+            peer.shared.underrun_count.store(i + 1, Ordering::Relaxed);
+            peer.shared.callback_count.store(i + 1, Ordering::Relaxed);
+            peer.adapt_from_atomics();
         }
-        assert_eq!(peer.target_frames, JITTER_INITIAL);
+        assert_eq!(
+            peer.shared.target_frames.load(Ordering::Relaxed),
+            JITTER_INITIAL as u32 + 1
+        );
+
+        // Simulate stable operation for JITTER_STABLE_THRESHOLD + 1 checks
+        let base_cb = peer.shared.callback_count.load(Ordering::Relaxed);
+        let base_ur = peer.shared.underrun_count.load(Ordering::Relaxed);
+        for i in 0..=JITTER_STABLE_THRESHOLD {
+            // Callbacks increment but underruns stay the same (stable)
+            peer.shared
+                .callback_count
+                .store(base_cb + i as u32 + 1, Ordering::Relaxed);
+            peer.shared
+                .underrun_count
+                .store(base_ur, Ordering::Relaxed);
+            peer.adapt_from_atomics();
+        }
+        assert_eq!(
+            peer.shared.target_frames.load(Ordering::Relaxed),
+            JITTER_INITIAL as u32
+        );
+    }
+
+    #[test]
+    fn peer_playback_shared_volume() {
+        let shared = PeerPlaybackShared::new();
+        assert!((shared.volume_f32() - 1.0).abs() < 0.01);
+        shared.volume.store(500, Ordering::Relaxed);
+        assert!((shared.volume_f32() - 0.5).abs() < 0.01);
     }
 }

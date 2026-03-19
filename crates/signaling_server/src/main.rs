@@ -7,7 +7,7 @@ use rand::RngCore;
 use shared_types::SignalMessage;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -37,6 +37,9 @@ fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
 }
+
+/// UDP relay port, set at startup. 0 = disabled.
+static UDP_PORT: AtomicU16 = AtomicU16::new(0);
 
 static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
     max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
@@ -127,14 +130,22 @@ struct Peer {
     watched_friend_ids: Mutex<HashSet<String>>,
     /// Peer's remote IP address (for brute-force rate limiting)
     ip: IpAddr,
-    // Rate limiting
+    /// UDP address for audio relay (set when client completes UDP handshake)
+    udp_addr: Mutex<Option<SocketAddr>>,
+    /// Priority speaker flag — when active, other peers are ducked
+    is_priority_speaker: AtomicBool,
+    /// Whisper target peer IDs (empty = normal broadcast)
+    whisper_targets: Mutex<Vec<String>>,
+    /// Timeout expiry (unix epoch seconds, 0 = no timeout)
+    timeout_until: AtomicU64,
+    // Rate limiting — atomic timestamps avoid lock contention on audio hot path
     msg_count: AtomicU32,
-    rate_window: Mutex<Instant>,
+    rate_window_ms: AtomicU64,
     // Audio frame rate limiting (#5)
     audio_frame_count: AtomicU32,
-    audio_rate_window: Mutex<Instant>,
+    audio_rate_window_ms: AtomicU64,
     screen_frame_count: AtomicU32,
-    screen_rate_window: Mutex<Instant>,
+    screen_rate_window_ms: AtomicU64,
 }
 
 impl Peer {
@@ -190,6 +201,8 @@ struct Space {
     /// Text messages per channel_id, capped at LIMITS.max_channel_messages.
     text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>>,
     audit_log: VecDeque<shared_types::SpaceAuditEntry>,
+    /// Slow mode: (channel_id, peer_id) -> last message epoch seconds
+    slow_mode_timestamps: HashMap<(String, String), u64>,
     created_at: Instant,
 }
 
@@ -200,6 +213,10 @@ struct ChannelMeta {
     channel_type: shared_types::ChannelType,
     topic: String,
     voice_quality: u8, // 0=Low, 1=Standard, 2=High, 3=Ultra
+    user_limit: u32,
+    category: String,
+    status: String,
+    slow_mode_secs: u32,
 }
 
 struct ServerState {
@@ -216,6 +233,8 @@ struct ServerState {
     connections_per_ip: HashMap<IpAddr, u32>,
     /// Rate limit for failed JoinSpace attempts per IP: (failure_count, window_start)
     join_failures: HashMap<IpAddr, (u32, Instant)>,
+    /// UDP session tokens: token_bytes -> peer_id. Tokens are 8 random bytes.
+    udp_sessions: HashMap<[u8; 8], String>,
 }
 
 impl ServerState {
@@ -232,6 +251,7 @@ impl ServerState {
             next_audit_id: 1,
             connections_per_ip: HashMap::new(),
             join_failures: HashMap::new(),
+            udp_sessions: HashMap::new(),
         }
     }
 
@@ -499,7 +519,13 @@ async fn main() {
         }
     }
 
-    let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            log::error!("Failed to bind to {addr}: {e}. Is another server already running on this port?");
+            std::process::exit(1);
+        }
+    };
 
     let proto = if tls_acceptor.is_some() { "wss" } else { "ws" };
     log::info!("Signaling server listening on {proto}://{addr}");
@@ -544,6 +570,10 @@ async fn main() {
                         channel_type: ct,
                         topic: cr.topic.clone().unwrap_or_default(),
                         voice_quality: cr.voice_quality.unwrap_or(2),
+                        user_limit: 0,
+                        category: String::new(),
+                        status: String::new(),
+                        slow_mode_secs: 0,
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -624,6 +654,7 @@ async fn main() {
                         member_roles,
                         text_messages,
                         audit_log,
+                        slow_mode_timestamps: HashMap::new(),
                         created_at: Instant::now(),
                     },
                 );
@@ -649,6 +680,33 @@ async fn main() {
     // Start LAN discovery beacon
     let discover_addr = format!("{proto}://{addr}");
     tokio::spawn(run_discovery(discover_addr));
+
+    // Start UDP audio relay (port = WS port + 1, or PV_UDP_PORT env var)
+    {
+        let ws_port: u16 = addr
+            .split(':')
+            .last()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9090);
+        let udp_port: u16 = env_or("PV_UDP_PORT", ws_port + 1);
+        let udp_addr_str = format!("0.0.0.0:{udp_port}");
+        match UdpSocket::bind(&udp_addr_str).await {
+            Ok(socket) => {
+                UDP_PORT.store(udp_port, Ordering::Relaxed);
+                log::info!("UDP audio relay listening on {udp_addr_str}");
+                let udp_socket = Arc::new(socket);
+                tokio::spawn(run_udp_relay(
+                    state.clone(),
+                    metrics.clone(),
+                    udp_socket,
+                ));
+            }
+            Err(e) => {
+                log::warn!("UDP audio relay unavailable (failed to bind {udp_addr_str}): {e}");
+                // Server still works — all audio goes through WebSocket
+            }
+        }
+    }
 
     if let Ok(metrics_addr) = std::env::var("PV_METRICS_ADDR") {
         if !metrics_addr.trim().is_empty() {
@@ -868,12 +926,16 @@ async fn handle_connection(
                 typing_dm_user_id: Mutex::new(None),
                 watched_friend_ids: Mutex::new(HashSet::new()),
                 ip: addr.ip(),
+                udp_addr: Mutex::new(None),
+                is_priority_speaker: AtomicBool::new(false),
+                whisper_targets: Mutex::new(Vec::new()),
+                timeout_until: AtomicU64::new(0),
                 msg_count: AtomicU32::new(0),
-                rate_window: Mutex::new(Instant::now()),
+                rate_window_ms: AtomicU64::new(instant_to_ms()),
                 audio_frame_count: AtomicU32::new(0),
-                audio_rate_window: Mutex::new(Instant::now()),
+                audio_rate_window_ms: AtomicU64::new(instant_to_ms()),
                 screen_frame_count: AtomicU32::new(0),
-                screen_rate_window: Mutex::new(Instant::now()),
+                screen_rate_window_ms: AtomicU64::new(instant_to_ms()),
             }),
         );
         id
@@ -959,12 +1021,41 @@ async fn handle_connection(
         }
     };
     handle_disconnect(&state, &peer_id).await;
-    state.write().await.peers.remove(&peer_id);
+    {
+        let mut s = state.write().await;
+        s.peers.remove(&peer_id);
+        // Clean up any UDP session token for this peer
+        s.udp_sessions.retain(|_, pid| pid != &peer_id);
+    }
     if let Some(user_id) = disconnected_user_id {
         handlers::presence::notify_watchers_for_user(&state, &user_id).await;
     }
     metrics.active_connections.fetch_sub(1, Ordering::Relaxed);
     log::info!("Peer {peer_id} disconnected");
+}
+
+/// Monotonic millisecond timestamp for lock-free rate limiting.
+fn instant_to_ms() -> u64 {
+    // Using system uptime-style monotonic clock avoids Instant → u64 issues.
+    // We only need relative 1-second windows, so wrapping after ~584 million years is fine.
+    static EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+    EPOCH.elapsed().as_millis() as u64
+}
+
+/// Lock-free rate limit check using atomic timestamp + counter.
+fn atomic_rate_check(window_ms: &AtomicU64, counter: &AtomicU32, limit: u32) -> bool {
+    let now = instant_to_ms();
+    let prev = window_ms.load(Ordering::Relaxed);
+    if now.wrapping_sub(prev) >= 1000 {
+        // New window — reset counter. CAS to avoid races resetting twice.
+        if window_ms.compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            counter.store(1, Ordering::Relaxed);
+        }
+        true
+    } else {
+        let count = counter.fetch_add(1, Ordering::Relaxed);
+        count < limit
+    }
 }
 
 async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
@@ -975,16 +1066,7 @@ async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
     };
     drop(s);
 
-    let now = Instant::now();
-    let mut window = peer.rate_window.lock().await;
-    if now.duration_since(*window).as_secs() >= 1 {
-        *window = now;
-        peer.msg_count.store(1, Ordering::Relaxed);
-        true
-    } else {
-        let count = peer.msg_count.fetch_add(1, Ordering::Relaxed);
-        count < LIMITS.rate_limit_per_sec
-    }
+    atomic_rate_check(&peer.rate_window_ms, &peer.msg_count, LIMITS.rate_limit_per_sec)
 }
 
 // ─── Input Validation ───
@@ -1263,6 +1345,57 @@ async fn handle_signal(
         SignalMessage::SetProfile { bio } => {
             handle_set_profile(state, peer_id, bio, db).await;
         }
+        SignalMessage::RequestUdp => {
+            handle_request_udp(state, peer_id).await;
+        }
+        SignalMessage::SetChannelUserLimit {
+            channel_id,
+            user_limit,
+        } => {
+            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::UserLimit(user_limit))
+                .await;
+        }
+        SignalMessage::SetChannelSlowMode {
+            channel_id,
+            slow_mode_secs,
+        } => {
+            handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::SlowMode(slow_mode_secs),
+            )
+            .await;
+        }
+        SignalMessage::SetChannelCategory {
+            channel_id,
+            category,
+        } => {
+            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Category(category))
+                .await;
+        }
+        SignalMessage::SetChannelStatus {
+            channel_id,
+            status,
+        } => {
+            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
+                .await;
+        }
+        SignalMessage::SetPrioritySpeaker { peer_id: target_id, enabled } => {
+            handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
+        }
+        SignalMessage::WhisperTo { target_peer_ids } => {
+            handle_whisper_to(state, peer_id, target_peer_ids).await;
+        }
+        SignalMessage::WhisperStopped => {
+            handle_whisper_stopped(state, peer_id).await;
+        }
+        SignalMessage::TimeoutMember {
+            member_id,
+            duration_secs,
+        } => {
+            handle_timeout_member(state, peer_id, member_id, duration_secs, db).await;
+        }
         _ => {}
     }
 }
@@ -1301,17 +1434,9 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
             None => return,
         };
 
-        // #5: Audio frame rate limiting
-        let now = Instant::now();
-        let mut window = peer.audio_rate_window.lock().await;
-        if now.duration_since(*window).as_secs() >= 1 {
-            *window = now;
-            peer.audio_frame_count.store(1, Ordering::Relaxed);
-        } else {
-            let count = peer.audio_frame_count.fetch_add(1, Ordering::Relaxed);
-            if count >= LIMITS.max_audio_fps {
-                return;
-            }
+        // #5: Audio frame rate limiting (lock-free)
+        if !atomic_rate_check(&peer.audio_rate_window_ms, &peer.audio_frame_count, LIMITS.max_audio_fps) {
+            return;
         }
 
         peer.cached_room_code()
@@ -1329,7 +1454,26 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
-    let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    let others = {
+        let all = handlers::collect_room_others(state, &room_code, sender_id).await;
+        // Whisper filtering: if sender has whisper targets, only send to those peers
+        let whisper_targets: Vec<String> = {
+            let s = state.read().await;
+            if let Some(sender) = s.peers.get(sender_id) {
+                sender.whisper_targets.lock().await.clone()
+            } else {
+                Vec::new()
+            }
+        };
+        if whisper_targets.is_empty() {
+            all
+        } else {
+            let target_set: HashSet<String> = whisper_targets.into_iter().collect();
+            all.into_iter()
+                .filter(|p| target_set.contains(&p.id))
+                .collect()
+        }
+    };
     metrics
         .audio_frames_in_total
         .fetch_add(1, Ordering::Relaxed);
@@ -1408,16 +1552,8 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
             None => return,
         };
 
-        let now = Instant::now();
-        let mut window = peer.screen_rate_window.lock().await;
-        if now.duration_since(*window).as_secs() >= 1 {
-            *window = now;
-            peer.screen_frame_count.store(1, Ordering::Relaxed);
-        } else {
-            let count = peer.screen_frame_count.fetch_add(1, Ordering::Relaxed);
-            if count >= LIMITS.max_screen_fps {
-                return;
-            }
+        if !atomic_rate_check(&peer.screen_rate_window_ms, &peer.screen_frame_count, LIMITS.max_screen_fps) {
+            return;
         }
 
         let room_code = peer.cached_room_code();
@@ -1489,6 +1625,180 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
         })
         .collect();
     futures_util::future::join_all(futs).await;
+}
+
+// ─── UDP Transport ───
+
+/// Handle a RequestUdp signal: generate a session token and reply with UdpReady.
+async fn handle_request_udp(state: &State, peer_id: &str) {
+    let udp_port = UDP_PORT.load(Ordering::Relaxed);
+    if udp_port == 0 {
+        // UDP not enabled on this server
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id).cloned() {
+            drop(s);
+            send_to(&peer, &SignalMessage::UdpUnavailable).await;
+        }
+        return;
+    }
+
+    // Generate 8 random bytes as session token
+    let mut token_bytes = [0u8; 8];
+    OsRng.fill_bytes(&mut token_bytes);
+    let token_hex = hex_encode(&token_bytes);
+
+    {
+        let mut s = state.write().await;
+        // Remove any existing token for this peer
+        s.udp_sessions.retain(|_, pid| pid != peer_id);
+        s.udp_sessions.insert(token_bytes, peer_id.to_string());
+    }
+
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id).cloned() {
+        drop(s);
+        send_to(
+            &peer,
+            &SignalMessage::UdpReady {
+                token: token_hex,
+                port: udp_port,
+            },
+        )
+        .await;
+        log::info!("UDP session created for peer {peer_id} on port {udp_port}");
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Run the UDP audio relay socket. Receives UDP packets, maps session tokens to peers,
+/// and relays audio to room peers via UDP.
+async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket>) {
+    log::info!("UDP audio relay started on {:?}", udp_socket.local_addr());
+
+    // Pre-allocate receive buffer (max: token(8) + type(1) + audio(4096) = 4105)
+    let mut buf = vec![0u8; 8 + 1 + shared_types::MAX_AUDIO_FRAME_SIZE];
+
+    loop {
+        let (len, src_addr) = match udp_socket.recv_from(&mut buf).await {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("UDP recv error: {e}");
+                continue;
+            }
+        };
+
+        // Minimum packet: 8 (token) + 1 (type byte)
+        if len < 9 {
+            continue;
+        }
+
+        let token: [u8; 8] = buf[..8].try_into().unwrap();
+        let packet_type = buf[8];
+
+        // Look up peer by token
+        let peer_id = {
+            let s = state.read().await;
+            match s.udp_sessions.get(&token) {
+                Some(pid) => pid.clone(),
+                None => continue, // Unknown token, silently drop
+            }
+        };
+
+        // Register/update the peer's UDP address on first packet (or address change)
+        {
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(&peer_id) {
+                let mut addr = peer.udp_addr.lock().await;
+                if *addr != Some(src_addr) {
+                    log::info!("UDP peer {peer_id} registered at {src_addr}");
+                    *addr = Some(src_addr);
+                }
+            }
+        }
+
+        // Keepalive: just refreshes the address mapping above, no relay needed
+        if packet_type == shared_types::UDP_KEEPALIVE {
+            continue;
+        }
+
+        if packet_type == shared_types::MEDIA_PACKET_AUDIO && len >= 10 {
+            let audio_data = &buf[9..len];
+            relay_audio_udp(&state, &metrics, &peer_id, audio_data, &udp_socket).await;
+        }
+    }
+}
+
+/// Relay audio received via UDP to room peers, preferring UDP delivery.
+/// Falls back to WebSocket for peers without a registered UDP address.
+async fn relay_audio_udp(
+    state: &State,
+    metrics: &Metrics,
+    sender_id: &str,
+    data: &[u8],
+    udp_socket: &UdpSocket,
+) {
+    if data.len() > shared_types::MAX_AUDIO_FRAME_SIZE {
+        return;
+    }
+
+    let room_code = {
+        let s = state.read().await;
+        let peer = match s.peers.get(sender_id) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        if !atomic_rate_check(
+            &peer.audio_rate_window_ms,
+            &peer.audio_frame_count,
+            LIMITS.max_audio_fps,
+        ) {
+            return;
+        }
+
+        peer.cached_room_code()
+    };
+
+    let room_code = match room_code {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Build frame for both UDP and WS delivery:
+    // [MEDIA_PACKET_AUDIO, id_len, sender_id_bytes, audio_data]
+    let mut frame = Vec::with_capacity(2 + sender_id.len() + data.len());
+    frame.push(shared_types::MEDIA_PACKET_AUDIO);
+    frame.push(sender_id.len() as u8);
+    frame.extend_from_slice(sender_id.as_bytes());
+    frame.extend_from_slice(data);
+
+    let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    metrics
+        .audio_frames_in_total
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .audio_frames_out_total
+        .fetch_add(others.len() as u64, Ordering::Relaxed);
+
+    for peer in &others {
+        let udp_addr = peer.udp_addr.lock().await.clone();
+        if let Some(addr) = udp_addr {
+            // Send via UDP — fire-and-forget (UDP is unreliable by design)
+            let _ = udp_socket.send_to(&frame, addr).await;
+        } else {
+            // Fallback: send via WebSocket
+            let frame_clone = frame.clone();
+            let send_timeout = std::time::Duration::from_millis(500);
+            let fut = async {
+                let mut tx = peer.tx.lock().await;
+                let _ = tx.send(Message::Binary(frame_clone.into())).await;
+            };
+            let _ = tokio::time::timeout(send_timeout, fut).await;
+        }
+    }
 }
 
 // ─── Disconnect ───
@@ -1720,6 +2030,228 @@ async fn handle_set_channel_topic(
         None,
         Some(changed_channel_name),
         "Updated the channel topic".into(),
+    )
+    .await;
+}
+
+// ─── Channel Settings ───
+
+enum ChannelSetting {
+    UserLimit(u32),
+    SlowMode(u32),
+    Category(String),
+    Status(String),
+}
+
+async fn handle_channel_setting(
+    state: &State,
+    peer_id: &str,
+    channel_id: String,
+    setting: ChannelSetting,
+) {
+    let Some((space_id, _, actor_role)) = handlers::space::peer_space_role(state, peer_id).await
+    else {
+        return;
+    };
+    if !handlers::space::can_manage_channels(actor_role) {
+        send_error(state, peer_id, "Only admins can change channel settings").await;
+        return;
+    }
+
+    let notify = {
+        let mut s = state.write().await;
+        let Some(space) = s.spaces.get_mut(&space_id) else {
+            return;
+        };
+        let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) else {
+            return;
+        };
+        match setting {
+            ChannelSetting::UserLimit(limit) => {
+                channel.user_limit = limit;
+                SignalMessage::ChannelUserLimitChanged {
+                    channel_id: channel_id.clone(),
+                    user_limit: limit,
+                }
+            }
+            ChannelSetting::SlowMode(secs) => {
+                channel.slow_mode_secs = secs;
+                SignalMessage::ChannelSlowModeChanged {
+                    channel_id: channel_id.clone(),
+                    slow_mode_secs: secs,
+                }
+            }
+            ChannelSetting::Category(ref cat) => {
+                channel.category = cat.chars().take(32).collect();
+                SignalMessage::ChannelCategoryChanged {
+                    channel_id: channel_id.clone(),
+                    category: channel.category.clone(),
+                }
+            }
+            ChannelSetting::Status(ref status) => {
+                channel.status = status.chars().take(64).collect();
+                SignalMessage::ChannelStatusChanged {
+                    channel_id: channel_id.clone(),
+                    status: channel.status.clone(),
+                }
+            }
+        }
+    };
+
+    // Broadcast to all space members including self
+    let s = state.read().await;
+    if let Some(space) = s.spaces.get(&space_id) {
+        let members: Vec<Arc<Peer>> = space
+            .member_ids
+            .iter()
+            .filter_map(|id| s.peers.get(id).cloned())
+            .collect();
+        drop(s);
+        for peer in members {
+            send_to(&peer, &notify).await;
+        }
+    }
+}
+
+// ─── Priority Speaker ───
+
+async fn handle_set_priority_speaker(
+    state: &State,
+    peer_id: &str,
+    target_id: String,
+    enabled: bool,
+) {
+    // Only admins+ can set priority speaker, or self
+    let room_code = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        peer.cached_room_code()
+    };
+    let Some(room_code) = room_code else { return };
+
+    // Set the flag on target peer
+    {
+        let s = state.read().await;
+        if let Some(target) = s.peers.get(&target_id) {
+            target
+                .is_priority_speaker
+                .store(enabled, Ordering::Relaxed);
+        }
+    }
+
+    let notify = SignalMessage::PrioritySpeakerChanged {
+        peer_id: target_id,
+        enabled,
+    };
+    // Broadcast to all in room
+    let s = state.read().await;
+    if let Some(room) = s.rooms.get(&room_code) {
+        let peers: Vec<Arc<Peer>> = room
+            .peer_ids
+            .iter()
+            .filter_map(|pid| s.peers.get(pid).cloned())
+            .collect();
+        drop(s);
+        for peer in peers {
+            send_to(&peer, &notify).await;
+        }
+    }
+}
+
+// ─── Whisper ───
+
+async fn handle_whisper_to(state: &State, peer_id: &str, target_peer_ids: Vec<String>) {
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id) {
+        *peer.whisper_targets.lock().await = target_peer_ids;
+    }
+}
+
+async fn handle_whisper_stopped(state: &State, peer_id: &str) {
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id) {
+        peer.whisper_targets.lock().await.clear();
+    }
+}
+
+// ─── Timeout ───
+
+fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+async fn handle_timeout_member(
+    state: &State,
+    peer_id: &str,
+    member_id: String,
+    duration_secs: u64,
+    db: &Db,
+) {
+    let Some((space_id, actor_user_id, actor_role)) =
+        handlers::space::peer_space_role(state, peer_id).await
+    else {
+        return;
+    };
+    if !handlers::space::can_manage_members(actor_role) {
+        send_error(state, peer_id, "Insufficient permissions to timeout members").await;
+        return;
+    }
+
+    // Cap duration at 28 days
+    let duration_secs = duration_secs.min(28 * 24 * 3600);
+    let until_epoch = now_epoch_secs() + duration_secs;
+
+    let (target_peer, actor_name) = {
+        let s = state.read().await;
+        let target = s.peers.get(&member_id).cloned();
+        let actor_name = if let Some(p) = s.peers.get(peer_id) {
+            p.name.lock().await.clone()
+        } else {
+            "Unknown".into()
+        };
+        (target, actor_name)
+    };
+
+    if let Some(ref target) = target_peer {
+        target.timeout_until.store(until_epoch, Ordering::Relaxed);
+    }
+
+    let target_name = if let Some(ref target) = target_peer {
+        target.name.lock().await.clone()
+    } else {
+        member_id.clone()
+    };
+
+    // Broadcast timeout to space
+    let notify = SignalMessage::MemberTimedOut {
+        member_id: member_id.clone(),
+        until_epoch,
+    };
+    handlers::broadcast_to_space(state, &space_id, "", &notify).await;
+
+    let duration_str = if duration_secs >= 3600 {
+        format!("{}h", duration_secs / 3600)
+    } else if duration_secs >= 60 {
+        format!("{}m", duration_secs / 60)
+    } else {
+        format!("{}s", duration_secs)
+    };
+
+    let _ = handlers::space::append_audit_entry(
+        state,
+        db,
+        &space_id,
+        &actor_user_id,
+        &actor_name,
+        "timeout",
+        Some(member_id),
+        Some(target_name),
+        format!("Timed out for {duration_str}"),
     )
     .await;
 }

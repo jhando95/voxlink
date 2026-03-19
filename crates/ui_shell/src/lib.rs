@@ -43,6 +43,12 @@ pub fn update_perf_display(window: &MainWindow, snap: &PerfSnapshot) {
         audio_active: snap.audio_active,
         network_connected: snap.network_connected,
         dropped_frames: snap.dropped_frames as i32,
+        jitter_buffer_ms: snap.jitter_buffer_ms as i32,
+        frame_loss_percent: snap.frame_loss_rate * 100.0,
+        encode_bitrate_kbps: snap.encode_bitrate_kbps as i32,
+        decode_peers: snap.decode_peers as i32,
+        udp_active: snap.udp_active,
+        ping_ms: snap.ping_ms,
     };
     window.set_perf(perf);
 
@@ -305,6 +311,7 @@ pub fn set_participants(window: &MainWindow, participants: &[shared_types::Parti
                 is_speaking: p.is_speaking,
                 volume: p.volume,
                 color_index: color_index as i32,
+                is_priority_speaker: false,
             }
         })
         .collect();
@@ -354,6 +361,10 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             unread_count: 0,
             topic: c.topic.clone().into(),
             voice_quality: c.voice_quality as i32,
+            category: c.category.clone().into(),
+            status: c.status.clone().into(),
+            user_limit: c.user_limit as i32,
+            slow_mode_secs: c.slow_mode_secs as i32,
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
@@ -410,6 +421,10 @@ pub fn render_space(
                     .unwrap_or(0) as i32,
                 topic: channel.topic.clone().into(),
                 voice_quality: channel.voice_quality as i32,
+                category: channel.category.clone().into(),
+                status: channel.status.clone().into(),
+                user_limit: channel.user_limit as i32,
+                slow_mode_secs: channel.slow_mode_secs as i32,
             }
         })
         .collect();
@@ -762,10 +777,11 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
+    let (content, is_code_block) = render_markdown(&m.content);
     ChatMessage {
         sender_name: m.sender_name.clone().into(),
         sender_initial: sender_initial.into(),
-        content: m.content.clone().into(),
+        content: content.into(),
         timestamp: format_timestamp(m.timestamp).into(),
         is_self: m.sender_name == self_name,
         mentions_self: message_mentions_user(&m.content, self_name),
@@ -776,7 +792,115 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         message_id: m.message_id.clone().into(),
         edited: m.edited,
         reactions: reactions_str.into(),
+        is_code_block,
     }
+}
+
+/// Basic markdown rendering for Slint (which only supports single-style Text).
+/// Returns (rendered_content, is_code_block).
+/// - Triple-backtick blocks → strip markers, flag as code block
+/// - Inline `code` → keep backticks (they serve as visual delimiters)
+/// - **bold** → strip markers, uppercase the text (visual emphasis substitute)
+/// - *italic* → strip markers (no italic in monospace anyway)
+/// - ~~strikethrough~~ → strip markers
+/// - > blockquote → prefix with "│ "
+fn render_markdown(content: &str) -> (String, bool) {
+    let trimmed = content.trim();
+
+    // Full code block: ```...```
+    if trimmed.starts_with("```") && trimmed.ends_with("```") && trimmed.len() > 6 {
+        let inner = &trimmed[3..trimmed.len() - 3];
+        // Strip optional language tag on first line
+        let code = if let Some(newline_pos) = inner.find('\n') {
+            let first_line = &inner[..newline_pos];
+            if first_line.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                inner[newline_pos + 1..].trim_end().to_string()
+            } else {
+                inner.trim().to_string()
+            }
+        } else {
+            inner.trim().to_string()
+        };
+        return (code, true);
+    }
+
+    let mut result = String::with_capacity(content.len());
+    for line in content.lines() {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        // Blockquote
+        if line.starts_with("> ") {
+            result.push_str("\u{2502} ");
+            result.push_str(&render_inline(&line[2..]));
+        } else if line == ">" {
+            result.push_str("\u{2502}");
+        } else {
+            result.push_str(&render_inline(line));
+        }
+    }
+    (result, false)
+}
+
+fn render_inline(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // **bold** → UPPERCASE
+        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = find_closing(&chars, i + 2, &['*', '*']) {
+                let inner: String = chars[i + 2..end].iter().collect();
+                out.push_str(&inner.to_uppercase());
+                i = end + 2;
+                continue;
+            }
+        }
+        // ~~strikethrough~~ → strip markers
+        if i + 1 < len && chars[i] == '~' && chars[i + 1] == '~' {
+            if let Some(end) = find_closing(&chars, i + 2, &['~', '~']) {
+                let inner: String = chars[i + 2..end].iter().collect();
+                out.push_str(&inner);
+                i = end + 2;
+                continue;
+            }
+        }
+        // *italic* → strip markers (but not **)
+        if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
+            if let Some(end) = find_closing_single(&chars, i + 1, '*') {
+                let inner: String = chars[i + 1..end].iter().collect();
+                out.push_str(&inner);
+                i = end + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn find_closing(chars: &[char], start: usize, marker: &[char; 2]) -> Option<usize> {
+    let len = chars.len();
+    let mut i = start;
+    while i + 1 < len {
+        if chars[i] == marker[0] && chars[i + 1] == marker[1] {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_closing_single(chars: &[char], start: usize, marker: char) -> Option<usize> {
+    for i in start..chars.len() {
+        if chars[i] == marker {
+            return Some(i);
+        }
+    }
+    None
 }
 
 fn message_mentions_user(content: &str, user_name: &str) -> bool {

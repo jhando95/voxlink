@@ -28,6 +28,7 @@ pub fn handle_room_entered(
     let mut s = state.borrow_mut();
     s.room.room_code = room_code.to_string();
 
+    let saved_volumes = &config_store::load_config().peer_volumes;
     s.room.participants = existing_participants
         .iter()
         .map(|p| Participant {
@@ -36,7 +37,7 @@ pub fn handle_room_entered(
             is_muted: p.is_muted,
             is_deafened: false,
             is_speaking: false,
-            volume: 1.0,
+            volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
         })
         .collect();
     s.room.participants.push(Participant {
@@ -98,6 +99,8 @@ pub fn handle_peer_joined(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
 ) {
     log::info!("Peer joined: {} ({})", peer.name, peer.id);
+    let saved_vol = config_store::load_config().peer_volumes
+        .get(&peer.name).copied().unwrap_or(1.0);
     let mut s = state.borrow_mut();
     s.room.participants.push(Participant {
         id: peer.id.clone(),
@@ -105,12 +108,19 @@ pub fn handle_peer_joined(
         is_muted: peer.is_muted,
         is_deafened: false,
         is_speaking: false,
-        volume: 1.0,
+        volume: saved_vol,
     });
     ui_shell::set_participants(w, &s.room.participants);
     let count = s.room.participants.len();
     let code = &s.room.room_code;
     w.set_window_title(format!("Voxlink — {code} ({count})").into());
+
+    // Apply saved volume to audio engine
+    if (saved_vol - 1.0).abs() > 0.01 {
+        if let Ok(aud) = audio.try_lock() {
+            aud.set_peer_volume(&peer.id, saved_vol);
+        }
+    }
 
     // Play join notification sound
     if w.get_feedback_sound() {
@@ -260,4 +270,29 @@ pub fn handle_screen_share_stopped(
         w.set_room_status(slint::SharedString::default());
     }
     ctx.screen_share.apply_to_window(w);
+}
+
+pub fn handle_priority_speaker_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    peer_id: &str,
+    enabled: bool,
+) {
+    log::info!(
+        "Priority speaker {}: {peer_id}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+    let s = state.borrow();
+    let peer_name = s
+        .room
+        .participants
+        .iter()
+        .find(|p| p.id == peer_id)
+        .map(|p| p.name.clone());
+    drop(s);
+    if let Some(name) = peer_name {
+        if enabled {
+            w.set_status_text(format!("{name} is now priority speaker").into());
+        }
+    }
 }

@@ -58,8 +58,11 @@ pub async fn handle_authenticate(
             })).await {
                 Ok(result) => result.unwrap_or(None),
                 Err(_) => {
+                    // DB timeout — return error instead of creating a new identity,
+                    // which would cause the user to lose their previous identity.
                     log::warn!("DB timeout: find_user_by_token for peer {peer_id}");
-                    None
+                    send_error(state, peer_id, "Authentication is temporarily unavailable (DB timeout)").await;
+                    return false;
                 }
             };
 

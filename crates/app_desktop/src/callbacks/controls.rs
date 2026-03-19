@@ -162,10 +162,22 @@ pub fn setup_volume_changed(
     let state = state.clone();
     window.on_volume_changed(move |peer_id, volume| {
         let peer_id_str = peer_id.to_string();
-        {
+        let peer_name = {
             let mut s = state.borrow_mut();
+            let name = s.room.participants.iter()
+                .find(|p| p.id == peer_id_str)
+                .map(|p| p.name.clone());
             if let Some(p) = s.room.participants.iter_mut().find(|p| p.id == peer_id_str) {
                 p.volume = volume;
+            }
+            name
+        };
+        // Persist per-peer volume by name (survives reconnects)
+        if let Some(name) = peer_name {
+            if (volume - 1.0).abs() > 0.01 {
+                let mut cfg = config_store::load_config();
+                cfg.peer_volumes.insert(name, volume);
+                let _ = config_store::save_config(&cfg);
             }
         }
         let audio = audio.clone();

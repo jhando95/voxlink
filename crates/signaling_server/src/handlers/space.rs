@@ -276,6 +276,10 @@ pub async fn handle_create_space(
         channel_type: ChannelType::Voice,
         topic: String::new(),
         voice_quality: 2, // High (64kbps) default
+        user_limit: 0,
+        category: String::new(),
+        status: String::new(),
+        slow_mode_secs: 0,
     };
 
     let space = Space {
@@ -288,6 +292,7 @@ pub async fn handle_create_space(
         member_roles: std::collections::HashMap::from([(owner_id.clone(), SpaceRole::Owner)]),
         text_messages: std::collections::HashMap::new(),
         audit_log: std::collections::VecDeque::new(),
+        slow_mode_timestamps: std::collections::HashMap::new(),
         created_at: Instant::now(),
     };
 
@@ -311,6 +316,10 @@ pub async fn handle_create_space(
         channel_type: ChannelType::Voice,
         topic: String::new(),
         voice_quality: 2,
+        user_limit: 0,
+        category: String::new(),
+        status: String::new(),
+        slow_mode_secs: 0,
     }];
 
     log::info!("Space {} created by {peer_id}", space_id);
@@ -541,6 +550,10 @@ pub async fn handle_join_space(
                     channel_type: ch.channel_type,
                     topic: ch.topic.clone(),
                     voice_quality: ch.voice_quality,
+                    user_limit: ch.user_limit,
+                    category: ch.category.clone(),
+                    status: ch.status.clone(),
+                    slow_mode_secs: ch.slow_mode_secs,
                 }
             })
             .collect();

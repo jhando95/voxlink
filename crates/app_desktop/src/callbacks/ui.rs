@@ -626,6 +626,81 @@ pub fn setup_toggle_notifications(window: &MainWindow) {
     });
 }
 
+pub fn setup_toggle_neural_noise_suppression(
+    window: &MainWindow,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let audio = audio.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_toggle_neural_noise_suppression(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_neural_noise_suppression();
+        w.set_neural_noise_suppression(new_val);
+
+        let audio = audio.clone();
+        rt_handle.spawn(async move {
+            let aud = audio.lock().await;
+            aud.set_noise_suppression(new_val);
+        });
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.neural_noise_suppression = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_toggle_echo_cancellation(
+    window: &MainWindow,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let audio = audio.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_toggle_echo_cancellation(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_echo_cancellation();
+        w.set_echo_cancellation(new_val);
+
+        let audio = audio.clone();
+        rt_handle.spawn(async move {
+            let aud = audio.lock().await;
+            aud.set_echo_cancellation(new_val);
+        });
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.echo_cancellation = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_toggle_minimize_to_tray(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_minimize_to_tray(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_minimize_to_tray();
+        w.set_minimize_to_tray(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.minimize_to_tray = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
 pub fn setup_noise_suppression(
     window: &MainWindow,
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,

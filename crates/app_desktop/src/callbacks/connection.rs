@@ -87,7 +87,8 @@ pub fn setup_disconnect(
         let Some(w) = window_weak.upgrade() else {
             return;
         };
-        if w.get_current_view() == 1 {
+        // Leave room/channel regardless of current view (call persists across views)
+        if !w.get_room_code().is_empty() {
             w.invoke_leave_room();
         }
         let network = network.clone();

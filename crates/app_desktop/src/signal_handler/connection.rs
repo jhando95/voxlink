@@ -147,10 +147,17 @@ pub fn check_connection(
         audio_active_flag.store(false, Ordering::Relaxed);
         let audio = audio.clone();
         rt_handle.spawn(async move {
-            let mut aud = audio.lock().await;
-            aud.stop_capture();
-            aud.stop_playback();
-            log::info!("Audio stopped after disconnect — will restart on reconnect");
+            // Timeout prevents deadlock if audio lock is stuck (e.g. device driver hang)
+            match tokio::time::timeout(std::time::Duration::from_secs(2), audio.lock()).await {
+                Ok(mut aud) => {
+                    aud.stop_capture();
+                    aud.stop_playback();
+                    log::info!("Audio stopped after disconnect — will restart on reconnect");
+                }
+                Err(_) => {
+                    log::error!("Timed out acquiring audio lock during disconnect cleanup");
+                }
+            }
         });
 
         w.set_status_text("Reconnecting...".into());
@@ -181,7 +188,10 @@ pub fn check_connection(
         } else {
             None
         };
-        let is_in_room = w.get_current_view() == 1 && !room_code.is_empty();
+        let active_channel_id = w.get_active_channel_id().to_string();
+        let in_space_channel = w.get_in_space_channel();
+        let chat_channel_id = w.get_chat_channel_id().to_string();
+        let is_in_room = !room_code.is_empty();
         let is_in_space = !space_invite.is_empty();
         let is_muted = w.get_is_muted();
         let is_deafened = w.get_is_deafened();
@@ -207,9 +217,31 @@ pub fn check_connection(
                         user_name: user_name.clone(),
                     })
                     .await;
+                // Brief delay for server to process JoinSpace before channel operations
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+                // Auto-rejoin voice channel within the space
+                if in_space_channel && !active_channel_id.is_empty() {
+                    log::info!("Auto-rejoining voice channel {active_channel_id}");
+                    let _ = net
+                        .send_signal(&SignalMessage::JoinChannel {
+                            channel_id: active_channel_id,
+                        })
+                        .await;
+                }
+
+                // Re-select text channel if we had one open
+                if !chat_channel_id.is_empty() && direct_message_user_id.is_none() {
+                    let _ = net
+                        .send_signal(&SignalMessage::SelectTextChannel {
+                            channel_id: chat_channel_id,
+                        })
+                        .await;
+                }
             }
 
-            if is_in_room {
+            // Rejoin standalone room (not a space channel — those are handled above)
+            if is_in_room && !in_space_channel {
                 log::info!("Auto-rejoining room {room_code}");
                 let _ = net
                     .send_signal(&SignalMessage::JoinRoom {
@@ -218,6 +250,11 @@ pub fn check_connection(
                         password: None,
                     })
                     .await;
+            }
+
+            // Restore mute/deafen state after any voice rejoin
+            if is_in_room || in_space_channel {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 if is_muted {
                     let _ = net
                         .send_signal(&SignalMessage::MuteChanged { is_muted })

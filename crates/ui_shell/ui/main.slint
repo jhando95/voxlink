@@ -1,5 +1,5 @@
 import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
-import { BottomNav, NavBreadcrumb, TopBar, WorkspaceRail } from "shell.slint";
+import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
 import { RoomView } from "views/room_view.slint";
@@ -36,6 +36,7 @@ export component MainWindow inherits Window {
     in-out property <bool> talking-while-muted: false;
     in-out property <bool> is-open-mic: true;
     in-out property <bool> is-connected: false;
+    in-out property <bool> first-run: false;
     in-out property <float> mic-level: 0.0;
     in-out property <string> status-text: "Disconnected";
     in-out property <string> room-status: "";
@@ -64,6 +65,7 @@ export component MainWindow inherits Window {
     in-out property <float> input-volume: 1.0;
     in-out property <float> output-volume: 1.0;
     in-out property <int> ping-ms: -1;
+    in-out property <bool> udp-active: false;
     in-out property <bool> mic-preview-active: false;
     in-out property <bool> speaker-test-active: false;
     in-out property <int> reconnect-attempts: 0;
@@ -110,6 +112,7 @@ export component MainWindow inherits Window {
     in-out property <[AuditEntryData]> space-audit-entries: [];
     in-out property <string> new-channel-name: "";
     in-out property <bool> in-space-channel: false;
+    in-out property <string> active-channel-id: "";
     in-out property <bool> show-quick-call: false;
     in-out property <bool> new-channel-is-voice: true;
     in-out property <int> new-channel-voice-quality: 2;
@@ -139,7 +142,13 @@ export component MainWindow inherits Window {
 
     // Notifications
     in-out property <bool> notifications-enabled: true;
+    in-out property <bool> minimize-to-tray: true;
+    in-out property <bool> neural-noise-suppression: false;
+    in-out property <bool> echo-cancellation: false;
     callback toggle-notifications();
+    callback toggle-minimize-to-tray();
+    callback toggle-neural-noise-suppression();
+    callback toggle-echo-cancellation();
     callback toggle-member-widget();
     callback send-friend-request(string);
     callback accept-friend-request(string);
@@ -243,6 +252,16 @@ export component MainWindow inherits Window {
     callback set-channel-topic(string, string);
     callback search-messages(string);
     callback set-profile(string);
+    // v0.7 feature callbacks
+    callback set-channel-user-limit(/* channel_id */ string, /* limit */ int);
+    callback set-channel-slow-mode(/* channel_id */ string, /* secs */ int);
+    callback set-channel-category(/* channel_id */ string, /* category */ string);
+    callback set-channel-status(/* channel_id */ string, /* status */ string);
+    callback timeout-member(/* member_id */ string, /* duration_secs */ int);
+    callback set-priority-speaker(/* peer_id */ string, /* enabled */ bool);
+    callback whisper-to(/* comma-separated peer IDs */ string);
+    callback stop-whisper();
+    callback save-user-note(/* user_id */ string, /* note */ string);
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -326,6 +345,7 @@ export component MainWindow inherits Window {
 
                         if root.current-view == 0 : HomeView {
                             wide: root.desktop-layout;
+                            first-run: root.first-run;
                             server-address <=> root.server-address;
                             user-name <=> root.user-name;
                             status-text: root.status-text;
@@ -362,7 +382,10 @@ export component MainWindow inherits Window {
                             is-open-mic: root.is-open-mic;
                             mic-level: root.mic-level;
                             ptt-key-display: root.ptt-key-display;
+                            mute-key-display: root.mute-key-display;
+                            deafen-key-display: root.deafen-key-display;
                             ping-ms: root.ping-ms;
+                            udp-active: root.udp-active;
                             reconnect-attempts: root.reconnect-attempts;
                             dropped-frames: root.dropped-frames;
                             in-space-channel: root.in-space-channel;
@@ -411,6 +434,9 @@ export component MainWindow inherits Window {
                             noise-suppression <=> root.noise-suppression;
                             feedback-sound: root.feedback-sound;
                             notifications-enabled: root.notifications-enabled;
+                            minimize-to-tray: root.minimize-to-tray;
+                            neural-noise-suppression: root.neural-noise-suppression;
+                            echo-cancellation: root.echo-cancellation;
                             listening-keybind <=> root.listening-keybind;
                             ptt-key-display: root.ptt-key-display;
                             mute-key-display: root.mute-key-display;
@@ -427,6 +453,9 @@ export component MainWindow inherits Window {
                             noise-suppression-changed(level) => { root.noise-suppression-changed(level); }
                             toggle-feedback-sound => { root.toggle-feedback-sound(); }
                             toggle-notifications => { root.toggle-notifications(); }
+                            toggle-minimize-to-tray => { root.toggle-minimize-to-tray(); }
+                            toggle-neural-noise-suppression => { root.toggle-neural-noise-suppression(); }
+                            toggle-echo-cancellation => { root.toggle-echo-cancellation(); }
                             clear-keybind(binding) => { root.clear-keybind(binding); }
                         }
 
@@ -469,6 +498,12 @@ export component MainWindow inherits Window {
                             set-user-status(status) => { root.set-user-status(status); }
                             set-channel-topic(channel-id, topic) => { root.set-channel-topic(channel-id, topic); }
                             set-profile(bio) => { root.set-profile(bio); }
+                            timeout-member(member-id, duration) => { root.timeout-member(member-id, duration); }
+                            set-channel-user-limit(channel-id, limit) => { root.set-channel-user-limit(channel-id, limit); }
+                            set-channel-slow-mode(channel-id, secs) => { root.set-channel-slow-mode(channel-id, secs); }
+                            set-channel-category(channel-id, cat) => { root.set-channel-category(channel-id, cat); }
+                            set-channel-status(channel-id, status) => { root.set-channel-status(channel-id, status); }
+                            save-user-note(user-id, note) => { root.save-user-note(user-id, note); }
                             send-friend-request(user-id) => { root.send-friend-request(user-id); }
                             accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
                             decline-friend-request(user-id) => { root.decline-friend-request(user-id); }
@@ -532,6 +567,22 @@ export component MainWindow inherits Window {
                             remove-friend(user-id) => { root.remove-friend(user-id); }
                             open-direct-message(user-id) => { root.open-direct-message(user-id); }
                         }
+                    }
+
+                    // Voice call bar: shown when in a call but not viewing the room (like Discord)
+                    if root.current-view != 1 && root.room-code != "" && root.is-connected : VoiceCallBar {
+                        room-code: root.room-code;
+                        space-name: root.current-space-name;
+                        in-space-channel: root.in-space-channel;
+                        is-muted: root.is-muted;
+                        is-deafened: root.is-deafened;
+                        mic-level: root.mic-level;
+                        ping-ms: root.ping-ms;
+                        navigate(view-index) => { root.navigate(view-index); }
+                        leave-room => { root.leave-room(); }
+                        leave-channel => { root.leave-channel(); }
+                        toggle-mute => { root.toggle-mute(); }
+                        toggle-deafen => { root.toggle-deafen(); }
                     }
 
                     if !root.desktop-layout && root.current-view != 1 && root.current-view != 4 && root.current-view != 5 : BottomNav {

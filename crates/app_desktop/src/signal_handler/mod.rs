@@ -216,10 +216,19 @@ pub fn process_signals(
             SignalMessage::Authenticated { token, user_id } => {
                 log::info!("Authenticated as {user_id}");
                 state.borrow_mut().self_user_id = Some(user_id.clone());
+                w.set_first_run(false);
                 if !token.is_empty() {
                     crate::helpers::save_auth_token_async(token.clone());
                 }
                 crate::friends::sync_presence_subscription(state, &ctx.network, &ctx.rt_handle);
+                // Request UDP transport after auth succeeds
+                let net = ctx.network.clone();
+                ctx.rt_handle.spawn(async move {
+                    let net = net.lock().await;
+                    if let Err(e) = net.request_udp().await {
+                        log::debug!("Failed to request UDP: {e}");
+                    }
+                });
             }
             SignalMessage::FriendSnapshot {
                 friends,
@@ -358,6 +367,71 @@ pub fn process_signals(
             }
             SignalMessage::ProfileUpdated { user_id, bio } => {
                 member::handle_profile_updated(w, state, user_id, bio);
+            }
+            // UDP transport negotiation
+            SignalMessage::UdpReady { token, port } => {
+                log::info!("Server offered UDP transport on port {port}");
+                let net = ctx.network.clone();
+                let token = token.clone();
+                let port = *port;
+                ctx.rt_handle.spawn(async move {
+                    let net = net.lock().await;
+                    match net.setup_udp(&token, port).await {
+                        Ok(()) => log::info!("UDP audio transport activated"),
+                        Err(e) => log::warn!("Failed to set up UDP transport: {e}"),
+                    }
+                });
+            }
+            SignalMessage::UdpUnavailable => {
+                log::info!("Server does not support UDP transport, using WebSocket");
+            }
+            // Channel settings (v0.7)
+            SignalMessage::ChannelUserLimitChanged {
+                channel_id,
+                user_limit,
+            } => {
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.user_limit = *user_limit;
+                });
+            }
+            SignalMessage::ChannelSlowModeChanged {
+                channel_id,
+                slow_mode_secs,
+            } => {
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.slow_mode_secs = *slow_mode_secs;
+                });
+            }
+            SignalMessage::ChannelCategoryChanged {
+                channel_id,
+                category,
+            } => {
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.category = category.clone();
+                });
+            }
+            SignalMessage::ChannelStatusChanged {
+                channel_id,
+                status,
+            } => {
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.status = status.clone();
+                });
+            }
+            SignalMessage::PrioritySpeakerChanged { peer_id, enabled } => {
+                room::handle_priority_speaker_changed(w, state, peer_id, *enabled);
+            }
+            SignalMessage::MemberTimedOut {
+                member_id,
+                until_epoch,
+            } => {
+                log::info!("Member {member_id} timed out until {until_epoch}");
+                w.set_status_text(
+                    format!("Member timed out until {}", until_epoch).into(),
+                );
+            }
+            SignalMessage::MemberTimeoutExpired { member_id } => {
+                log::info!("Timeout expired for {member_id}");
             }
             _ => {}
         }

@@ -367,12 +367,16 @@ export component ChatView inherits Rectangle {
 
                         for msg in root.chat-messages : Rectangle {
                             border-radius: VxTheme.radius-card;
-                            background: msg.mentions-self && !msg.is-self ? VxTheme.accent-subtle :
-                                        msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg;
+                            background: msg-hover.has-hover
+                                ? (msg.is-self ? VxTheme.msg-self-bg.darker(0.03) : VxTheme.msg-other-bg.darker(0.03))
+                                : (msg.mentions-self && !msg.is-self ? VxTheme.accent-subtle :
+                                   msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg);
                             border-color: root.editing-message-id == msg.message-id || (msg.mentions-self && !msg.is-self)
                                 ? VxTheme.accent-border
-                                : VxTheme.border-subtle;
+                                : msg-hover.has-hover ? VxTheme.border-subtle.darker(0.1) : VxTheme.border-subtle;
                             border-width: 1px;
+
+                            msg-hover := TouchArea {}
 
                             HorizontalLayout {
                                 padding-left: 14px;
@@ -421,7 +425,9 @@ export component ChatView inherits Rectangle {
                                             font-weight: 700;
                                         }
                                         Rectangle { horizontal-stretch: 1; }
-                                        if !root.chat-is-direct-message : HorizontalLayout {
+
+                                        // Action buttons: only visible on hover (Discord-style)
+                                        if msg-hover.has-hover && !root.chat-is-direct-message : HorizontalLayout {
                                             spacing: 6px;
                                             for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}"] : Rectangle {
                                                 height: 22px;
@@ -446,7 +452,7 @@ export component ChatView inherits Rectangle {
                                                 }
                                             }
                                         }
-                                        VxButton {
+                                        if msg-hover.has-hover : VxButton {
                                             label: "Reply";
                                             small: true;
                                             ghost: true;
@@ -459,14 +465,14 @@ export component ChatView inherits Rectangle {
                                             }
                                         }
 
-                                        if !root.chat-is-direct-message : VxButton {
+                                        if msg-hover.has-hover && !root.chat-is-direct-message : VxButton {
                                             label: msg.is-pinned ? "Unpin" : "Pin";
                                             small: true;
                                             ghost: true;
                                             clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
                                         }
 
-                                        if msg.is-self : VxButton {
+                                        if msg-hover.has-hover && msg.is-self : VxButton {
                                             label: "Edit";
                                             small: true;
                                             ghost: true;
@@ -477,7 +483,7 @@ export component ChatView inherits Rectangle {
                                             }
                                         }
 
-                                        if msg.is-self : VxButton {
+                                        if msg-hover.has-hover && msg.is-self : VxButton {
                                             label: "Delete";
                                             small: true;
                                             ghost: true;
@@ -510,11 +516,28 @@ export component ChatView inherits Rectangle {
                                         }
                                     }
 
-                                    Text {
+                                    if !msg.is-code-block : Text {
                                         text: msg.content;
                                         color: VxTheme.text-primary;
                                         font-size: 12px;
                                         wrap: word-wrap;
+                                    }
+                                    if msg.is-code-block : Rectangle {
+                                        border-radius: VxTheme.radius-control;
+                                        background: VxTheme.bg-panel;
+                                        border-color: VxTheme.border-subtle;
+                                        border-width: 1px;
+                                        height: code-text.preferred-height + 16px;
+                                        code-text := Text {
+                                            x: 8px;
+                                            y: 8px;
+                                            width: parent.width - 16px;
+                                            text: msg.content;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 11px;
+                                            font-family: "monospace";
+                                            wrap: word-wrap;
+                                        }
                                     }
 
                                     if msg.reactions != "" : HorizontalLayout {

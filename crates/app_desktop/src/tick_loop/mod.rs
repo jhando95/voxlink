@@ -88,6 +88,8 @@ pub fn start(
     let audio_started_conn = audio_started.clone();
     let audio_conn = audio.clone();
     let audio_flag_conn = audio_active_flag.clone();
+    let audio_recovery = Rc::new(RefCell::new(AudioRecoveryState::default()));
+    let was_in_call = Rc::new(RefCell::new(false));
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -102,7 +104,18 @@ pub fn start(
                 *t
             };
 
-            let in_room = w.get_current_view() == 1;
+            let in_call = *audio_started_conn.borrow();
+            let current_view = w.get_current_view();
+            let viewing_room = current_view == 1;
+
+            // Reset audio recovery state when entering a new call
+            {
+                let prev = *was_in_call.borrow();
+                *was_in_call.borrow_mut() = in_call;
+                if in_call && !prev {
+                    audio_recovery.borrow_mut().reset();
+                }
+            }
 
             // --- Drain and process signal messages ---
             drain_signals(&network, &signal_buf);
@@ -120,12 +133,13 @@ pub fn start(
             );
 
             // --- Keyboard input ---
-            let current_view = w.get_current_view();
             let keys = device_state.get_keys();
 
             // --- Keybind listening mode ---
-            let listening = w.get_listening_keybind().to_string();
-            if !listening.is_empty() {
+            // Check emptiness on SharedString first (O(1)) to avoid heap allocation every tick
+            let listening_shared = w.get_listening_keybind();
+            if !listening_shared.is_empty() {
+                let listening = listening_shared.to_string();
                 handle_keybind_listening(
                     &listening,
                     &keys,
@@ -140,11 +154,11 @@ pub fn start(
 
                 handle_escape(&keys, current_view, &w, &prev_esc_held);
 
-                if !in_room {
+                if !in_call {
                     *ptt_was_held.borrow_mut() = false;
                 }
 
-                if in_room {
+                if in_call {
                     handle_room_hotkeys(
                         &keys,
                         &voice,
@@ -173,40 +187,49 @@ pub fn start(
                         &w,
                     );
 
-                    if w.get_has_screen_share() {
-                        if !screen_frame_timer_tick.running() {
-                            screen_frame_timer_tick.start(
-                                slint::TimerMode::Repeated,
-                                std::time::Duration::from_millis(16),
-                                {
-                                    let screen_timer_window = window_weak.clone();
-                                    let screen_timer_network = network.clone();
-                                    move || {
-                                        let Some(w) = screen_timer_window.upgrade() else {
-                                            return;
-                                        };
-                                        if !w.get_has_screen_share() {
-                                            return;
+                    // Screen share only processes frames when viewing the room
+                    if viewing_room {
+                        if w.get_has_screen_share() {
+                            if !screen_frame_timer_tick.running() {
+                                screen_frame_timer_tick.start(
+                                    slint::TimerMode::Repeated,
+                                    std::time::Duration::from_millis(16),
+                                    {
+                                        let screen_timer_window = window_weak.clone();
+                                        let screen_timer_network = network.clone();
+                                        move || {
+                                            let Some(w) = screen_timer_window.upgrade() else {
+                                                return;
+                                            };
+                                            if !w.get_has_screen_share() {
+                                                return;
+                                            }
+                                            signal_handler::connection::drain_screen_share_frame(
+                                                &screen_timer_network,
+                                                &w,
+                                            );
                                         }
-                                        signal_handler::connection::drain_screen_share_frame(
-                                            &screen_timer_network,
-                                            &w,
-                                        );
-                                    }
-                                },
-                            );
+                                    },
+                                );
+                            }
+                        } else if screen_frame_timer_tick.running() {
+                            screen_frame_timer_tick.stop();
                         }
-                    } else if screen_frame_timer_tick.running() {
-                        screen_frame_timer_tick.stop();
-                    }
 
-                    if tick.is_multiple_of(40) {
-                        screen_share.apply_to_window(&w);
+                        if tick.is_multiple_of(40) {
+                            screen_share.apply_to_window(&w);
+                        }
                     }
 
                     update_mic_level(tick, &audio, &state, &w);
-                } else if current_view == 2 && w.get_mic_preview_active() {
-                    update_preview_mic_level(tick, &audio, &w);
+                } else {
+                    // Not in a call — stop screen share timer if it's still running (cleanup)
+                    if screen_frame_timer_tick.running() {
+                        screen_frame_timer_tick.stop();
+                    }
+                    if current_view == 2 && w.get_mic_preview_active() {
+                        update_preview_mic_level(tick, &audio, &w);
+                    }
                 }
             }
 
@@ -241,8 +264,15 @@ pub fn start(
                     &audio_flag_conn,
                 );
 
-                if in_room {
-                    check_audio_recovery(&audio, &rt_handle, &w);
+                if in_call {
+                    check_audio_recovery(
+                        &audio,
+                        &rt_handle,
+                        &w,
+                        &audio_recovery,
+                        &audio_ctx.saved_input_device,
+                        &audio_ctx.saved_output_device,
+                    );
                 }
             }
 
@@ -253,11 +283,11 @@ pub fn start(
 
             // --- Ping every ~3s ---
             if tick.is_multiple_of(120) {
-                update_ping(&network, &rt_handle, &w);
+                update_ping(&network, &rt_handle, &w, &perf);
             }
 
             // --- Adaptive bitrate every ~5s ---
-            if tick.is_multiple_of(200) && in_room {
+            if tick.is_multiple_of(200) && in_call {
                 adapt_bitrate(&audio, w.get_ping_ms());
             }
         },
@@ -668,6 +698,7 @@ fn update_ping(
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     rt_handle: &tokio::runtime::Handle,
     w: &MainWindow,
+    perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
 ) {
     if let Ok(net) = network.try_lock() {
         // Read last ping result
@@ -675,6 +706,14 @@ fn update_ping(
         if ms >= 0 {
             w.set_ping_ms(ms);
         }
+        // Update perf collector atomics for the perf panel
+        let udp = net.is_udp_active();
+        let p = perf.borrow();
+        p.ping_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
+        p.udp_active
+            .store(udp, std::sync::atomic::Ordering::Relaxed);
+        drop(p);
+        w.set_udp_active(udp);
         // Send next ping
         let network = network.clone();
         rt_handle.spawn(async move {
@@ -758,6 +797,11 @@ fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32)
     };
 
     let current = aud.current_bitrate();
+    // Update metrics with current bitrate
+    aud.metrics.encode_bitrate_kbps.store(
+        (current as u32) / 1000,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     if new_bitrate != current {
         aud.set_bitrate(new_bitrate);
         log::debug!(
@@ -770,53 +814,230 @@ fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32)
     }
 }
 
-// ─── Audio Recovery ───
+// ─── Audio Recovery with Backoff & Device Hotplug ───
+
+struct AudioRecoveryState {
+    retry_count: u8,
+    backoff_ticks_remaining: u64,
+    backoff_ticks: u64,
+    persistent_error: bool,
+    /// Cached device lists for hotplug detection
+    cached_input_devices: Vec<String>,
+    cached_output_devices: Vec<String>,
+    /// Tick counter for device polling (~1s interval = 40 ticks)
+    device_poll_tick: u64,
+}
+
+impl Default for AudioRecoveryState {
+    fn default() -> Self {
+        Self {
+            retry_count: 0,
+            backoff_ticks_remaining: 0,
+            backoff_ticks: 40, // 1s initial backoff
+            persistent_error: false,
+            cached_input_devices: Vec::new(),
+            cached_output_devices: Vec::new(),
+            device_poll_tick: 0,
+        }
+    }
+}
+
+impl AudioRecoveryState {
+    fn reset(&mut self) {
+        self.retry_count = 0;
+        self.backoff_ticks_remaining = 0;
+        self.backoff_ticks = 40;
+        self.persistent_error = false;
+    }
+
+    fn schedule_retry(&mut self) {
+        self.retry_count += 1;
+        if self.retry_count >= 5 {
+            self.persistent_error = true;
+            return;
+        }
+        // Exponential backoff: 1s → 2s → 4s → 8s → 12s (cap)
+        self.backoff_ticks = (self.backoff_ticks * 2).min(480); // 12s cap
+        self.backoff_ticks_remaining = self.backoff_ticks;
+    }
+}
 
 fn check_audio_recovery(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
     rt_handle: &tokio::runtime::Handle,
     w: &MainWindow,
+    recovery: &Rc<RefCell<AudioRecoveryState>>,
+    saved_input_device: &Rc<RefCell<Option<String>>>,
+    saved_output_device: &Rc<RefCell<Option<String>>>,
 ) {
+    let mut rec = recovery.borrow_mut();
+
+    if rec.persistent_error {
+        // Already gave up — show persistent error
+        return;
+    }
+
+    // Backoff countdown
+    if rec.backoff_ticks_remaining > 0 {
+        rec.backoff_ticks_remaining -= 1;
+        return;
+    }
+
     if let Ok(aud) = audio.try_lock() {
         let capture_err = aud.capture_error.load(std::sync::atomic::Ordering::Relaxed);
-        let playback_err = aud
-            .playback_error
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let playback_err = aud.playback_error.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Device hotplug detection (~1s polling)
+        rec.device_poll_tick += 1;
+        if rec.device_poll_tick >= 40 {
+            rec.device_poll_tick = 0;
+
+            let current_inputs = aud.input_device_names();
+            let current_outputs = aud.output_device_names();
+
+            // Check if saved device disappeared
+            let saved_in = saved_input_device.borrow().clone();
+            let saved_out = saved_output_device.borrow().clone();
+
+            let input_disappeared = saved_in
+                .as_ref()
+                .map(|name| !current_inputs.contains(name) && rec.cached_input_devices.contains(name))
+                .unwrap_or(false);
+            let output_disappeared = saved_out
+                .as_ref()
+                .map(|name| !current_outputs.contains(name) && rec.cached_output_devices.contains(name))
+                .unwrap_or(false);
+
+            // Check if saved device reappeared
+            let input_reappeared = saved_in
+                .as_ref()
+                .map(|name| current_inputs.contains(name) && !rec.cached_input_devices.contains(name))
+                .unwrap_or(false);
+            let output_reappeared = saved_out
+                .as_ref()
+                .map(|name| current_outputs.contains(name) && !rec.cached_output_devices.contains(name))
+                .unwrap_or(false);
+
+            rec.cached_input_devices = current_inputs;
+            rec.cached_output_devices = current_outputs;
+
+            // Auto-fallback on disappearance
+            if input_disappeared && !capture_err {
+                log::warn!("Saved input device disappeared, switching to default");
+                w.set_room_status("Input device disconnected, switching to default...".into());
+                let audio = audio.clone();
+                let window_weak = w.as_weak();
+                rt_handle.spawn(async move {
+                    let mut aud = audio.lock().await;
+                    if let Err(e) = aud.restart_capture(None) {
+                        log::error!("Fallback capture restart failed: {e}");
+                    } else if let Some(w) = window_weak.upgrade() {
+                        w.set_room_status("Switched to default microphone".into());
+                    }
+                });
+                drop(rec);
+                return;
+            }
+            if output_disappeared && !playback_err {
+                log::warn!("Saved output device disappeared, switching to default");
+                w.set_room_status("Output device disconnected, switching to default...".into());
+                let audio = audio.clone();
+                let window_weak = w.as_weak();
+                rt_handle.spawn(async move {
+                    let mut aud = audio.lock().await;
+                    if let Err(e) = aud.restart_playback(None) {
+                        log::error!("Fallback playback restart failed: {e}");
+                    } else if let Some(w) = window_weak.upgrade() {
+                        w.set_room_status("Switched to default speakers".into());
+                    }
+                });
+                drop(rec);
+                return;
+            }
+
+            // Auto-switch back when saved device reappears
+            if input_reappeared {
+                log::info!("Saved input device reappeared, switching back");
+                let dev = saved_in.clone();
+                let audio = audio.clone();
+                let window_weak = w.as_weak();
+                rt_handle.spawn(async move {
+                    let mut aud = audio.lock().await;
+                    if let Err(e) = aud.restart_capture(dev.as_deref()) {
+                        log::error!("Capture switch-back failed: {e}");
+                    } else if let Some(w) = window_weak.upgrade() {
+                        w.set_room_status("Reconnected to saved microphone".into());
+                    }
+                });
+            }
+            if output_reappeared {
+                log::info!("Saved output device reappeared, switching back");
+                let dev = saved_out.clone();
+                let audio = audio.clone();
+                let window_weak = w.as_weak();
+                rt_handle.spawn(async move {
+                    let mut aud = audio.lock().await;
+                    if let Err(e) = aud.restart_playback(dev.as_deref()) {
+                        log::error!("Playback switch-back failed: {e}");
+                    } else if let Some(w) = window_weak.upgrade() {
+                        w.set_room_status("Reconnected to saved speakers".into());
+                    }
+                });
+            }
+        }
+
         if !capture_err && !playback_err {
+            // No errors — reset recovery state if we were recovering
+            if rec.retry_count > 0 {
+                rec.reset();
+            }
             return;
         }
         drop(aud);
 
-        log::warn!("Audio device error detected, attempting recovery");
-        w.set_room_status("Audio device lost, recovering...".into());
+        log::warn!(
+            "Audio device error detected, attempt {}/5",
+            rec.retry_count + 1
+        );
+        w.set_room_status(
+            format!(
+                "Audio device lost, recovering (attempt {}/5)...",
+                rec.retry_count + 1
+            )
+            .into(),
+        );
         let audio = audio.clone();
         let window_weak = w.as_weak();
+        let retry = rec.retry_count;
         rt_handle.spawn(async move {
             let mut aud = audio.lock().await;
+            let mut recovered = true;
             if aud.capture_error.load(std::sync::atomic::Ordering::Relaxed) {
                 log::info!("Restarting capture on default device");
                 if let Err(e) = aud.restart_capture(None) {
                     log::error!("Capture recovery failed: {e}");
+                    recovered = false;
                 } else {
-                    aud.capture_error
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.capture_error.store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            if aud
-                .playback_error
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
+            if aud.playback_error.load(std::sync::atomic::Ordering::Relaxed) {
                 log::info!("Restarting playback on default device");
                 if let Err(e) = aud.restart_playback(None) {
                     log::error!("Playback recovery failed: {e}");
+                    recovered = false;
                 } else {
-                    aud.playback_error
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.playback_error.store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             if let Some(w) = window_weak.upgrade() {
-                w.set_room_status("Audio recovered".into());
+                if recovered {
+                    w.set_room_status("Audio recovered".into());
+                } else if retry >= 4 {
+                    w.set_room_status("Audio recovery failed — please check your devices".into());
+                }
             }
         });
+        rec.schedule_retry();
     }
 }

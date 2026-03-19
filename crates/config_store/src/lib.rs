@@ -38,6 +38,10 @@ pub struct AppConfig {
     pub feedback_sound: bool,
     #[serde(default = "default_noise_suppression")]
     pub noise_suppression: f32,
+    #[serde(default)]
+    pub neural_noise_suppression: bool,
+    #[serde(default)]
+    pub echo_cancellation: bool,
     #[serde(default = "default_volume")]
     pub input_volume: f32,
     #[serde(default = "default_volume")]
@@ -46,6 +50,8 @@ pub struct AppConfig {
     pub notifications_enabled: bool,
     #[serde(default)]
     pub auth_token: Option<String>,
+    #[serde(default = "default_minimize_to_tray")]
+    pub minimize_to_tray: bool,
     #[serde(default)]
     pub member_widget_visible: bool,
     #[serde(default)]
@@ -56,6 +62,12 @@ pub struct AppConfig {
     pub favorite_friends: Vec<shared_types::FavoriteFriend>,
     #[serde(default)]
     pub recent_direct_messages: Vec<shared_types::DirectMessageThread>,
+    /// Per-peer volume adjustments (peer_name -> volume 0.0-2.0). Persisted across sessions.
+    #[serde(default)]
+    pub peer_volumes: std::collections::HashMap<String, f32>,
+    /// Private user notes (user_id -> note text). Local only, never sent to server.
+    #[serde(default)]
+    pub user_notes: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +101,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_minimize_to_tray() -> bool {
+    true
+}
+
 fn default_server_address() -> String {
     "ws://129.158.231.26:9090".into()
 }
@@ -119,15 +135,20 @@ impl Default for AppConfig {
             last_channel_id: None,
             feedback_sound: default_feedback_sound(),
             noise_suppression: default_noise_suppression(),
+            neural_noise_suppression: false,
+            echo_cancellation: false,
             input_volume: default_volume(),
             output_volume: default_volume(),
             notifications_enabled: default_notifications(),
             auth_token: None,
+            minimize_to_tray: default_minimize_to_tray(),
             member_widget_visible: false,
             member_widget_x: None,
             member_widget_y: None,
             favorite_friends: Vec::new(),
             recent_direct_messages: Vec::new(),
+            peer_volumes: std::collections::HashMap::new(),
+            user_notes: std::collections::HashMap::new(),
         }
     }
 }
@@ -162,7 +183,12 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     }
 
     let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {e}"))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
+
+    // Atomic write: write to .tmp then rename. Prevents corruption if the process
+    // crashes mid-write (rename is atomic on POSIX, near-atomic on Windows).
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &json).map_err(|e| format!("Failed to write temp config: {e}"))?;
+    fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename config: {e}"))?;
 
     log::info!("Config saved to {}", path.display());
     Ok(())
@@ -216,10 +242,13 @@ mod tests {
             last_channel_id: Some("c1".into()),
             feedback_sound: true,
             noise_suppression: 0.6,
+            neural_noise_suppression: true,
+            echo_cancellation: false,
             input_volume: 1.5,
             output_volume: 0.8,
             notifications_enabled: true,
             auth_token: None,
+            minimize_to_tray: true,
             member_widget_visible: true,
             member_widget_x: Some(120),
             member_widget_y: Some(80),
@@ -245,6 +274,8 @@ mod tests {
                 is_online: true,
                 is_in_voice: false,
             }],
+            peer_volumes: std::collections::HashMap::new(),
+            user_notes: std::collections::HashMap::new(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();

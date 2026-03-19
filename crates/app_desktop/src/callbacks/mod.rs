@@ -130,6 +130,9 @@ pub fn setup(
     ui::setup_friend_actions(window, network, rt_handle);
     ui::setup_toggle_feedback_sound(window);
     ui::setup_toggle_notifications(window);
+    ui::setup_toggle_minimize_to_tray(window);
+    ui::setup_toggle_neural_noise_suppression(window, audio, rt_handle);
+    ui::setup_toggle_echo_cancellation(window, audio, rt_handle);
     ui::setup_noise_suppression(window, audio, rt_handle);
 
     // Chat
@@ -143,4 +146,14 @@ pub fn setup(
     chat::setup_toggle_pin_message(window, network, rt_handle);
     chat::setup_search_messages(window, network, rt_handle);
     space::setup_set_profile(window, network, rt_handle);
+
+    // v0.7 features
+    space::setup_set_channel_user_limit(window, network, rt_handle);
+    space::setup_set_channel_slow_mode(window, network, rt_handle);
+    space::setup_set_channel_category(window, network, rt_handle);
+    space::setup_set_channel_status(window, network, rt_handle);
+    space::setup_timeout_member(window, network, rt_handle);
+    space::setup_set_priority_speaker(window, network, rt_handle);
+    space::setup_whisper(window, network, rt_handle);
+    space::setup_save_user_note(window);
 }

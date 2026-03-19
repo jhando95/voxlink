@@ -16,6 +16,10 @@ pub(crate) struct NoiseGate {
     /// Shared sensitivity value (0.0–1.0 stored as 0–1000).
     /// Higher = more sensitive (lower threshold). Read from config.
     sensitivity: Arc<AtomicU32>,
+    /// Auto-calibration: accumulate energy during first ~2s to set noise floor.
+    /// 100 frames × 20ms = 2 seconds.
+    calibration_frames: u16,
+    calibration_sum: f32,
 }
 
 // Gain ramp speed: ~2ms attack, ~5ms release at 48kHz
@@ -24,6 +28,8 @@ const GATE_ATTACK_PER_SAMPLE: f32 = 1.0 / 96.0; // ~2ms to fully open
 const GATE_RELEASE_PER_SAMPLE: f32 = 1.0 / 240.0; // ~5ms to fully close
 
 impl NoiseGate {
+    const CALIBRATION_FRAMES: u16 = 100; // 100 × 20ms = 2s
+
     pub fn new(sensitivity: Arc<AtomicU32>) -> Self {
         Self {
             noise_floor: 0.01,
@@ -32,15 +38,30 @@ impl NoiseGate {
             hold_remaining: 0,
             gain: 0.0,
             sensitivity,
+            calibration_frames: 0,
+            calibration_sum: 0.0,
         }
     }
 
     /// Determine gate open/closed state based on energy. Call once per frame.
+    /// During the first ~2s, auto-calibrates the noise floor from ambient noise.
     #[inline(always)]
     pub fn process(&mut self, energy: f32, vad_enabled: bool) -> bool {
         if !vad_enabled {
             self.is_open = true;
             return true;
+        }
+
+        // Auto-calibration: measure ambient noise during first 2s
+        if self.calibration_frames < Self::CALIBRATION_FRAMES {
+            self.calibration_frames += 1;
+            self.calibration_sum += energy;
+            if self.calibration_frames == Self::CALIBRATION_FRAMES {
+                let avg = self.calibration_sum / Self::CALIBRATION_FRAMES as f32;
+                // Set noise floor from measured ambient, with a minimum to avoid division by tiny values
+                self.noise_floor = avg.max(0.001);
+                log::debug!("Noise gate auto-calibrated: noise_floor={:.6}", self.noise_floor);
+            }
         }
 
         // sensitivity: 0.0 = least sensitive (high threshold), 1.0 = most sensitive (low threshold)
@@ -172,6 +193,7 @@ pub(crate) struct HighPassFilter {
     prev_input: f32,
     prev_output: f32,
     alpha: f32,
+    primed: bool,
 }
 
 impl HighPassFilter {
@@ -186,17 +208,31 @@ impl HighPassFilter {
             prev_input: 0.0,
             prev_output: 0.0,
             alpha,
+            primed: false,
         }
     }
 
     /// Process a buffer of samples in-place.
+    /// On the very first frame, applies a 2ms fade-in to eliminate the warmup transient.
     #[inline]
     pub fn process(&mut self, samples: &mut [f32]) {
-        for s in samples.iter_mut() {
+        // Fade-in ramp on first frame to eliminate HPF warmup transient
+        // 2ms at 48kHz = 96 samples
+        let fade_len = if !self.primed { 96.min(samples.len()) } else { 0 };
+
+        for (i, s) in samples.iter_mut().enumerate() {
             let input = *s;
             self.prev_output = self.alpha * (self.prev_output + input - self.prev_input);
             self.prev_input = input;
             *s = self.prev_output;
+
+            if i < fade_len {
+                *s *= i as f32 / fade_len as f32;
+            }
+        }
+
+        if !self.primed {
+            self.primed = true;
         }
     }
 }
@@ -286,18 +322,21 @@ impl Agc {
         }
     }
 
-    /// Process a frame in-place. Call after noise gate (so we don't amplify noise).
+    /// Process a frame in-place with gate awareness.
+    /// When gate is open, normal adaptation. When gate is closed, 10x slower attack
+    /// so gain stays calibrated across gate transitions (quiet speech isn't lost on gate open).
     #[inline]
-    pub fn process(&mut self, samples: &mut [f32]) {
+    pub fn process_with_gate(&mut self, samples: &mut [f32], gate_open: bool) {
         // Measure frame RMS
         let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
         let frame_rms = (sum_sq / samples.len().max(1) as f32).sqrt();
 
-        // Update RMS estimate with asymmetric smoothing
+        // Use 10x slower adaptation when gate is closed to keep gain calibrated
+        let speed = if gate_open { 1.0 } else { 0.1 };
         let alpha = if frame_rms > self.rms_estimate {
-            AGC_RMS_ATTACK
+            AGC_RMS_ATTACK * speed
         } else {
-            AGC_RMS_RELEASE
+            AGC_RMS_RELEASE * speed
         };
         self.rms_estimate = self.rms_estimate * (1.0 - alpha) + frame_rms * alpha;
 
@@ -308,9 +347,10 @@ impl Agc {
             1.0 // near-silence, don't adjust
         };
 
-        // Smoothly ramp gain to target
+        // Smoothly ramp gain to target (slower when gate closed)
+        let smooth = AGC_GAIN_SMOOTH * speed;
         for s in samples.iter_mut() {
-            self.gain += (target_gain - self.gain) * AGC_GAIN_SMOOTH;
+            self.gain += (target_gain - self.gain) * smooth;
             *s *= self.gain;
             // Fast limiter: prevent clipping from sudden gain application
             if s.abs() > 0.95 {
@@ -318,6 +358,7 @@ impl Agc {
             }
         }
     }
+
 }
 
 // ─── Playback AGC (per-peer volume normalization) ───
@@ -339,10 +380,14 @@ const PLAYBACK_AGC_GAIN_SMOOTH: f32 = 0.002; // slower gain changes for natural 
 
 impl PlaybackAgc {
     pub fn new() -> Self {
+        Self::with_target_rms(0.15)
+    }
+
+    pub fn with_target_rms(target_rms: f32) -> Self {
         Self {
             rms_estimate: 0.05,
             gain: 1.0,
-            target_rms: 0.15, // slightly louder target for playback clarity
+            target_rms, // default 0.15 — slightly louder target for playback clarity
             max_gain: 6.0,    // +15dB max boost (less aggressive than capture)
             min_gain: 0.15,   // -16dB max cut
         }
@@ -406,6 +451,208 @@ impl ComfortNoise {
             // Map to [-1, 1] then scale to comfort level
             let noise = (self.lfsr as f32 / 32768.0 - 1.0) * COMFORT_NOISE_LEVEL;
             *s += noise;
+        }
+    }
+}
+
+// ─── Neural Noise Suppression (RNNoise) ───
+
+/// Spectral noise suppression using nnnoiseless (pure-Rust RNNoise port).
+/// Processes 480-sample sub-frames (10ms at 48kHz). Our 960-sample frames
+/// are split into two sub-frames automatically.
+pub(crate) struct NoiseSuppressor {
+    state: Box<nnnoiseless::DenoiseState<'static>>,
+    /// Whether suppression is active (can be toggled at runtime).
+    enabled: bool,
+    /// First frame produces fade-in artifacts — discard it.
+    primed: bool,
+}
+
+impl NoiseSuppressor {
+    const SUB_FRAME: usize = nnnoiseless::DenoiseState::FRAME_SIZE; // 480
+
+    pub fn new() -> Self {
+        Self {
+            state: nnnoiseless::DenoiseState::new(),
+            enabled: false,
+            primed: false,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled != enabled {
+            self.enabled = enabled;
+            if enabled {
+                // Reset state when toggling on to avoid stale RNN context
+                self.state = nnnoiseless::DenoiseState::new();
+                self.primed = false;
+            }
+        }
+    }
+
+    /// Process a 960-sample frame in-place. Samples are in [-1.0, 1.0] range.
+    /// nnnoiseless expects [-32768, 32767] (i16 scale), so we scale in/out.
+    pub fn process(&mut self, samples: &mut [f32]) {
+        if !self.enabled || samples.len() < Self::SUB_FRAME * 2 {
+            return;
+        }
+
+        let mut sub_in = [0.0f32; Self::SUB_FRAME];
+        let mut sub_out = [0.0f32; Self::SUB_FRAME];
+
+        for chunk_idx in 0..2 {
+            let offset = chunk_idx * Self::SUB_FRAME;
+            // Scale to i16 range for nnnoiseless
+            for (i, s) in samples[offset..offset + Self::SUB_FRAME].iter().enumerate() {
+                sub_in[i] = s * 32767.0;
+            }
+            self.state.process_frame(&mut sub_out, &sub_in);
+
+            if !self.primed {
+                // Discard first sub-frame output (fade-in artifacts)
+                if chunk_idx == 1 {
+                    self.primed = true;
+                }
+                // Still write zeros for the discarded frame
+                for s in &mut samples[offset..offset + Self::SUB_FRAME] {
+                    *s = 0.0;
+                }
+            } else {
+                // Scale back to [-1.0, 1.0]
+                for (i, s) in samples[offset..offset + Self::SUB_FRAME].iter_mut().enumerate() {
+                    *s = (sub_out[i] / 32767.0).clamp(-1.0, 1.0);
+                }
+            }
+        }
+    }
+}
+
+// ─── Echo Cancellation (lightweight reference-based) ───
+
+/// Shared echo reference buffer — written by playback, read by capture.
+/// Uses atomic cursors for lock-free cross-thread access.
+pub(crate) struct EchoReference {
+    buf: Vec<f32>,
+    write: std::sync::atomic::AtomicUsize,
+    cap: usize,
+}
+
+impl EchoReference {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buf: vec![0.0; capacity],
+            write: std::sync::atomic::AtomicUsize::new(0),
+            cap: capacity,
+        }
+    }
+
+    /// Called from the playback callback to record what was sent to speakers.
+    pub fn record(&self, data: &[f32]) {
+        let mut w = self.write.load(Ordering::Relaxed);
+        // Safety: we're the only writer (playback callback is single-threaded).
+        // The buf is pre-allocated and never resized.
+        let buf = unsafe {
+            &mut *(std::ptr::addr_of!(self.buf) as *mut Vec<f32>)
+        };
+        for &s in data {
+            buf[w % self.cap] = s;
+            w = w.wrapping_add(1);
+        }
+        self.write.store(w, Ordering::Release);
+    }
+
+    /// Read the most recent `len` samples from the reference buffer.
+    /// Returns a freshly filled slice (caller provides the buffer).
+    pub fn read_recent(&self, out: &mut [f32]) {
+        let w = self.write.load(Ordering::Acquire);
+        let len = out.len().min(self.cap);
+        let start = w.wrapping_sub(len);
+        for (i, s) in out[..len].iter_mut().enumerate() {
+            *s = self.buf[(start.wrapping_add(i)) % self.cap];
+        }
+    }
+}
+
+// Safety: EchoReference is designed for cross-thread use (single writer + single reader).
+unsafe impl Send for EchoReference {}
+unsafe impl Sync for EchoReference {}
+
+/// Lightweight echo canceller — detects echo via cross-correlation with
+/// the playback reference and attenuates the capture signal when detected.
+pub(crate) struct EchoCanceller {
+    enabled: bool,
+    /// Pre-allocated reference buffer for reading playback audio.
+    ref_buf: Vec<f32>,
+}
+
+impl EchoCanceller {
+    pub fn new(frame_size: usize) -> Self {
+        Self {
+            enabled: false,
+            // Extra samples for delay search (up to ~10ms lookaround)
+            ref_buf: vec![0.0; frame_size + 480],
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Process a capture frame, suppressing echo based on correlation with playback reference.
+    pub fn process(&mut self, samples: &mut [f32], echo_ref: &EchoReference) {
+        if !self.enabled {
+            return;
+        }
+
+        let len = samples.len();
+        let ref_len = len + 480; // Search window: frame + 10ms
+        if self.ref_buf.len() < ref_len {
+            self.ref_buf.resize(ref_len, 0.0);
+        }
+        echo_ref.read_recent(&mut self.ref_buf[..ref_len]);
+
+        // Compute energy of capture frame
+        let cap_energy: f32 = samples.iter().map(|&s| s * s).sum();
+        if cap_energy < 1e-8 {
+            return; // Silence, nothing to cancel
+        }
+
+        // Find best correlation across delay offsets (0 to 480 samples = 0-10ms)
+        let mut best_corr: f32 = 0.0;
+        let mut best_offset: usize = 0;
+        // Check at stride of 48 (1ms steps) for efficiency
+        for offset in (0..=480).step_by(48) {
+            let mut corr: f32 = 0.0;
+            for i in 0..len {
+                corr += samples[i] * self.ref_buf[offset + i];
+            }
+            let abs_corr = corr.abs();
+            if abs_corr > best_corr {
+                best_corr = abs_corr;
+                best_offset = offset;
+            }
+        }
+
+        // Compute reference energy at best offset
+        let ref_slice = &self.ref_buf[best_offset..best_offset + len];
+        let ref_energy: f32 = ref_slice.iter().map(|&s| s * s).sum();
+        if ref_energy < 1e-8 {
+            return; // No playback audio
+        }
+
+        // Normalized correlation (0.0 to 1.0)
+        let norm_corr = best_corr / (cap_energy.sqrt() * ref_energy.sqrt()).max(1e-8);
+
+        // Only suppress if correlation is high enough (echo detected)
+        // Threshold 0.5 = moderate echo, avoids false positives from uncorrelated speech
+        if norm_corr > 0.5 {
+            // Suppression factor: scale from 0 (no suppression) at 0.5 to 0.85 at 1.0
+            let suppress = ((norm_corr - 0.5) * 1.7).min(0.85);
+            // Compute optimal scale factor for reference subtraction
+            let scale = best_corr / ref_energy.max(1e-8);
+            for i in 0..len {
+                samples[i] -= ref_slice[i] * scale * suppress;
+            }
         }
     }
 }
@@ -671,11 +918,11 @@ mod tests {
         // Feed quiet signal for several frames to let AGC adapt
         for _ in 0..50 {
             let mut samples = [0.01f32; FRAME_SIZE];
-            agc.process(&mut samples);
+            agc.process_with_gate(&mut samples, true);
         }
         // Now check that output is louder than input
         let mut samples = [0.01f32; FRAME_SIZE];
-        agc.process(&mut samples);
+        agc.process_with_gate(&mut samples, true);
         let output_rms: f32 =
             (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
         assert!(
@@ -690,10 +937,10 @@ mod tests {
         // Feed loud signal for several frames
         for _ in 0..50 {
             let mut samples = [0.8f32; FRAME_SIZE];
-            agc.process(&mut samples);
+            agc.process_with_gate(&mut samples, true);
         }
         let mut samples = [0.8f32; FRAME_SIZE];
-        agc.process(&mut samples);
+        agc.process_with_gate(&mut samples, true);
         let output_rms: f32 =
             (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
         assert!(
@@ -708,7 +955,7 @@ mod tests {
         // Artificially set high gain
         agc.gain = 10.0;
         let mut samples = [0.5f32; 100];
-        agc.process(&mut samples);
+        agc.process_with_gate(&mut samples, true);
         // No sample should exceed 0.95
         let max = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(max <= 0.96, "Limiter should prevent clipping: max={max}");

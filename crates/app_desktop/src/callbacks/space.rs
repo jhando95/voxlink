@@ -507,3 +507,185 @@ pub fn setup_set_profile(
         });
     });
 }
+
+pub fn setup_set_channel_user_limit(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_user_limit(move |channel_id, user_limit| {
+        let channel_id = channel_id.to_string();
+        let user_limit = user_limit.max(0) as u32;
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelUserLimit { channel_id, user_limit })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_channel_slow_mode(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_slow_mode(move |channel_id, slow_mode_secs| {
+        let channel_id = channel_id.to_string();
+        let slow_mode_secs = slow_mode_secs.max(0) as u32;
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelSlowMode { channel_id, slow_mode_secs })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_channel_category(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_category(move |channel_id, category| {
+        let channel_id = channel_id.to_string();
+        let category = category.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelCategory { channel_id, category })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_channel_status(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_status(move |channel_id, status| {
+        let channel_id = channel_id.to_string();
+        let status = status.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelStatus { channel_id, status })
+                .await;
+        });
+    });
+}
+
+pub fn setup_timeout_member(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_timeout_member(move |member_id, duration_secs| {
+        let member_id = member_id.to_string();
+        let duration_secs = duration_secs.max(0) as u64;
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::TimeoutMember { member_id, duration_secs })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_priority_speaker(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_priority_speaker(move |peer_id, enabled| {
+        let peer_id = peer_id.to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetPrioritySpeaker { peer_id, enabled })
+                .await;
+        });
+    });
+}
+
+pub fn setup_whisper(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    // WhisperTo
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_whisper_to(move |target_ids_csv| {
+            let target_peer_ids: Vec<String> = target_ids_csv
+                .to_string()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if target_peer_ids.is_empty() {
+                return;
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::WhisperTo { target_peer_ids })
+                    .await;
+            });
+        });
+    }
+    // WhisperStopped
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_stop_whisper(move || {
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::WhisperStopped)
+                    .await;
+            });
+        });
+    }
+}
+
+pub fn setup_save_user_note(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_save_user_note(move |user_id, note| {
+        let user_id = user_id.to_string();
+        let note = note.to_string().trim().to_string();
+        // Save locally — never sent to server
+        let mut cfg = config_store::load_config();
+        if note.is_empty() {
+            cfg.user_notes.remove(&user_id);
+        } else {
+            cfg.user_notes.insert(user_id, note);
+        }
+        let _ = config_store::save_config(&cfg);
+        if let Some(w) = window_weak.upgrade() {
+            w.set_status_text("Note saved".into());
+        }
+    });
+}

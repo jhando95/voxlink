@@ -1,6 +1,6 @@
 [package]
 name = "audio_core"
-version = "0.5.3"
+version = "0.7.0"
 edition = "2021"
 
 [dependencies]
@@ -9,3 +9,4 @@ cpal = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 audiopus = { workspace = true }
+nnnoiseless = "0.5"

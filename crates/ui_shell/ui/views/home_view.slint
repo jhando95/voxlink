@@ -8,6 +8,7 @@ export component HomeView inherits Rectangle {
     in-out property <string> user-name: "";
     in property <string> status-text: "";
     in property <bool> is-connected: false;
+    in property <bool> first-run: false;
     in property <[SpaceData]> spaces: [];
     in-out property <string> space-name: "";
     in-out property <string> space-invite-code: "";
@@ -98,6 +99,120 @@ export component HomeView inherits Rectangle {
                                 label: root.spaces.length + " spaces";
                                 tone: VxTheme.accent;
                                 fill: VxTheme.accent-subtle;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // First-run onboarding card — shown once for new users
+            if root.first-run && !root.is-connected : VxCard {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 14px;
+
+                    Text {
+                        text: "Get started in 3 steps";
+                        color: VxTheme.accent;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: root.user-name != "" && root.user-name != "User" ? VxTheme.success : VxTheme.accent;
+                            Text {
+                                text: root.user-name != "" && root.user-name != "User" ? "✓" : "1";
+                                color: white;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Set your display name";
+                                color: root.user-name != "" && root.user-name != "User" ? VxTheme.success : VxTheme.text-primary;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "Scroll down to the Server card and type a name others will see.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: VxTheme.accent;
+                            Text {
+                                text: "2";
+                                color: white;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Connect to a server";
+                                color: VxTheme.text-primary;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "The default server is pre-filled. Tap Connect or use Find on LAN.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 12px;
+                            background: VxTheme.accent;
+                            Text {
+                                text: "3";
+                                color: white;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Join or create a space";
+                                color: VxTheme.text-primary;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "Spaces give you voice channels, text chat, and a member list.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
                             }
                         }
                     }

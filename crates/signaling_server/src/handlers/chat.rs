@@ -327,6 +327,27 @@ pub async fn handle_send_text_message(
     };
 
     let Some(space_id) = space_id else { return };
+
+    // Check if peer is timed out
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+            if until > 0 && crate::now_epoch_secs() < until {
+                let peer = peer.clone();
+                drop(s);
+                send_to(
+                    &peer,
+                    &SignalMessage::Error {
+                        message: "You are timed out and cannot send messages".into(),
+                    },
+                )
+                .await;
+                return;
+            }
+        }
+    }
+
     clear_typing_for_peer(state, peer_id).await;
 
     // Get sender name and verify channel is text type
@@ -351,6 +372,42 @@ pub async fn handle_send_text_message(
     let Some(sender_name) = sender_name else {
         return;
     };
+
+    // Slow mode check
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            let slow_mode_secs = space
+                .channels
+                .iter()
+                .find(|ch| ch.id == channel_id)
+                .map(|ch| ch.slow_mode_secs)
+                .unwrap_or(0);
+            if slow_mode_secs > 0 {
+                let now = crate::now_epoch_secs();
+                let key = (channel_id.clone(), peer_id.to_string());
+                if let Some(&last) = space.slow_mode_timestamps.get(&key) {
+                    if now < last + slow_mode_secs as u64 {
+                        let remaining = (last + slow_mode_secs as u64) - now;
+                        if let Some(peer) = s.peers.get(peer_id).cloned() {
+                            drop(s);
+                            send_to(
+                                &peer,
+                                &SignalMessage::Error {
+                                    message: format!(
+                                        "Slow mode: wait {remaining}s before sending another message"
+                                    ),
+                                },
+                            )
+                            .await;
+                        }
+                        return;
+                    }
+                }
+                space.slow_mode_timestamps.insert(key, now);
+            }
+        }
+    }
 
     let reply_metadata =
         match resolve_reply_metadata(state, &space_id, &channel_id, reply_to_message_id).await {

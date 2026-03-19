@@ -80,6 +80,10 @@ pub async fn handle_create_channel(
             channel_type,
             topic: String::new(),
             voice_quality: quality,
+            user_limit: 0,
+            category: String::new(),
+            status: String::new(),
+            slow_mode_secs: 0,
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -93,6 +97,10 @@ pub async fn handle_create_channel(
             channel_type,
             topic: String::new(),
             voice_quality: quality,
+            user_limit: 0,
+            category: String::new(),
+            status: String::new(),
+            slow_mode_secs: 0,
         }
     };
 
@@ -361,6 +369,29 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         return;
     };
 
+    // Check user limit
+    if ch_type == ChannelType::Voice {
+        let user_limit = s.spaces.get(&space_id).and_then(|sp| {
+            sp.channels.iter().find(|c| c.id == channel_id).map(|c| c.user_limit)
+        }).unwrap_or(0);
+        if user_limit > 0 {
+            let current = s.rooms.get(&room_key).map(|r| r.peer_ids.len() as u32).unwrap_or(0);
+            if current >= user_limit {
+                if let Some(peer) = s.peers.get(peer_id).cloned() {
+                    drop(s);
+                    send_to(
+                        &peer,
+                        &SignalMessage::Error {
+                            message: format!("Channel is full ({user_limit}/{user_limit})"),
+                        },
+                    )
+                    .await;
+                }
+                return;
+            }
+        }
+    }
+
     // Text channels cannot be joined for voice
     if ch_type == ChannelType::Text {
         if let Some(peer) = s.peers.get(peer_id).cloned() {
@@ -391,6 +422,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                     name: p.name.lock().await.clone(),
                     is_muted: p.is_muted.load(Ordering::Relaxed),
                     is_deafened: p.is_deafened.load(Ordering::Relaxed),
+                    is_priority_speaker: false,
                 });
             }
         }
@@ -410,6 +442,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
             name: p.name.lock().await.clone(),
             is_muted: p.is_muted.load(Ordering::Relaxed),
             is_deafened: p.is_deafened.load(Ordering::Relaxed),
+            is_priority_speaker: false,
         })
     } else {
         None

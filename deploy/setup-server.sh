@@ -138,7 +138,7 @@ echo ""
 # --- Open firewall port ---
 # Oracle Linux / Ubuntu iptables
 if command -v iptables &> /dev/null; then
-    # Check if rule already exists
+    # Check if TCP 9090 rule already exists
     if ! sudo iptables -C INPUT -p tcp --dport 9090 -j ACCEPT 2>/dev/null; then
         # Insert BEFORE the REJECT rule (position 5 on Oracle Cloud Ubuntu)
         sudo iptables -I INPUT 5 -p tcp --dport 9090 -j ACCEPT
@@ -146,7 +146,14 @@ if command -v iptables &> /dev/null; then
     else
         echo "  Firewall: TCP 9090 already open (iptables)"
     fi
-    # Persist the rule
+    # UDP 9091 for audio relay (v0.6+)
+    if ! sudo iptables -C INPUT -p udp --dport 9091 -j ACCEPT 2>/dev/null; then
+        sudo iptables -I INPUT 5 -p udp --dport 9091 -j ACCEPT
+        echo "  Firewall: opened UDP 9091 (iptables)"
+    else
+        echo "  Firewall: UDP 9091 already open (iptables)"
+    fi
+    # Persist the rules
     if command -v netfilter-persistent &> /dev/null; then
         sudo netfilter-persistent save 2>/dev/null || true
     elif [ -f /etc/iptables/rules.v4 ]; then
@@ -170,8 +177,10 @@ if systemctl is-active --quiet voxlink; then
     echo ""
     echo "  Paste this into Voxlink > Server > Connect"
     echo ""
-    echo "  IMPORTANT: You still need to open port 9090"
-    echo "  in your Oracle Cloud Security List (see below)."
+    echo "  IMPORTANT: You still need to open these ports"
+    echo "  in your Oracle Cloud Security List:"
+    echo "    - TCP 9090  (WebSocket signaling)"
+    echo "    - UDP 9091  (audio relay, v0.6+)"
     echo ""
     echo "  Useful commands:"
     echo "    sudo systemctl status voxlink    # Check status"

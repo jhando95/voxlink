@@ -1,5 +1,5 @@
 use shared_types::PerfSnapshot;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use sysinfo::{Pid, System};
@@ -15,6 +15,18 @@ pub struct PerfCollector {
     pub network_connected: Arc<AtomicBool>,
     /// Shared counter for dropped audio frames (#11)
     pub dropped_frames: Arc<AtomicU64>,
+    // Audio metrics (M3)
+    pub frames_decoded: Arc<AtomicU32>,
+    pub frames_dropped: Arc<AtomicU32>,
+    pub current_jitter_ms: Arc<AtomicU32>,
+    pub active_peers: Arc<AtomicU32>,
+    pub encode_bitrate: Arc<AtomicU32>,
+    // Transport
+    pub udp_active: Arc<AtomicBool>,
+    pub ping_ms: Arc<std::sync::atomic::AtomicI32>,
+    // For computing frame loss rate
+    last_decoded: u32,
+    last_dropped: u32,
 }
 
 impl PerfCollector {
@@ -29,6 +41,15 @@ impl PerfCollector {
             audio_active: Arc::new(AtomicBool::new(false)),
             network_connected: Arc::new(AtomicBool::new(false)),
             dropped_frames: Arc::new(AtomicU64::new(0)),
+            frames_decoded: Arc::new(AtomicU32::new(0)),
+            frames_dropped: Arc::new(AtomicU32::new(0)),
+            current_jitter_ms: Arc::new(AtomicU32::new(40)),
+            active_peers: Arc::new(AtomicU32::new(0)),
+            encode_bitrate: Arc::new(AtomicU32::new(0)),
+            udp_active: Arc::new(AtomicBool::new(false)),
+            ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+            last_decoded: 0,
+            last_dropped: 0,
         }
     }
 
@@ -49,6 +70,20 @@ impl PerfCollector {
         // #16: Normalize CPU% by core count so 100% = all cores saturated
         let cpu_normalized = cpu / self.num_cpus;
 
+        // Compute frame loss rate from deltas since last snapshot
+        let decoded = self.frames_decoded.load(Ordering::Relaxed);
+        let dropped = self.frames_dropped.load(Ordering::Relaxed);
+        let delta_decoded = decoded.wrapping_sub(self.last_decoded);
+        let delta_dropped = dropped.wrapping_sub(self.last_dropped);
+        self.last_decoded = decoded;
+        self.last_dropped = dropped;
+        let total = delta_decoded + delta_dropped;
+        let loss_rate = if total > 0 {
+            delta_dropped as f32 / total as f32
+        } else {
+            0.0
+        };
+
         PerfSnapshot {
             cpu_percent: cpu_normalized,
             memory_mb: mem,
@@ -56,6 +91,12 @@ impl PerfCollector {
             audio_active: self.audio_active.load(Ordering::Relaxed),
             network_connected: self.network_connected.load(Ordering::Relaxed),
             dropped_frames: self.dropped_frames.load(Ordering::Relaxed),
+            jitter_buffer_ms: self.current_jitter_ms.load(Ordering::Relaxed),
+            frame_loss_rate: loss_rate,
+            encode_bitrate_kbps: self.encode_bitrate.load(Ordering::Relaxed) / 1000,
+            decode_peers: self.active_peers.load(Ordering::Relaxed),
+            udp_active: self.udp_active.load(Ordering::Relaxed),
+            ping_ms: self.ping_ms.load(Ordering::Relaxed),
         }
     }
 }

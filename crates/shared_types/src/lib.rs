@@ -92,6 +92,18 @@ pub struct ChannelInfo {
     /// Voice quality preset: 0=Low(24kbps), 1=Standard(48kbps), 2=High(64kbps), 3=Ultra(96kbps)
     #[serde(default = "default_voice_quality")]
     pub voice_quality: u8,
+    /// Max users allowed in this voice channel (0 = unlimited)
+    #[serde(default)]
+    pub user_limit: u32,
+    /// Category/group name for channel organization
+    #[serde(default)]
+    pub category: String,
+    /// Short status text displayed on voice channels (e.g. "Playing Valorant")
+    #[serde(default)]
+    pub status: String,
+    /// Slow mode cooldown in seconds (0 = disabled)
+    #[serde(default)]
+    pub slow_mode_secs: u32,
 }
 
 fn default_voice_quality() -> u8 {
@@ -270,6 +282,14 @@ pub struct PerfSnapshot {
     pub audio_active: bool,
     pub network_connected: bool,
     pub dropped_frames: u64,
+    // Audio metrics (M3)
+    pub jitter_buffer_ms: u32,
+    pub frame_loss_rate: f32,
+    pub encode_bitrate_kbps: u32,
+    pub decode_peers: u32,
+    // Transport (v0.6)
+    pub udp_active: bool,
+    pub ping_ms: i32,
 }
 
 /// Messages between client and signaling server
@@ -597,6 +617,84 @@ pub enum SignalMessage {
     /// Server is shutting down gracefully
     ServerShutdown,
 
+    // UDP transport negotiation
+    /// Client -> Server: Request a UDP session for audio transport.
+    /// Server will respond with UdpReady containing the session token and port.
+    RequestUdp,
+    /// Server -> Client: UDP relay is available. Client should send a UDP
+    /// "hello" packet with this token to register its address.
+    UdpReady {
+        /// 16-char hex string (8 random bytes)
+        token: String,
+        /// UDP port the server is listening on
+        port: u16,
+    },
+    /// Server -> Client: UDP is not available on this server.
+    UdpUnavailable,
+
+    // Channel settings
+    SetChannelUserLimit {
+        channel_id: String,
+        user_limit: u32,
+    },
+    ChannelUserLimitChanged {
+        channel_id: String,
+        user_limit: u32,
+    },
+    SetChannelSlowMode {
+        channel_id: String,
+        slow_mode_secs: u32,
+    },
+    ChannelSlowModeChanged {
+        channel_id: String,
+        slow_mode_secs: u32,
+    },
+    SetChannelCategory {
+        channel_id: String,
+        category: String,
+    },
+    ChannelCategoryChanged {
+        channel_id: String,
+        category: String,
+    },
+    SetChannelStatus {
+        channel_id: String,
+        status: String,
+    },
+    ChannelStatusChanged {
+        channel_id: String,
+        status: String,
+    },
+
+    // Priority speaker
+    SetPrioritySpeaker {
+        peer_id: String,
+        enabled: bool,
+    },
+    PrioritySpeakerChanged {
+        peer_id: String,
+        enabled: bool,
+    },
+
+    // Whisper (targeted private voice)
+    WhisperTo {
+        target_peer_ids: Vec<String>,
+    },
+    WhisperStopped,
+
+    // Timeout (timed mute)
+    TimeoutMember {
+        member_id: String,
+        duration_secs: u64,
+    },
+    MemberTimedOut {
+        member_id: String,
+        until_epoch: u64,
+    },
+    MemberTimeoutExpired {
+        member_id: String,
+    },
+
     // M10: Message Search
     SearchMessages {
         channel_id: String,
@@ -625,6 +723,15 @@ pub const MAX_SCREEN_FRAME_SIZE: usize = 512 * 1024;
 pub const MEDIA_PACKET_AUDIO: u8 = 1;
 pub const MEDIA_PACKET_SCREEN: u8 = 2;
 
+/// UDP session token length in bytes (random, assigned by server on RequestUdp).
+pub const UDP_SESSION_TOKEN_LEN: usize = 8;
+/// Default UDP relay port (same as WebSocket port + 1).
+pub const UDP_DEFAULT_PORT_OFFSET: u16 = 1;
+/// UDP keepalive packet type — sent every 15s to keep NAT mappings alive.
+pub const UDP_KEEPALIVE: u8 = 0xFE;
+/// Interval between UDP keepalive packets.
+pub const UDP_KEEPALIVE_INTERVAL_SECS: u64 = 15;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantInfo {
     pub id: String,
@@ -632,6 +739,8 @@ pub struct ParticipantInfo {
     pub is_muted: bool,
     #[serde(default)]
     pub is_deafened: bool,
+    #[serde(default)]
+    pub is_priority_speaker: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -765,6 +874,7 @@ mod tests {
                 name: "Alice".into(),
                 is_muted: false,
                 is_deafened: true,
+                is_priority_speaker: false,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -791,6 +901,7 @@ mod tests {
                 name: "Bob".into(),
                 is_muted: true,
                 is_deafened: false,
+                is_priority_speaker: false,
             },
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -961,6 +1072,10 @@ mod tests {
                 channel_type: ChannelType::Voice,
                 topic: String::new(),
                 voice_quality: 2,
+                user_limit: 0,
+                category: String::new(),
+                status: String::new(),
+                slow_mode_secs: 0,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -996,6 +1111,10 @@ mod tests {
                 channel_type: ChannelType::Voice,
                 topic: String::new(),
                 voice_quality: 2,
+                user_limit: 0,
+                category: String::new(),
+                status: String::new(),
+                slow_mode_secs: 0,
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),
@@ -1036,6 +1155,7 @@ mod tests {
                 name: "Alice".into(),
                 is_muted: false,
                 is_deafened: false,
+                is_priority_speaker: false,
             }],
             voice_quality: 2,
         };
@@ -1243,5 +1363,170 @@ mod tests {
         assert_eq!(CHANNELS, 1);
         assert_eq!(FRAME_SIZE, 960); // 20ms at 48kHz
         assert_eq!(MAX_AUDIO_FRAME_SIZE, 4096);
+        assert_eq!(UDP_SESSION_TOKEN_LEN, 8);
+        assert_eq!(UDP_DEFAULT_PORT_OFFSET, 1);
+    }
+
+    #[test]
+    fn signal_message_round_trip_request_udp() {
+        let msg = SignalMessage::RequestUdp;
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, SignalMessage::RequestUdp));
+    }
+
+    #[test]
+    fn signal_message_round_trip_udp_ready() {
+        let msg = SignalMessage::UdpReady {
+            token: "0123456789abcdef".into(),
+            port: 9091,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::UdpReady { token, port } => {
+                assert_eq!(token, "0123456789abcdef");
+                assert_eq!(port, 9091);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_udp_unavailable() {
+        let msg = SignalMessage::UdpUnavailable;
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, SignalMessage::UdpUnavailable));
+    }
+
+    #[test]
+    fn signal_message_round_trip_channel_user_limit() {
+        let msg = SignalMessage::SetChannelUserLimit {
+            channel_id: "c1".into(),
+            user_limit: 5,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetChannelUserLimit {
+                channel_id,
+                user_limit,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(user_limit, 5);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_priority_speaker() {
+        let msg = SignalMessage::SetPrioritySpeaker {
+            peer_id: "p1".into(),
+            enabled: true,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetPrioritySpeaker { peer_id, enabled } => {
+                assert_eq!(peer_id, "p1");
+                assert!(enabled);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_whisper() {
+        let msg = SignalMessage::WhisperTo {
+            target_peer_ids: vec!["p1".into(), "p2".into()],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::WhisperTo { target_peer_ids } => {
+                assert_eq!(target_peer_ids, vec!["p1", "p2"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_timeout_member() {
+        let msg = SignalMessage::TimeoutMember {
+            member_id: "p1".into(),
+            duration_secs: 300,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::TimeoutMember {
+                member_id,
+                duration_secs,
+            } => {
+                assert_eq!(member_id, "p1");
+                assert_eq!(duration_secs, 300);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_slow_mode() {
+        let msg = SignalMessage::SetChannelSlowMode {
+            channel_id: "c1".into(),
+            slow_mode_secs: 10,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetChannelSlowMode {
+                channel_id,
+                slow_mode_secs,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(slow_mode_secs, 10);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_channel_status() {
+        let msg = SignalMessage::SetChannelStatus {
+            channel_id: "c1".into(),
+            status: "Playing Valorant".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetChannelStatus {
+                channel_id,
+                status,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(status, "Playing Valorant");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn channel_info_new_fields_backward_compat() {
+        // Old JSON without new fields should default correctly
+        let json = r#"{"id":"c1","name":"General","peer_count":0}"#;
+        let info: ChannelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.user_limit, 0);
+        assert_eq!(info.category, "");
+        assert_eq!(info.status, "");
+        assert_eq!(info.slow_mode_secs, 0);
+    }
+
+    #[test]
+    fn participant_info_priority_speaker_backward_compat() {
+        let json = r#"{"id":"p1","name":"Alice","is_muted":false}"#;
+        let info: ParticipantInfo = serde_json::from_str(json).unwrap();
+        assert!(!info.is_priority_speaker);
     }
 }

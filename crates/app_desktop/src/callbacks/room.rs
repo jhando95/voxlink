@@ -135,7 +135,11 @@ pub fn setup_leave_room(
         {
             let mut s = state.borrow_mut();
             s.room = Default::default();
-            s.current_view = AppView::Home;
+            // Only navigate to Home if currently viewing the room;
+            // otherwise stay on the current view (e.g. Settings, System)
+            if s.current_view == AppView::Room {
+                s.current_view = AppView::Home;
+            }
         }
         *audio_started.borrow_mut() = false;
         speaking_ticks.borrow_mut().clear();
@@ -143,7 +147,9 @@ pub fn setup_leave_room(
         let Some(w) = window_weak.upgrade() else {
             return;
         };
-        w.set_current_view(ui_shell::view_to_index(AppView::Home));
+        if w.get_current_view() == ui_shell::view_to_index(AppView::Room) {
+            w.set_current_view(ui_shell::view_to_index(AppView::Home));
+        }
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);

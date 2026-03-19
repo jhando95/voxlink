@@ -11,6 +11,7 @@ mod helpers;
 mod screen_share;
 mod signal_handler;
 mod tick_loop;
+mod tray;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ fn main() {
         log::info!("Crash reports will be written to {}", crash_dir.display());
     }
 
+    let startup_t0 = std::time::Instant::now();
     log::info!("Voxlink starting");
 
     if let Some(exit_code) = automation::maybe_run_from_env() {
@@ -36,7 +38,7 @@ fn main() {
     }
 
     let config = config_store::load_config();
-    log::info!("Config loaded");
+    log::info!("Config loaded ({}ms)", startup_t0.elapsed().as_millis());
     let is_dark = config.dark_mode.unwrap_or(true);
     let theme_preset = helpers::theme_preset_index(&config.theme_preset);
 
@@ -80,8 +82,18 @@ fn main() {
     rt.block_on(async {
         let aud = audio.lock().await;
         aud.set_sensitivity(1.0 - config.noise_suppression);
+        aud.set_noise_suppression(config.neural_noise_suppression);
+        aud.set_echo_cancellation(config.echo_cancellation);
         aud.set_input_gain(config.input_volume);
         aud.set_output_volume(config.output_volume);
+
+        // Wire audio metrics into perf collector
+        let mut p = perf.borrow_mut();
+        p.frames_decoded = aud.metrics.frames_decoded.clone();
+        p.frames_dropped = aud.metrics.frames_dropped.clone();
+        p.current_jitter_ms = aud.metrics.current_jitter_ms.clone();
+        p.active_peers = aud.metrics.active_peers.clone();
+        p.encode_bitrate = aud.metrics.encode_bitrate_kbps.clone();
     });
 
     let media = Arc::new(TokioMutex::new(media_transport::MediaSession::new(
@@ -162,6 +174,10 @@ fn main() {
     window.set_input_volume(config.input_volume);
     window.set_output_volume(config.output_volume);
     window.set_notifications_enabled(config.notifications_enabled);
+    window.set_minimize_to_tray(config.minimize_to_tray);
+    window.set_neural_noise_suppression(config.neural_noise_suppression);
+    window.set_echo_cancellation(config.echo_cancellation);
+    window.set_first_run(config.auth_token.is_none());
 
     // Wire all UI callbacks
     callbacks::setup(
@@ -217,7 +233,47 @@ fn main() {
         log::info!("Update check disabled by environment");
     }
 
-    log::info!("Voxlink ready");
+    // System tray icon — minimize-to-tray on close, context menu for quick actions
+    let tray = tray::load_icon_rgba().and_then(|(rgba, w, h)| tray::Tray::new(rgba, w, h));
+    if let Some(tray) = tray {
+        log::info!("System tray icon created");
+        // Override close button: hide to tray if enabled, otherwise quit normally
+        let window_weak = window.as_weak();
+        window.window().on_close_requested(move || {
+            if let Some(w) = window_weak.upgrade() {
+                if w.get_minimize_to_tray() {
+                    w.window().hide().ok();
+                    return slint::CloseRequestResponse::KeepWindowShown;
+                }
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+        // Poll tray menu events at ~4Hz (lightweight — just drains a channel)
+        let tray_quit = tray.quit_requested.clone();
+        let tray_rc = Rc::new(tray);
+        let tray_timer = slint::Timer::default();
+        let tray_window_weak = window.as_weak();
+        tray_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(250),
+            move || {
+                let Some(w) = tray_window_weak.upgrade() else {
+                    return;
+                };
+                tray_rc.poll_events(&w);
+                if tray_quit.load(std::sync::atomic::Ordering::Relaxed) {
+                    w.window().hide().ok();
+                    slint::quit_event_loop().ok();
+                }
+            },
+        );
+        // Keep timer alive by leaking it — it lives for the duration of the app
+        std::mem::forget(tray_timer);
+    } else {
+        log::warn!("System tray icon could not be created");
+    }
+
+    log::info!("Voxlink ready (startup: {}ms)", startup_t0.elapsed().as_millis());
     if let Err(err) = window.run() {
         log::error!("Voxlink UI loop failed: {err}");
     }

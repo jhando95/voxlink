@@ -13,14 +13,42 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use buffers::{CaptureRing, PeerPlayback};
+use buffers::{CaptureRing, PeerPlayback, PeerPlaybackShared};
 use codec::{
-    frame_energy, soft_clip, Agc, ComfortNoise, DeEsser, HighPassFilter, MuteRamp, NoiseGate,
-    SendEncoder,
+    frame_energy, soft_clip, Agc, ComfortNoise, DeEsser, EchoCanceller, EchoReference,
+    HighPassFilter, MuteRamp, NoiseGate, NoiseSuppressor, SendEncoder,
 };
 use feedback::{FeedbackAction, FeedbackTone};
 
 const MAX_PEER_BUFFER_SAMPLES: usize = FRAME_SIZE * 10; // ~200ms per peer
+
+// ─── Audio Metrics (lock-free counters for perf panel) ───
+
+pub struct AudioMetrics {
+    pub frames_decoded: Arc<AtomicU32>,
+    pub frames_dropped: Arc<AtomicU32>,
+    pub current_jitter_ms: Arc<AtomicU32>,
+    pub active_peers: Arc<AtomicU32>,
+    pub encode_bitrate_kbps: Arc<AtomicU32>,
+}
+
+impl AudioMetrics {
+    pub fn new() -> Self {
+        Self {
+            frames_decoded: Arc::new(AtomicU32::new(0)),
+            frames_dropped: Arc::new(AtomicU32::new(0)),
+            current_jitter_ms: Arc::new(AtomicU32::new(JITTER_INITIAL as u32 * 20)),
+            active_peers: Arc::new(AtomicU32::new(0)),
+            encode_bitrate_kbps: Arc::new(AtomicU32::new(64)),
+        }
+    }
+}
+
+impl Default for AudioMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 const OPUS_MAX_PACKET: usize = 512; // headroom for complex frames at 32kbps
 const OPUS_BITRATE: i32 = 64000; // 64 kbps — high quality voice, still very bandwidth efficient
 
@@ -28,7 +56,7 @@ const OPUS_BITRATE: i32 = 64000; // 64 kbps — high quality voice, still very b
 const JITTER_MIN_FRAMES: u16 = 1; // 20ms minimum playout delay
 const JITTER_MAX_FRAMES: u16 = 5; // 100ms maximum playout delay
 const JITTER_INITIAL: u16 = 2; // 40ms default — good for LAN + decent internet
-const JITTER_STABLE_THRESHOLD: u16 = 500; // ~10s stable before reducing
+const JITTER_STABLE_THRESHOLD: u16 = 150; // ~3s stable before reducing (was 500/10s — too conservative)
 
 /// Get or create an entry in a HashMap by key. Avoids double key allocation.
 fn get_or_create<'a, V>(
@@ -167,11 +195,22 @@ pub struct AudioEngine {
     is_deafened: Arc<AtomicBool>,
     vad_enabled: Arc<AtomicBool>,
     peer_buffers: Arc<Mutex<HashMap<String, PeerPlayback>>>,
+    /// Shared peer list for the playback callback. Updated on peer join/leave.
+    /// The playback callback snapshots this once when the generation changes.
+    playback_peers: Arc<Mutex<Vec<Arc<PeerPlaybackShared>>>>,
+    /// Generation counter: bumped on peer add/remove so playback knows to re-snapshot.
+    playback_generation: Arc<AtomicU32>,
     on_encoded_frame: Arc<Mutex<Option<EncodedFrameCallback>>>,
     opus_decoders: Mutex<HashMap<String, OpusDecoder>>,
     mic_level_raw: Arc<AtomicU32>,
     /// Noise gate sensitivity (0.0–1.0 stored as 0–1000). Shared with capture callback.
     noise_gate_sensitivity: Arc<AtomicU32>,
+    /// Neural noise suppression enabled (RNNoise via nnnoiseless). Shared with capture callback.
+    noise_suppression_enabled: Arc<AtomicBool>,
+    /// Echo cancellation enabled. Shared with capture callback.
+    echo_cancellation_enabled: Arc<AtomicBool>,
+    /// Shared echo reference buffer — playback writes, capture reads.
+    echo_ref: Arc<EchoReference>,
     /// Input gain (mic boost/cut, 0.0–2.0 stored as 0–2000). Shared with capture callback.
     input_gain: Arc<AtomicU32>,
     /// Output volume (master, 0.0–1.0 stored as 0–1000). Shared with playback callback.
@@ -185,6 +224,8 @@ pub struct AudioEngine {
     /// Set to true when a stream error occurs — signals the app to attempt recovery (#1)
     pub capture_error: Arc<AtomicBool>,
     pub playback_error: Arc<AtomicBool>,
+    /// Lock-free audio metrics for perf panel
+    pub metrics: AudioMetrics,
 }
 
 unsafe impl Send for AudioEngine {}
@@ -200,10 +241,15 @@ impl AudioEngine {
             is_deafened: Arc::new(AtomicBool::new(false)),
             vad_enabled: Arc::new(AtomicBool::new(true)),
             peer_buffers: Arc::new(Mutex::new(HashMap::new())),
+            playback_peers: Arc::new(Mutex::new(Vec::new())),
+            playback_generation: Arc::new(AtomicU32::new(0)),
             on_encoded_frame: Arc::new(Mutex::new(None)),
             opus_decoders: Mutex::new(HashMap::new()),
             mic_level_raw: Arc::new(AtomicU32::new(0)),
             noise_gate_sensitivity: Arc::new(AtomicU32::new(500)), // 0.5 default
+            noise_suppression_enabled: Arc::new(AtomicBool::new(false)),
+            echo_cancellation_enabled: Arc::new(AtomicBool::new(false)),
+            echo_ref: Arc::new(EchoReference::new(FRAME_SIZE * 6)), // ~120ms reference
             input_gain: Arc::new(AtomicU32::new(1000)),            // 1.0 default (unity gain)
             output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
             feedback_tone: FeedbackTone::new(),
@@ -211,6 +257,7 @@ impl AudioEngine {
             target_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
+            metrics: AudioMetrics::new(),
         })
     }
 
@@ -375,20 +422,39 @@ impl AudioEngine {
 
     // ─── Peer Management ───
 
+    /// Rebuild the playback_peers snapshot and bump the generation counter.
+    /// Call after any peer add/remove.
+    fn sync_playback_peers(&self) {
+        if let Ok(peers) = self.peer_buffers.lock() {
+            let shared_list: Vec<Arc<PeerPlaybackShared>> =
+                peers.values().map(|p| p.shared.clone()).collect();
+            if let Ok(mut pp) = self.playback_peers.lock() {
+                *pp = shared_list;
+            }
+            self.playback_generation.fetch_add(1, Ordering::Release);
+        }
+    }
+
     pub fn set_peer_volume(&self, peer_id: &str, volume: f32) {
-        if let Ok(mut peers) = self.peer_buffers.lock() {
-            if let Some(peer) = peers.get_mut(peer_id) {
-                peer.volume = volume.clamp(0.0, 1.0);
+        if let Ok(peers) = self.peer_buffers.lock() {
+            if let Some(peer) = peers.get(peer_id) {
+                let val = (volume.clamp(0.0, 1.0) * 1000.0) as u32;
+                peer.shared.volume.store(val, Ordering::Relaxed);
             }
         }
     }
 
     pub fn remove_peer(&self, peer_id: &str) {
-        if let Ok(mut peers) = self.peer_buffers.lock() {
-            peers.remove(peer_id);
-        }
+        let removed = if let Ok(mut peers) = self.peer_buffers.lock() {
+            peers.remove(peer_id).is_some()
+        } else {
+            false
+        };
         if let Ok(mut decs) = self.opus_decoders.lock() {
             decs.remove(peer_id);
+        }
+        if removed {
+            self.sync_playback_peers();
         }
     }
 
@@ -443,6 +509,9 @@ impl AudioEngine {
         let vad_enabled = self.vad_enabled.clone();
         let mic_level = self.mic_level_raw.clone();
         let sensitivity = self.noise_gate_sensitivity.clone();
+        let ns_enabled = self.noise_suppression_enabled.clone();
+        let aec_enabled = self.echo_cancellation_enabled.clone();
+        let echo_ref_capture = self.echo_ref.clone();
         let input_gain = self.input_gain.clone();
         let opus_bitrate = self.opus_bitrate.clone();
 
@@ -458,6 +527,9 @@ impl AudioEngine {
         let mut mute_ramp = MuteRamp::new(is_capturing.clone());
         let mut agc = Agc::new();
         let mut comfort_noise = ComfortNoise::new();
+        let mut noise_suppressor = NoiseSuppressor::new();
+        let mut echo_canceller = EchoCanceller::new(FRAME_SIZE);
+        let mut silence_frames: u32 = 0;
 
         let stream = device.build_input_stream(
             &config,
@@ -476,6 +548,14 @@ impl AudioEngine {
                         }
                     }
 
+                    // Echo cancellation — subtract correlated playback reference
+                    echo_canceller.set_enabled(aec_enabled.load(Ordering::Relaxed));
+                    echo_canceller.process(&mut frame_buf, &echo_ref_capture);
+
+                    // Neural noise suppression (RNNoise) — runs before gate for cleaner VAD
+                    noise_suppressor.set_enabled(ns_enabled.load(Ordering::Relaxed));
+                    noise_suppressor.process(&mut frame_buf);
+
                     let energy = frame_energy(&frame_buf);
                     // Show mic level even when muted (UI feedback)
                     let is_active = is_capturing.load(Ordering::Relaxed);
@@ -492,20 +572,23 @@ impl AudioEngine {
                     let gate_open = noise_gate.process(energy, vad_enabled.load(Ordering::Relaxed));
                     noise_gate.apply_gain(&mut frame_buf, gate_open);
 
-                    // AGC: normalize volume (after gate so we don't amplify noise)
-                    if gate_open {
-                        agc.process(&mut frame_buf);
-                    }
+                    // AGC: always runs but adapts 10x slower when gate closed
+                    // so gain stays calibrated across gate transitions
+                    agc.process_with_gate(&mut frame_buf, gate_open);
 
                     // Smooth mute/unmute fade (eliminates click on toggle)
                     let has_audio = mute_ramp.apply(&mut frame_buf);
 
                     // Skip encoding if fully silent (gate closed + ramp done, or muted + ramp done)
                     if noise_gate.is_silent() && !has_audio {
-                        // Inject comfort noise to avoid jarring dead silence
-                        comfort_noise.fill(&mut frame_buf);
-                        // Still encode the comfort noise frame
+                        silence_frames += 1;
+                        // Only inject comfort noise after 5 frames (100ms) of continuous silence
+                        if silence_frames >= 5 {
+                            comfort_noise.fill(&mut frame_buf);
+                        }
+                        // Still encode the frame
                     } else {
+                        silence_frames = 0;
                         // De-ess sibilant frequencies before encoding
                         deesser.process(&mut frame_buf);
                     }
@@ -619,10 +702,16 @@ impl AudioEngine {
             buffer_size: cpal::BufferSize::Default,
         };
 
-        let peer_buffers = self.peer_buffers.clone();
+        let playback_peers = self.playback_peers.clone();
+        let playback_generation = self.playback_generation.clone();
         let is_deafened = self.is_deafened.clone();
         let output_volume = self.output_volume.clone();
         let feedback_playback = self.feedback_tone.playback_state();
+        let echo_ref_playback = self.echo_ref.clone();
+
+        // Local snapshot held by the playback callback — refreshed when generation changes
+        let mut local_peers: Vec<Arc<PeerPlaybackShared>> = Vec::new();
+        let mut local_gen: u32 = 0;
 
         let stream = device.build_output_stream(
             &config,
@@ -632,28 +721,43 @@ impl AudioEngine {
                 // Mix feedback tone (plays even when deafened — it's local UI feedback)
                 feedback_playback.mix_into(data);
 
-                if let Ok(mut peers) = peer_buffers.try_lock() {
-                    if is_deafened.load(Ordering::Relaxed) {
-                        for peer in peers.values_mut() {
-                            peer.buffer.clear();
-                        }
-                        return;
+                // Refresh peer snapshot if generation changed (peer joined/left)
+                let gen = playback_generation.load(Ordering::Acquire);
+                if gen != local_gen {
+                    if let Ok(pp) = playback_peers.try_lock() {
+                        local_peers.clone_from(&pp);
                     }
+                    local_gen = gen;
+                }
 
-                    for peer in peers.values_mut() {
-                        if !peer.is_ready() {
-                            continue;
-                        }
-                        peer.primed = true;
-                        let consumed = peer.buffer.mix_into(data, peer.volume);
-                        peer.adapt(consumed, data.len());
+                if is_deafened.load(Ordering::Relaxed) {
+                    for peer in &local_peers {
+                        peer.ring.clear();
                     }
+                    return;
+                }
 
-                    // Apply master output volume
-                    let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;
-                    for sample in data.iter_mut() {
-                        *sample = soft_clip(*sample * vol);
+                // Lock-free mixing: each peer's SPSC ring is read without any mutex
+                for peer in &local_peers {
+                    if !peer.is_ready() {
+                        continue;
                     }
+                    peer.primed.store(true, Ordering::Relaxed);
+                    let vol = peer.volume_f32();
+                    let consumed = peer.ring.mix_into(data, vol);
+                    peer.callback_count.fetch_add(1, Ordering::Relaxed);
+                    if consumed < data.len() {
+                        peer.underrun_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+
+                // Record mixed audio to echo reference before volume scaling
+                echo_ref_playback.record(data);
+
+                // Apply master output volume
+                let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;
+                for sample in data.iter_mut() {
+                    *sample = soft_clip(*sample * vol);
                 }
             },
             {
@@ -677,6 +781,10 @@ impl AudioEngine {
         if let Ok(mut peers) = self.peer_buffers.lock() {
             peers.clear();
         }
+        if let Ok(mut pp) = self.playback_peers.lock() {
+            pp.clear();
+        }
+        self.playback_generation.fetch_add(1, Ordering::Release);
         log::info!("Playback stopped");
     }
 
@@ -693,8 +801,12 @@ impl AudioEngine {
         let mut pcm_i16 = [0i16; FRAME_SIZE];
         let sample_count = match self.decode_opus_frame(sender_id, encoded_data, &mut pcm_i16) {
             Some(n) => n,
-            None => return false,
+            None => {
+                self.metrics.frames_dropped.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
         };
+        self.metrics.frames_decoded.fetch_add(1, Ordering::Relaxed);
         self.queue_decoded_audio(sender_id, &pcm_i16[..sample_count])
     }
 
@@ -728,28 +840,45 @@ impl AudioEngine {
     }
 
     fn queue_decoded_audio(&self, sender_id: &str, pcm_i16: &[i16]) -> bool {
+        if pcm_i16.is_empty() {
+            return false;
+        }
+
         let mut peers = match self.peer_buffers.try_lock() {
             Ok(p) => p,
             Err(_) => return false,
         };
 
+        let is_new = !peers.contains_key(sender_id);
         let Some(peer) = get_or_create(&mut peers, sender_id, || Some(PeerPlayback::new())) else {
             log::error!("Failed to create playback buffer for peer {sender_id}");
             return false;
         };
 
-        if pcm_i16.is_empty() {
-            return false;
-        }
-
-        // Convert i16 → f32, apply per-peer playback AGC, then push to ring buffer
+        // Convert i16 → f32, apply per-peer playback AGC, then push to SPSC ring
         let mut f32_buf: Vec<f32> = pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)).collect();
         peer.playback_agc.process(&mut f32_buf);
 
         let mut sum_sq: f32 = 0.0;
         for &s in &f32_buf {
             sum_sq += s * s;
-            peer.buffer.push(s);
+        }
+        // Push into the lock-free SPSC ring — playback callback reads without mutex
+        peer.shared.ring.push_slice(&f32_buf);
+
+        // Adapt jitter buffer based on playback underrun feedback
+        peer.adapt_from_atomics();
+
+        // Update audio metrics
+        let jitter = peer.shared.target_frames.load(Ordering::Relaxed) * 20;
+        self.metrics.current_jitter_ms.store(jitter, Ordering::Relaxed);
+
+        // If this is a new peer, sync the playback snapshot
+        let peer_count = peers.len() as u32;
+        drop(peers);
+        self.metrics.active_peers.store(peer_count, Ordering::Relaxed);
+        if is_new {
+            self.sync_playback_peers();
         }
 
         let rms = (sum_sq / f32_buf.len() as f32).sqrt();
@@ -774,6 +903,16 @@ impl AudioEngine {
     pub fn set_sensitivity(&self, sensitivity: f32) {
         let val = (sensitivity.clamp(0.0, 1.0) * 1000.0) as u32;
         self.noise_gate_sensitivity.store(val, Ordering::Relaxed);
+    }
+
+    /// Enable or disable neural noise suppression (RNNoise).
+    pub fn set_noise_suppression(&self, enabled: bool) {
+        self.noise_suppression_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Enable or disable echo cancellation.
+    pub fn set_echo_cancellation(&self, enabled: bool) {
+        self.echo_cancellation_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Set input gain (0.0 = silent, 1.0 = unity, 2.0 = +6dB boost)
@@ -819,5 +958,33 @@ impl AudioEngine {
     /// Play a local speaker preview tone for device/output testing.
     pub fn play_output_preview(&self) {
         self.feedback_tone.trigger(FeedbackAction::OutputPreview);
+    }
+
+    /// Get the name of the current input device (if capturing).
+    pub fn current_input_device_name(&self) -> Option<String> {
+        // The device name isn't stored directly, but we can enumerate to find the default
+        // This is used for device polling — returns the default device name for comparison
+        self.host.default_input_device().and_then(|d| d.name().ok())
+    }
+
+    /// Get the name of the current output device (if playing).
+    pub fn current_output_device_name(&self) -> Option<String> {
+        self.host.default_output_device().and_then(|d| d.name().ok())
+    }
+
+    /// Get a list of input device names (for hotplug detection).
+    pub fn input_device_names(&self) -> Vec<String> {
+        self.host
+            .input_devices()
+            .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get a list of output device names (for hotplug detection).
+    pub fn output_device_names(&self) -> Vec<String> {
+        self.host
+            .output_devices()
+            .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
     }
 }

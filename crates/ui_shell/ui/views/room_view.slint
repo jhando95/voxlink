@@ -15,7 +15,10 @@ export component RoomView inherits Rectangle {
     in property <bool> is-open-mic: true;
     in property <float> mic-level: 0.0;
     in property <string> ptt-key-display: "";
+    in property <string> mute-key-display: "";
+    in property <string> deafen-key-display: "";
     in property <int> ping-ms: -1;
+    in property <bool> udp-active: false;
     in property <int> reconnect-attempts: 0;
     in property <int> dropped-frames: 0;
     in property <bool> in-space-channel: false;
@@ -130,6 +133,18 @@ export component RoomView inherits Rectangle {
                     fill: VxTheme.warning-soft;
                 }
 
+                // PTT state indicator — shows when push-to-talk is active
+                if !root.is-open-mic && !root.is-muted && !root.is-deafened : VxStatusPill {
+                    label: "Transmitting  " + root.ptt-key-display;
+                    tone: VxTheme.success;
+                    fill: VxTheme.success-dim;
+                }
+                if !root.is-open-mic && root.is-muted && !root.talking-while-muted : VxStatusPill {
+                    label: "PTT  " + root.ptt-key-display;
+                    tone: VxTheme.text-muted;
+                    fill: VxTheme.bg-soft;
+                }
+
                 // Right: participant count + ping
                 HorizontalLayout {
                     spacing: 10px;
@@ -155,6 +170,14 @@ export component RoomView inherits Rectangle {
                         text: root.ping-ms >= 0 ? root.ping-ms + "ms" : "--";
                         color: VxTheme.text-muted;
                         font-size: 10px;
+                        vertical-alignment: center;
+                    }
+                    // Transport indicator
+                    Text {
+                        text: root.udp-active ? "UDP" : "WS";
+                        color: root.udp-active ? VxTheme.success : VxTheme.text-muted;
+                        font-size: 9px;
+                        font-weight: 700;
                         vertical-alignment: center;
                     }
 
@@ -409,8 +432,11 @@ export component RoomView inherits Rectangle {
 
                                 // Name
                                 Text {
-                                    text: p.id == "self" ? p.name + " (You)" : p.name;
-                                    color: p.is-speaking ? VxTheme.success :
+                                    text: p.id == "self"
+                                        ? (p.is-priority-speaker ? p.name + " (You) \u{2605}" : p.name + " (You)")
+                                        : (p.is-priority-speaker ? p.name + " \u{2605}" : p.name);
+                                    color: p.is-priority-speaker ? VxTheme.warning :
+                                           p.is-speaking ? VxTheme.success :
                                            root.selected-peer-id == p.id ? VxTheme.accent : VxTheme.text-primary;
                                     font-size: 11px;
                                     font-weight: 600;
@@ -601,7 +627,9 @@ export component RoomView inherits Rectangle {
 
                 // Mute
                 VxButton {
-                    label: root.is-muted ? "Unmute" : "Mute";
+                    label: root.wide && root.mute-key-display != ""
+                        ? (root.is-muted ? "Unmute" : "Mute") + "  [" + root.mute-key-display + "]"
+                        : (root.is-muted ? "Unmute" : "Mute");
                     danger: root.is-muted;
                     soft: !root.is-muted;
                     horizontal-stretch: 1;
@@ -610,7 +638,9 @@ export component RoomView inherits Rectangle {
 
                 // Deafen
                 VxButton {
-                    label: root.is-deafened ? "Undeafen" : "Deafen";
+                    label: root.wide && root.deafen-key-display != ""
+                        ? (root.is-deafened ? "Undeafen" : "Deafen") + "  [" + root.deafen-key-display + "]"
+                        : (root.is-deafened ? "Undeafen" : "Deafen");
                     soft: true;
                     horizontal-stretch: 1;
                     clicked => { root.toggle-deafen(); }

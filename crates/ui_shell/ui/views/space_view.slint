@@ -42,6 +42,12 @@ export component SpaceView inherits Rectangle {
     callback set-user-status(string);
     callback set-channel-topic(string, string);
     callback set-profile(string);
+    callback timeout-member(string, int);
+    callback set-channel-user-limit(string, int);
+    callback set-channel-slow-mode(string, int);
+    callback set-channel-category(string, string);
+    callback set-channel-status(string, string);
+    callback save-user-note(string, string);
     in-out property <string> user-status-input: "";
     in-out property <string> user-bio-input: "";
     in-out property <string> topic-edit-channel-id: "";
@@ -497,16 +503,27 @@ export component SpaceView inherits Rectangle {
                                             font-weight: 700;
                                         }
                                         Text {
-                                            text: channel.topic != ""
+                                            text: channel.status != "" ? channel.status
+                                                : channel.topic != ""
                                                 ? channel.topic
                                                 : channel.is-active ? "Connected right now" :
                                                   channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
-                                            color: VxTheme.text-muted;
+                                            color: channel.status != "" ? VxTheme.accent : VxTheme.text-muted;
                                             font-size: 9px;
                                             overflow: elide;
                                         }
                                     }
 
+                                    if channel.user-limit > 0 : VxStatusPill {
+                                        label: channel.peer-count + "/" + channel.user-limit;
+                                        tone: channel.peer-count >= channel.user-limit ? VxTheme.danger : VxTheme.text-secondary;
+                                        fill: VxTheme.bg-soft;
+                                    }
+                                    if channel.slow-mode-secs > 0 : VxStatusPill {
+                                        label: "Slow";
+                                        tone: VxTheme.warning;
+                                        fill: VxTheme.bg-soft;
+                                    }
                                     VxStatusPill {
                                         label: channel.voice-quality == 0 ? "Low"
                                              : channel.voice-quality == 1 ? "Std"
@@ -889,6 +906,13 @@ export component SpaceView inherits Rectangle {
                                             soft: true;
                                             horizontal-stretch: 1;
                                             clicked => { root.server-mute-member(member.id, !member.is-server-muted); }
+                                        }
+                                        VxButton {
+                                            label: "Timeout 5m";
+                                            small: true;
+                                            soft: true;
+                                            horizontal-stretch: 1;
+                                            clicked => { root.timeout-member(member.id, 300); }
                                         }
                                         VxButton {
                                             label: "Kick";

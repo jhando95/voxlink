@@ -37,6 +37,7 @@ pub fn handle_channel_joined(
     let mut s = state.borrow_mut();
 
     s.room.room_code = channel_id.to_string();
+    let saved_volumes = &config_store::load_config().peer_volumes;
     s.room.participants = participants
         .iter()
         .map(|p| Participant {
@@ -45,7 +46,7 @@ pub fn handle_channel_joined(
             is_muted: p.is_muted,
             is_deafened: false,
             is_speaking: false,
-            volume: 1.0,
+            volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
         })
         .collect();
     s.room.participants.push(Participant {
@@ -64,6 +65,7 @@ pub fn handle_channel_joined(
     }
 
     w.set_room_code(channel_name.into());
+    w.set_active_channel_id(channel_id.into());
     w.set_in_space_channel(true);
     w.set_reconnect_attempts(0);
     w.set_dropped_frames_baseline(w.get_dropped_frames_total());
@@ -161,11 +163,10 @@ pub fn handle_channel_left(
 ) {
     {
         let s = state.borrow();
-        if s.current_view != AppView::Room {
-            log::debug!(
-                "Ignoring ChannelLeft — already left (view={:?})",
-                s.current_view
-            );
+        // Check actual channel state, not view — the user may be on Settings/System
+        let already_left = s.space.as_ref().map_or(true, |sp| sp.active_channel_id.is_none());
+        if already_left {
+            log::debug!("Ignoring ChannelLeft — already left");
             return;
         }
     }
@@ -177,13 +178,18 @@ pub fn handle_channel_left(
         if let Some(ref mut space) = s.space {
             space.active_channel_id = None;
         }
-        s.current_view = AppView::Space;
+        if s.current_view == AppView::Room {
+            s.current_view = AppView::Space;
+        }
     }
     crate::friends::sync_ui(w, state);
     *ctx.audio_started.borrow_mut() = false;
 
-    w.set_current_view(ui_shell::view_to_index(AppView::Space));
+    if w.get_current_view() == ui_shell::view_to_index(AppView::Room) {
+        w.set_current_view(ui_shell::view_to_index(AppView::Space));
+    }
     w.set_room_code(slint::SharedString::default());
+    w.set_active_channel_id(slint::SharedString::default());
     w.set_is_muted(false);
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
@@ -213,6 +219,23 @@ pub fn handle_channel_topic_changed(
     if let Some(ref mut space) = s.space {
         if let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) {
             channel.topic = topic.to_string();
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}
+
+/// Generic handler for channel setting changes (user_limit, slow_mode, category, status)
+pub fn handle_channel_setting_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    channel_id: &str,
+    updater: impl FnOnce(&mut shared_types::ChannelInfo),
+) {
+    let mut s = state.borrow_mut();
+    if let Some(ref mut space) = s.space {
+        if let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) {
+            updater(channel);
         }
     }
     drop(s);

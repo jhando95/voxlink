@@ -3,7 +3,7 @@
 ; Bundles VC++ Runtime so end users need ZERO prerequisites
 
 #define MyAppName "Voxlink"
-#define MyAppVersion "0.5.3"
+#define MyAppVersion "0.7.0"
 #define MyAppPublisher "Voxlink"
 #define MyAppURL "https://github.com/voxlink"
 #define MyAppExeName "Voxlink.exe"
@@ -96,7 +96,8 @@ begin
   begin
     // Add firewall rule for the signaling server (TCP 9090)
     // This prevents the Windows Firewall popup when users host a server
-    Exec('netsh', 'advfirewall firewall add rule name="Voxlink Server" dir=in action=allow program="' + ExpandConstant('{app}\Voxlink-Server.exe') + '" enable=yes profile=private,public protocol=tcp localport=9090', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('netsh', 'advfirewall firewall add rule name="Voxlink Server TCP" dir=in action=allow program="' + ExpandConstant('{app}\Voxlink-Server.exe') + '" enable=yes profile=private,public protocol=tcp localport=9090', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('netsh', 'advfirewall firewall add rule name="Voxlink Server UDP" dir=in action=allow program="' + ExpandConstant('{app}\Voxlink-Server.exe') + '" enable=yes profile=private,public protocol=udp localport=9091', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
 
@@ -107,6 +108,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    Exec('netsh', 'advfirewall firewall delete rule name="Voxlink Server"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('netsh', 'advfirewall firewall delete rule name="Voxlink Server TCP"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('netsh', 'advfirewall firewall delete rule name="Voxlink Server UDP"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;

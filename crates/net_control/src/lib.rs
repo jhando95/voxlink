@@ -31,6 +31,12 @@ pub struct NetworkClient {
     last_ping_ms: Arc<std::sync::atomic::AtomicI32>,
     /// Timestamp of last sent ping (for measuring RTT).
     ping_sent_at: Arc<Mutex<Option<std::time::Instant>>>,
+    /// UDP socket for audio transport (None = not available, use WebSocket).
+    udp_socket: Arc<Mutex<Option<Arc<tokio::net::UdpSocket>>>>,
+    /// Whether UDP transport is active and ready for sending.
+    udp_active: Arc<std::sync::atomic::AtomicBool>,
+    /// UDP session token (8 bytes, set by server UdpReady response).
+    udp_token: Arc<Mutex<Option<[u8; 8]>>>,
 }
 
 impl Default for NetworkClient {
@@ -56,6 +62,9 @@ impl NetworkClient {
             server_url: Arc::new(Mutex::new(None)),
             last_ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
             ping_sent_at: Arc::new(Mutex::new(None)),
+            udp_socket: Arc::new(Mutex::new(None)),
+            udp_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            udp_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -165,6 +174,23 @@ impl NetworkClient {
     }
 
     pub async fn send_audio(&self, data: &[u8]) -> Result<()> {
+        // Prefer UDP when available — lower latency, no head-of-line blocking
+        if self.udp_active.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(ref token) = *self.udp_token.lock().await {
+                if let Some(ref socket) = *self.udp_socket.lock().await {
+                    // UDP packet: [token(8)][MEDIA_PACKET_AUDIO(1)][opus_data]
+                    let mut packet = Vec::with_capacity(8 + 1 + data.len());
+                    packet.extend_from_slice(token);
+                    packet.push(shared_types::MEDIA_PACKET_AUDIO);
+                    packet.extend_from_slice(data);
+                    // Fire-and-forget: UDP is unreliable by design
+                    let _ = socket.send(&packet).await;
+                    return Ok(());
+                }
+            }
+        }
+
+        // Fallback: WebSocket
         if let Some(tx) = self.ws_tx.lock().await.as_mut() {
             let mut packet = Vec::with_capacity(data.len() + 1);
             packet.push(shared_types::MEDIA_PACKET_AUDIO);
@@ -211,7 +237,109 @@ impl NetworkClient {
         self.last_ping_ms.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Set up UDP transport after receiving UdpReady from server.
+    /// Connects a UDP socket to the server and sends a hello packet with the session token.
+    pub async fn setup_udp(&self, token_hex: &str, udp_port: u16) -> Result<()> {
+        // Parse token from hex
+        let token = hex_decode_8(token_hex)
+            .ok_or_else(|| anyhow::anyhow!("Invalid UDP token hex: {token_hex}"))?;
+
+        // Derive server host from the WebSocket URL
+        let server_host = {
+            let url = self.server_url.lock().await;
+            let url = url.as_ref().context("Not connected")?;
+            // Extract host from ws://host:port or wss://host:port
+            let without_proto = url
+                .strip_prefix("wss://")
+                .or_else(|| url.strip_prefix("ws://"))
+                .unwrap_or(url);
+            let host = without_proto.split(':').next().unwrap_or("127.0.0.1");
+            host.to_string()
+        };
+
+        let udp_target = format!("{server_host}:{udp_port}");
+        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        socket.connect(&udp_target).await?;
+
+        // Send hello packet (just the token) to register our address with the server
+        socket.send(&token).await?;
+
+        let socket = Arc::new(socket);
+
+        // Start UDP receive task — pushes incoming audio to the same bounded channel
+        let audio_tx = self.audio_tx_internal.clone();
+        let recv_socket = socket.clone();
+        let udp_active = self.udp_active.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_AUDIO_FRAME_SIZE];
+            loop {
+                match recv_socket.recv(&mut buf).await {
+                    Ok(len) if len >= 3 => {
+                        // Same frame format as WebSocket: [type][id_len][sender_id][audio_data]
+                        if buf[0] == shared_types::MEDIA_PACKET_AUDIO {
+                            let id_len = buf[1] as usize;
+                            if len > 2 + id_len {
+                                let _ = audio_tx.try_send(buf[..len].to_vec());
+                            }
+                        }
+                    }
+                    Ok(_) => {} // Too short or keepalive response, ignore
+                    Err(e) => {
+                        log::warn!("UDP recv error: {e}");
+                        break;
+                    }
+                }
+            }
+            udp_active.store(false, std::sync::atomic::Ordering::Relaxed);
+            log::info!("UDP receive task ended");
+        });
+
+        // Start UDP keepalive task — prevents NAT mapping from expiring
+        let keepalive_socket = socket.clone();
+        let keepalive_active = self.udp_active.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(shared_types::UDP_KEEPALIVE_INTERVAL_SECS);
+            let keepalive_packet = [token[0], token[1], token[2], token[3],
+                                    token[4], token[5], token[6], token[7],
+                                    shared_types::UDP_KEEPALIVE];
+            loop {
+                tokio::time::sleep(interval).await;
+                if !keepalive_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if keepalive_socket.send(&keepalive_packet).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        *self.udp_socket.lock().await = Some(socket);
+        *self.udp_token.lock().await = Some(token);
+        self.udp_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        log::info!("UDP audio transport active → {udp_target}");
+
+        Ok(())
+    }
+
+    /// Request UDP transport from the server (sends RequestUdp signal).
+    pub async fn request_udp(&self) -> Result<()> {
+        self.send_signal(&SignalMessage::RequestUdp).await
+    }
+
+    /// Whether UDP transport is currently active.
+    pub fn is_udp_active(&self) -> bool {
+        self.udp_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub async fn disconnect(&mut self) {
+        // Shut down UDP
+        self.udp_active
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        *self.udp_socket.lock().await = None;
+        *self.udp_token.lock().await = None;
+
         if let Some(mut tx) = self.ws_tx.lock().await.take() {
             let _ = tx.close().await;
         }
@@ -248,6 +376,56 @@ pub fn parse_screen_frame(raw: &[u8]) -> Option<(&str, &[u8])> {
     let sender_id = std::str::from_utf8(&raw[2..2 + id_len]).ok()?;
     let frame_data = &raw[2 + id_len..];
     Some((sender_id, frame_data))
+}
+
+fn hex_decode_8(hex: &str) -> Option<[u8; 8]> {
+    if hex.len() != 16 {
+        return None;
+    }
+    let mut out = [0u8; 8];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_decode_8_valid() {
+        let result = hex_decode_8("0123456789abcdef");
+        assert_eq!(result, Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]));
+    }
+
+    #[test]
+    fn hex_decode_8_invalid_length() {
+        assert_eq!(hex_decode_8("0123"), None);
+        assert_eq!(hex_decode_8("0123456789abcdef00"), None);
+        assert_eq!(hex_decode_8(""), None);
+    }
+
+    #[test]
+    fn hex_decode_8_invalid_chars() {
+        assert_eq!(hex_decode_8("zzzzzzzzzzzzzzzz"), None);
+    }
+
+    #[test]
+    fn parse_audio_frame_valid() {
+        let mut frame = vec![shared_types::MEDIA_PACKET_AUDIO, 2]; // type, id_len=2
+        frame.extend_from_slice(b"p1");
+        frame.extend_from_slice(&[0xAA, 0xBB]);
+        let (sender, data) = parse_audio_frame(&frame).unwrap();
+        assert_eq!(sender, "p1");
+        assert_eq!(data, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn udp_active_default_false() {
+        let client = NetworkClient::new();
+        assert!(!client.is_udp_active());
+    }
 }
 
 /// Discover a Voxlink server on the local network via UDP broadcast.

@@ -189,6 +189,40 @@ export component SystemView inherits Rectangle {
                                                  root.perf.dropped-frames < 10 ? VxTheme.warning : VxTheme.danger;
                             }
                             MetricRow {
+                                metric-label: "Jitter buffer";
+                                metric-value: root.perf.jitter-buffer-ms + " ms";
+                                indicator-color: root.perf.jitter-buffer-ms <= 40 ? VxTheme.success :
+                                                 root.perf.jitter-buffer-ms <= 80 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Frame loss";
+                                metric-value: round(root.perf.frame-loss-percent * 10) / 10 + "%";
+                                indicator-color: root.perf.frame-loss-percent < 1 ? VxTheme.success :
+                                                 root.perf.frame-loss-percent < 5 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Bitrate";
+                                metric-value: root.perf.encode-bitrate-kbps > 0 ? root.perf.encode-bitrate-kbps + " kbps" : "—";
+                                indicator-color: VxTheme.accent;
+                            }
+                            MetricRow {
+                                metric-label: "Peers";
+                                metric-value: root.perf.decode-peers + "";
+                                indicator-color: VxTheme.accent;
+                            }
+                            MetricRow {
+                                metric-label: "Transport";
+                                metric-value: root.perf.udp-active ? "UDP" : "WebSocket";
+                                indicator-color: root.perf.udp-active ? VxTheme.success : VxTheme.text-muted;
+                            }
+                            MetricRow {
+                                metric-label: "Ping";
+                                metric-value: root.perf.ping-ms >= 0 ? root.perf.ping-ms + " ms" : "—";
+                                indicator-color: root.perf.ping-ms < 0 ? VxTheme.text-muted :
+                                                 root.perf.ping-ms < 60 ? VxTheme.success :
+                                                 root.perf.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
                                 metric-label: "Voice mode";
                                 metric-value: root.is-open-mic ? "Open mic" : "Push to talk";
                                 indicator-color: VxTheme.accent;
@@ -669,6 +703,18 @@ export component SystemView inherits Rectangle {
                             metric-value: round(root.perf.memory-mb * 10) / 10 + " MB";
                             indicator-color: root.perf.memory-mb < 100 ? VxTheme.success :
                                              root.perf.memory-mb < 250 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Transport";
+                            metric-value: root.perf.udp-active ? "UDP" : "WebSocket";
+                            indicator-color: root.perf.udp-active ? VxTheme.success : VxTheme.text-muted;
+                        }
+                        MetricRow {
+                            metric-label: "Ping";
+                            metric-value: root.perf.ping-ms >= 0 ? root.perf.ping-ms + " ms" : "—";
+                            indicator-color: root.perf.ping-ms < 0 ? VxTheme.text-muted :
+                                             root.perf.ping-ms < 60 ? VxTheme.success :
+                                             root.perf.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
                         }
                     }
                 }

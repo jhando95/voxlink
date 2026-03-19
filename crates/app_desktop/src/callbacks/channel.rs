@@ -152,7 +152,11 @@ pub fn setup_leave_channel(
             if let Some(ref mut space) = s.space {
                 space.active_channel_id = None;
             }
-            s.current_view = AppView::Space;
+            // Only navigate to Space if currently viewing the room;
+            // otherwise stay on the current view (e.g. Settings, System)
+            if s.current_view == AppView::Room {
+                s.current_view = AppView::Space;
+            }
         }
         *audio_started.borrow_mut() = false;
         speaking_ticks.borrow_mut().clear();
@@ -164,8 +168,11 @@ pub fn setup_leave_channel(
         // Restore channel/member list before switching view
         crate::friends::sync_ui(&w, &state);
 
-        w.set_current_view(ui_shell::view_to_index(AppView::Space));
+        if w.get_current_view() == ui_shell::view_to_index(AppView::Room) {
+            w.set_current_view(ui_shell::view_to_index(AppView::Space));
+        }
         w.set_room_code(slint::SharedString::default());
+        w.set_active_channel_id(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);
         w.set_in_space_channel(false);
