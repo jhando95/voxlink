@@ -5859,9 +5859,12 @@ async fn test_join_space() {
         })
         .await;
 
-    let invite_code = match owner.recv_signal().await {
-        SignalMessage::SpaceCreated { space, .. } => space.invite_code,
-        other => panic!("Expected SpaceCreated, got: {:?}", other),
+    let invite_code = loop {
+        match owner.recv_signal().await {
+            SignalMessage::SpaceCreated { space, .. } => break space.invite_code,
+            SignalMessage::FriendSnapshot { .. } => continue,
+            other => panic!("Expected SpaceCreated, got: {:?}", other),
+        }
     };
 
     // Drain extra messages for the owner
@@ -5884,13 +5887,16 @@ async fn test_join_space() {
         })
         .await;
 
-    // Joiner should get SpaceJoined
-    let msg = joiner.recv_signal().await;
-    match msg {
-        SignalMessage::SpaceJoined { space, .. } => {
-            assert_eq!(space.name, "Join Test");
+    // Joiner should get SpaceJoined (skip FriendSnapshot if it arrives first)
+    loop {
+        match joiner.recv_signal().await {
+            SignalMessage::SpaceJoined { space, .. } => {
+                assert_eq!(space.name, "Join Test");
+                break;
+            }
+            SignalMessage::FriendSnapshot { .. } => continue,
+            other => panic!("Expected SpaceJoined, got: {:?}", other),
         }
-        other => panic!("Expected SpaceJoined, got: {:?}", other),
     }
 }
 
@@ -5900,13 +5906,23 @@ async fn test_send_text_message() {
 
     // Create space using helper
     let mut owner = server.connect().await;
-    let (space, channels) = create_space(&mut owner, "ChatTest", "ChatUser").await;
+    let (_space, _channels) = create_space(&mut owner, "ChatTest", "ChatUser").await;
 
-    // Find a text channel
-    let text_ch = channels
-        .iter()
-        .find(|c| c.channel_type == shared_types::ChannelType::Text)
-        .expect("Should have text channel");
+    // Create a text channel since default is Voice only
+    owner
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "chat".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 0,
+        })
+        .await;
+    // Drain until we get ChannelCreated with the text channel info
+    let text_ch = loop {
+        match owner.recv_signal().await {
+            SignalMessage::ChannelCreated { channel, .. } => break channel,
+            _ => continue,
+        }
+    };
 
     owner.send_signal(&SignalMessage::SelectTextChannel {
         channel_id: text_ch.id.clone(),

@@ -1,5 +1,11 @@
 mod handlers;
 pub mod persistence;
+mod types;
+
+pub(crate) use types::{
+    ChannelMeta, Db, Peer, Room, ServerState, Space, State,
+    max_channel_messages, MAX_SPACE_AUDIT_ENTRIES,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use rand::rngs::OsRng;
@@ -105,222 +111,9 @@ impl AsyncWrite for ServerStream {
 
 impl Unpin for ServerStream {}
 
-// ─── Types ───
-
-type Tx =
-    futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<ServerStream>, Message>;
-
-struct Peer {
-    id: String,
-    name: Mutex<String>,
-    /// Persistent user identity (set by auth). Used for ban checks across reconnections.
-    user_id: Mutex<Option<String>>,
-    room_code: Mutex<Option<String>>,
-    /// Lock-free room code cache for the audio relay hot path.
-    /// Avoids acquiring room_code mutex on every audio frame (~50fps per peer).
-    /// Updated alongside room_code mutex via set_room_code().
-    room_code_cache: std::sync::RwLock<Option<String>>,
-    is_muted: AtomicBool,
-    is_deafened: AtomicBool,
-    status: Mutex<String>,
-    tx: Mutex<Tx>,
-    space_id: Mutex<Option<String>>,
-    typing_channel_id: Mutex<Option<String>>,
-    typing_dm_user_id: Mutex<Option<String>>,
-    watched_friend_ids: Mutex<HashSet<String>>,
-    /// Peer's remote IP address (for brute-force rate limiting)
-    ip: IpAddr,
-    /// UDP address for audio relay (set when client completes UDP handshake)
-    udp_addr: Mutex<Option<SocketAddr>>,
-    /// Priority speaker flag — when active, other peers are ducked
-    is_priority_speaker: AtomicBool,
-    /// Whisper target peer IDs (empty = normal broadcast)
-    whisper_targets: Mutex<Vec<String>>,
-    /// Timeout expiry (unix epoch seconds, 0 = no timeout)
-    timeout_until: AtomicU64,
-    // Rate limiting — atomic timestamps avoid lock contention on audio hot path
-    msg_count: AtomicU32,
-    rate_window_ms: AtomicU64,
-    // Audio frame rate limiting (#5)
-    audio_frame_count: AtomicU32,
-    audio_rate_window_ms: AtomicU64,
-    screen_frame_count: AtomicU32,
-    screen_rate_window_ms: AtomicU64,
-}
-
-impl Peer {
-    /// Set the peer's room code, updating both the authoritative mutex and fast cache.
-    async fn set_room_code(&self, code: Option<String>) {
-        *self.room_code.lock().await = code.clone();
-        match self.room_code_cache.write() {
-            Ok(mut cache) => {
-                *cache = code;
-            }
-            Err(poisoned) => {
-                log::warn!("room_code_cache write lock was poisoned; recovering");
-                *poisoned.into_inner() = code;
-            }
-        }
-    }
-
-    /// Fast lock-free read of the cached room code (for audio relay hot path).
-    fn cached_room_code(&self) -> Option<String> {
-        match self.room_code_cache.read() {
-            Ok(cache) => cache.clone(),
-            Err(poisoned) => {
-                log::warn!("room_code_cache read lock was poisoned; recovering");
-                poisoned.into_inner().clone()
-            }
-        }
-    }
-}
-
-struct Room {
-    peer_ids: Vec<String>,
-    password: Option<String>,
-    active_screen_share_peer_id: Option<String>,
-    created_at: Instant,
-}
-
-/// Max text messages stored per channel (in-memory ring buffer).
-/// Now configurable via VOXLINK_MAX_CHANNEL_MESSAGES env var.
-fn max_channel_messages() -> usize {
-    LIMITS.max_channel_messages
-}
-const MAX_SPACE_AUDIT_ENTRIES: usize = 64;
-
-#[allow(dead_code)]
-struct Space {
-    id: String,
-    name: String,
-    invite_code: String,
-    owner_id: String,
-    channels: Vec<ChannelMeta>,
-    member_ids: Vec<String>,
-    member_roles: HashMap<String, shared_types::SpaceRole>,
-    /// Text messages per channel_id, capped at LIMITS.max_channel_messages.
-    text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>>,
-    audit_log: VecDeque<shared_types::SpaceAuditEntry>,
-    /// Slow mode: (channel_id, peer_id) -> last message epoch seconds
-    slow_mode_timestamps: HashMap<(String, String), u64>,
-    created_at: Instant,
-}
-
-struct ChannelMeta {
-    id: String,
-    name: String,
-    room_key: String, // internal room code for audio relay, e.g. "sp:s1:ch:c1"
-    channel_type: shared_types::ChannelType,
-    topic: String,
-    voice_quality: u8, // 0=Low, 1=Standard, 2=High, 3=Ultra
-    user_limit: u32,
-    category: String,
-    status: String,
-    slow_mode_secs: u32,
-}
-
-struct ServerState {
-    peers: HashMap<String, Arc<Peer>>,
-    rooms: HashMap<String, Room>,
-    spaces: HashMap<String, Space>,
-    /// Reverse index: invite_code -> space_id for O(1) lookup
-    invite_index: HashMap<String, String>,
-    next_id: u64,
-    next_space_id: u64,
-    next_channel_id: u64,
-    next_message_id: u64,
-    next_audit_id: u64,
-    connections_per_ip: HashMap<IpAddr, u32>,
-    /// Rate limit for failed JoinSpace attempts per IP: (failure_count, window_start)
-    join_failures: HashMap<IpAddr, (u32, Instant)>,
-    /// UDP session tokens: token_bytes -> peer_id. Tokens are 8 random bytes.
-    udp_sessions: HashMap<[u8; 8], String>,
-}
-
-impl ServerState {
-    fn new() -> Self {
-        Self {
-            peers: HashMap::new(),
-            rooms: HashMap::new(),
-            spaces: HashMap::new(),
-            invite_index: HashMap::new(),
-            next_id: 1,
-            next_space_id: 1,
-            next_channel_id: 1,
-            next_message_id: 1,
-            next_audit_id: 1,
-            connections_per_ip: HashMap::new(),
-            join_failures: HashMap::new(),
-            udp_sessions: HashMap::new(),
-        }
-    }
-
-    fn alloc_id(&mut self) -> String {
-        let id = format!("p{}", self.next_id);
-        self.next_id += 1;
-        id
-    }
-
-    fn generate_room_code(&self) -> String {
-        for _ in 0..32 {
-            let mut bytes = [0u8; 4];
-            OsRng.fill_bytes(&mut bytes);
-            let code = format!("{:06}", u32::from_le_bytes(bytes) % 1_000_000);
-            if !self.rooms.contains_key(&code) {
-                return code;
-            }
-        }
-
-        format!("{:06}", self.next_id % 1_000_000)
-    }
-
-    fn generate_invite_code(&self) -> String {
-        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        for _ in 0..32 {
-            let mut bytes = [0u8; 8];
-            OsRng.fill_bytes(&mut bytes);
-            let mut result = String::with_capacity(bytes.len());
-            for byte in bytes {
-                result.push(chars[(byte as usize) % chars.len()] as char);
-            }
-            if !self.invite_index.contains_key(&result) {
-                return result;
-            }
-        }
-
-        format!("INV{:05}", self.next_space_id % 100_000)
-    }
-
-    fn alloc_space_id(&mut self) -> String {
-        let id = format!("s{}", self.next_space_id);
-        self.next_space_id += 1;
-        id
-    }
-
-    fn alloc_channel_id(&mut self) -> String {
-        let id = format!("c{}", self.next_channel_id);
-        self.next_channel_id += 1;
-        id
-    }
-
-    fn alloc_message_id(&mut self) -> String {
-        let id = format!("m{}", self.next_message_id);
-        self.next_message_id += 1;
-        id
-    }
-
-    fn alloc_audit_id(&mut self) -> String {
-        let id = format!("a{}", self.next_audit_id);
-        self.next_audit_id += 1;
-        id
-    }
-}
-
-type State = Arc<RwLock<ServerState>>;
-type Db = Option<Arc<persistence::Database>>;
+// Types are in types.rs, re-exported via `pub(crate) use types::*` above.
 type Metrics = Arc<ServerMetrics>;
 
-#[derive(Default)]
 struct ServerMetrics {
     connection_attempts_total: AtomicU64,
     active_connections: AtomicU64,
@@ -334,6 +127,31 @@ struct ServerMetrics {
     audio_frames_out_total: AtomicU64,
     screen_frames_in_total: AtomicU64,
     screen_frames_out_total: AtomicU64,
+    udp_frames_in_total: AtomicU64,
+    udp_frames_out_total: AtomicU64,
+    started_at: Instant,
+}
+
+impl Default for ServerMetrics {
+    fn default() -> Self {
+        Self {
+            connection_attempts_total: AtomicU64::new(0),
+            active_connections: AtomicU64::new(0),
+            websocket_handshake_failures_total: AtomicU64::new(0),
+            signaling_messages_total: AtomicU64::new(0),
+            malformed_signaling_messages_total: AtomicU64::new(0),
+            signaling_rate_limited_total: AtomicU64::new(0),
+            auth_success_total: AtomicU64::new(0),
+            auth_failure_total: AtomicU64::new(0),
+            audio_frames_in_total: AtomicU64::new(0),
+            audio_frames_out_total: AtomicU64::new(0),
+            screen_frames_in_total: AtomicU64::new(0),
+            screen_frames_out_total: AtomicU64::new(0),
+            udp_frames_in_total: AtomicU64::new(0),
+            udp_frames_out_total: AtomicU64::new(0),
+            started_at: Instant::now(),
+        }
+    }
 }
 
 fn bind_requires_tls(addr: &str) -> bool {
@@ -408,7 +226,13 @@ async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: boo
     let active_rooms = s.rooms.len();
     let active_spaces = s.spaces.len();
     let connected_peers = s.peers.len();
+    let udp_sessions = s.udp_sessions.len();
+    let total_room_peers: usize = s.rooms.values().map(|r| r.peer_ids.len()).sum();
+    let max_room_peers: usize = s.rooms.values().map(|r| r.peer_ids.len()).max().unwrap_or(0);
+    let total_space_members: usize = s.spaces.values().map(|sp| sp.member_ids.len()).sum();
     drop(s);
+
+    let uptime_secs = metrics.started_at.elapsed().as_secs();
 
     format!(
         concat!(
@@ -436,12 +260,26 @@ async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: boo
             "voxlink_screen_frames_in_total {}\n",
             "# TYPE voxlink_screen_frames_out_total counter\n",
             "voxlink_screen_frames_out_total {}\n",
+            "# TYPE voxlink_udp_frames_in_total counter\n",
+            "voxlink_udp_frames_in_total {}\n",
+            "# TYPE voxlink_udp_frames_out_total counter\n",
+            "voxlink_udp_frames_out_total {}\n",
             "# TYPE voxlink_active_rooms gauge\n",
             "voxlink_active_rooms {}\n",
             "# TYPE voxlink_active_spaces gauge\n",
             "voxlink_active_spaces {}\n",
             "# TYPE voxlink_connected_peers gauge\n",
             "voxlink_connected_peers {}\n",
+            "# TYPE voxlink_udp_sessions gauge\n",
+            "voxlink_udp_sessions {}\n",
+            "# TYPE voxlink_total_room_peers gauge\n",
+            "voxlink_total_room_peers {}\n",
+            "# TYPE voxlink_max_room_peers gauge\n",
+            "voxlink_max_room_peers {}\n",
+            "# TYPE voxlink_total_space_members gauge\n",
+            "voxlink_total_space_members {}\n",
+            "# TYPE voxlink_uptime_seconds gauge\n",
+            "voxlink_uptime_seconds {}\n",
             "# TYPE voxlink_tls_enabled gauge\n",
             "voxlink_tls_enabled {}\n",
         ),
@@ -461,9 +299,16 @@ async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: boo
         metrics.audio_frames_out_total.load(Ordering::Relaxed),
         metrics.screen_frames_in_total.load(Ordering::Relaxed),
         metrics.screen_frames_out_total.load(Ordering::Relaxed),
+        metrics.udp_frames_in_total.load(Ordering::Relaxed),
+        metrics.udp_frames_out_total.load(Ordering::Relaxed),
         active_rooms,
         active_spaces,
         connected_peers,
+        udp_sessions,
+        total_room_peers,
+        max_room_peers,
+        total_space_members,
+        uptime_secs,
         if tls_enabled { 1 } else { 0 },
     )
 }
@@ -1695,7 +1540,10 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
             continue;
         }
 
-        let token: [u8; 8] = buf[..8].try_into().unwrap();
+        let token: [u8; 8] = match buf[..8].try_into() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
         let packet_type = buf[8];
 
         // Look up peer by token
@@ -1725,6 +1573,7 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
         }
 
         if packet_type == shared_types::MEDIA_PACKET_AUDIO && len >= 10 {
+            metrics.udp_frames_in_total.fetch_add(1, Ordering::Relaxed);
             let audio_data = &buf[9..len];
             relay_audio_udp(&state, &metrics, &peer_id, audio_data, &udp_socket).await;
         }
@@ -1788,6 +1637,7 @@ async fn relay_audio_udp(
         if let Some(addr) = udp_addr {
             // Send via UDP — fire-and-forget (UDP is unreliable by design)
             let _ = udp_socket.send_to(&frame, addr).await;
+            metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
             // Fallback: send via WebSocket
             let frame_clone = frame.clone();

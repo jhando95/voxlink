@@ -80,6 +80,7 @@ pub fn auto_save_settings(
             recent_direct_messages: existing.recent_direct_messages,
             peer_volumes: existing.peer_volumes,
             user_notes: existing.user_notes,
+            saved_servers: existing.saved_servers,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),

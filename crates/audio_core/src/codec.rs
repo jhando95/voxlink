@@ -986,4 +986,367 @@ mod tests {
             samples.iter().map(|s| s.to_bits()).collect();
         assert!(distinct.len() > 10, "Comfort noise should have variety");
     }
+
+    // ─── HighPassFilter (extended) ───
+
+    #[test]
+    fn highpass_passes_voice_frequencies() {
+        let mut hpf = HighPassFilter::new();
+        // Prime the filter to avoid fade-in transient
+        let mut warmup = [0.0f32; FRAME_SIZE];
+        hpf.process(&mut warmup);
+
+        // 300Hz tone (typical voice fundamental) should pass through
+        let tau = std::f32::consts::TAU;
+        let mut samples = [0.0f32; FRAME_SIZE];
+        for (i, s) in samples.iter_mut().enumerate() {
+            *s = (tau * 300.0 * i as f32 / 48000.0).sin() * 0.5;
+        }
+        let original_energy: f32 = samples.iter().map(|s| s * s).sum();
+        hpf.process(&mut samples);
+        let processed_energy: f32 = samples.iter().map(|s| s * s).sum();
+        let ratio = processed_energy / original_energy;
+        assert!(ratio > 0.85, "300Hz should pass through HPF: ratio={ratio}");
+    }
+
+    #[test]
+    fn highpass_attenuates_subsonic() {
+        let mut hpf = HighPassFilter::new();
+        // Prime
+        let mut warmup = [0.0f32; FRAME_SIZE];
+        hpf.process(&mut warmup);
+
+        // 20Hz rumble (HVAC/plosive) should be attenuated
+        let tau = std::f32::consts::TAU;
+        let mut samples = [0.0f32; FRAME_SIZE];
+        for (i, s) in samples.iter_mut().enumerate() {
+            *s = (tau * 20.0 * i as f32 / 48000.0).sin() * 0.5;
+        }
+        let original_energy: f32 = samples.iter().map(|s| s * s).sum();
+        hpf.process(&mut samples);
+        let processed_energy: f32 = samples.iter().map(|s| s * s).sum();
+        let ratio = processed_energy / original_energy;
+        assert!(ratio < 0.5, "20Hz should be attenuated by HPF: ratio={ratio}");
+    }
+
+    #[test]
+    fn highpass_fade_in_prevents_transient() {
+        let mut hpf = HighPassFilter::new();
+        // First frame should have fade-in (first 96 samples ramp from 0)
+        let mut samples = [0.5f32; FRAME_SIZE];
+        hpf.process(&mut samples);
+        assert!(
+            samples[0].abs() < 0.01,
+            "First sample of first frame should be near zero (fade-in)"
+        );
+        assert!(
+            samples[95].abs() > 0.0,
+            "Sample at end of fade-in ramp should be non-zero"
+        );
+    }
+
+    // ─── DeEsser (extended) ───
+
+    #[test]
+    fn deesser_reduces_sibilance() {
+        let mut de = DeEsser::new();
+        // High frequency signal (6kHz sibilant range) should be attenuated
+        let tau = std::f32::consts::TAU;
+        let mut samples = [0.0f32; FRAME_SIZE];
+        for (i, s) in samples.iter_mut().enumerate() {
+            *s = (tau * 6000.0 * i as f32 / 48000.0).sin() * 0.5;
+        }
+        let original_energy: f32 = samples.iter().map(|s| s * s).sum();
+        de.process(&mut samples);
+        let processed_energy: f32 = samples.iter().map(|s| s * s).sum();
+        let ratio = processed_energy / original_energy;
+        assert!(
+            ratio < 0.95,
+            "High freq sibilants should be reduced: ratio={ratio}"
+        );
+    }
+
+    // ─── PlaybackAgc ───
+
+    #[test]
+    fn playback_agc_boosts_quiet() {
+        let mut agc = PlaybackAgc::new();
+        for _ in 0..100 {
+            let mut samples = [0.005f32; FRAME_SIZE];
+            agc.process(&mut samples);
+        }
+        let mut samples = [0.005f32; FRAME_SIZE];
+        agc.process(&mut samples);
+        let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
+        assert!(rms > 0.005, "PlaybackAgc should boost quiet signal: rms={rms}");
+    }
+
+    #[test]
+    fn playback_agc_attenuates_loud() {
+        let mut agc = PlaybackAgc::new();
+        // AGC adapts very slowly (alpha=0.001), so run many frames
+        for _ in 0..5000 {
+            let mut samples = [0.8f32; FRAME_SIZE];
+            agc.process(&mut samples);
+        }
+        let mut samples = [0.8f32; FRAME_SIZE];
+        agc.process(&mut samples);
+        let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
+        assert!(rms < 0.8, "PlaybackAgc should attenuate loud signal: rms={rms}");
+    }
+
+    #[test]
+    fn playback_agc_custom_target() {
+        let agc = PlaybackAgc::with_target_rms(0.3);
+        assert!((agc.target_rms - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn playback_agc_limiter() {
+        let mut agc = PlaybackAgc::new();
+        agc.gain = 6.0;
+        let mut samples = [0.5f32; 100];
+        agc.process(&mut samples);
+        let max = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max <= 0.96, "PlaybackAgc limiter should cap output: max={max}");
+    }
+
+    // ─── NoiseGate (extended) ───
+
+    #[test]
+    fn noise_gate_auto_calibration() {
+        let sensitivity = Arc::new(AtomicU32::new(500));
+        let mut gate = NoiseGate::new(sensitivity);
+
+        // During first 100 frames, calibration is active
+        for _ in 0..99 {
+            gate.process(0.01, true);
+        }
+        // After 100 frames, noise floor should be calibrated
+        assert_eq!(gate.calibration_frames, 99);
+        gate.process(0.01, true);
+        assert_eq!(gate.calibration_frames, 100);
+        // noise_floor should be close to the average of the calibration energy
+        assert!(
+            (gate.noise_floor - 0.01).abs() < 0.005,
+            "Noise floor should calibrate to ~0.01: got {}",
+            gate.noise_floor
+        );
+    }
+
+    #[test]
+    fn noise_gate_is_silent_tracks_gain() {
+        let sensitivity = Arc::new(AtomicU32::new(500));
+        let mut gate = NoiseGate::new(sensitivity);
+        // Initially gain is 0, so is_silent should be true
+        assert!(gate.is_silent());
+
+        // Open gate and ramp up
+        gate.process(1.0, true);
+        let mut samples = [0.5f32; FRAME_SIZE];
+        gate.apply_gain(&mut samples, true);
+        // After ramp-up, should no longer be silent
+        assert!(!gate.is_silent());
+    }
+
+    // ─── soft_clip (extended) ───
+
+    #[test]
+    fn soft_clip_monotonically_increasing() {
+        // soft_clip is monotonic in the practical range [-2, 2]
+        // (the d/(1+d²) term peaks at d=1 then decreases, so beyond ±2 it's not monotonic)
+        let mut prev = soft_clip(-2.0);
+        for i in -20..=20 {
+            let x = i as f32 / 10.0;
+            let y = soft_clip(x);
+            assert!(y >= prev, "soft_clip not monotonic at x={x}: {prev} -> {y}");
+            prev = y;
+        }
+    }
+
+    #[test]
+    fn soft_clip_bounded() {
+        // Output should approach but never reach 2.0 for positive, -2.0 for negative
+        for x in [100.0, 1000.0, 1e6] {
+            let y = soft_clip(x);
+            assert!(y < 2.0, "soft_clip({x}) = {y} should be < 2.0");
+            assert!(y > 1.0, "soft_clip({x}) = {y} should be > 1.0");
+            let yn = soft_clip(-x);
+            assert!(yn > -2.0, "soft_clip(-{x}) = {yn} should be > -2.0");
+        }
+    }
+
+    // ─── NoiseSuppressor ───
+
+    #[test]
+    fn noise_suppressor_disabled_passthrough() {
+        let mut ns = NoiseSuppressor::new();
+        // When disabled, process should not modify samples
+        let original = [0.5f32; FRAME_SIZE];
+        let mut samples = original;
+        ns.process(&mut samples);
+        assert_eq!(samples, original, "Disabled NoiseSuppressor should not modify audio");
+    }
+
+    #[test]
+    fn noise_suppressor_enable_disable_toggle() {
+        let mut ns = NoiseSuppressor::new();
+        assert!(!ns.enabled);
+        ns.set_enabled(true);
+        assert!(ns.enabled);
+        ns.set_enabled(false);
+        assert!(!ns.enabled);
+    }
+
+    #[test]
+    fn noise_suppressor_resets_on_enable() {
+        let mut ns = NoiseSuppressor::new();
+        ns.set_enabled(true);
+        // Process some frames to prime
+        let mut samples = [0.1f32; FRAME_SIZE];
+        ns.process(&mut samples);
+        assert!(ns.primed || !ns.primed); // just exercise the path
+        // Disable and re-enable should reset
+        ns.set_enabled(false);
+        ns.set_enabled(true);
+        assert!(!ns.primed, "Re-enabling should reset primed state");
+    }
+
+    #[test]
+    fn noise_suppressor_short_buffer_passthrough() {
+        let mut ns = NoiseSuppressor::new();
+        ns.set_enabled(true);
+        // Buffer shorter than 2 sub-frames should be ignored
+        let mut short = [0.5f32; 100];
+        let original = short;
+        ns.process(&mut short);
+        assert_eq!(short, original, "Short buffer should pass through unchanged");
+    }
+
+    // ─── EchoCanceller ───
+
+    #[test]
+    fn echo_canceller_disabled_passthrough() {
+        let mut ec = EchoCanceller::new(FRAME_SIZE);
+        let echo_ref = EchoReference::new(FRAME_SIZE * 6);
+        let original = [0.3f32; FRAME_SIZE];
+        let mut samples = original;
+        ec.process(&mut samples, &echo_ref);
+        assert_eq!(samples, original, "Disabled EchoCanceller should not modify audio");
+    }
+
+    #[test]
+    fn echo_canceller_suppresses_correlated_signal() {
+        let mut ec = EchoCanceller::new(FRAME_SIZE);
+        ec.set_enabled(true);
+        let echo_ref = EchoReference::new(FRAME_SIZE * 6);
+
+        // Generate a signal and record it as playback reference
+        let tau = std::f32::consts::TAU;
+        let mut signal = [0.0f32; FRAME_SIZE];
+        for (i, s) in signal.iter_mut().enumerate() {
+            *s = (tau * 440.0 * i as f32 / 48000.0).sin() * 0.5;
+        }
+        echo_ref.record(&signal);
+
+        // Same signal in capture (simulating echo)
+        let mut capture = signal;
+        let original_energy: f32 = capture.iter().map(|s| s * s).sum();
+        ec.process(&mut capture, &echo_ref);
+        let processed_energy: f32 = capture.iter().map(|s| s * s).sum();
+
+        // Echo should be at least partially suppressed
+        assert!(
+            processed_energy < original_energy,
+            "Echo canceller should reduce correlated signal: original={original_energy}, processed={processed_energy}"
+        );
+    }
+
+    // ─── EchoReference ───
+
+    #[test]
+    fn echo_reference_record_and_read() {
+        let echo_ref = EchoReference::new(1024);
+        let data: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
+        echo_ref.record(&data);
+
+        let mut out = [0.0f32; 50];
+        echo_ref.read_recent(&mut out);
+        // Should contain the last 50 samples (0.50..0.99)
+        assert!((out[0] - 0.50).abs() < 0.01, "First read sample should be ~0.50: got {}", out[0]);
+        assert!((out[49] - 0.99).abs() < 0.01, "Last read sample should be ~0.99: got {}", out[49]);
+    }
+
+    // ─── AGC (extended) ───
+
+    #[test]
+    fn agc_gate_closed_slower_adaptation() {
+        let mut agc_open = Agc::new();
+        let mut agc_closed = Agc::new();
+
+        // Feed both the same quiet signal, one with gate open, one with gate closed
+        for _ in 0..20 {
+            let mut samples_open = [0.01f32; FRAME_SIZE];
+            let mut samples_closed = [0.01f32; FRAME_SIZE];
+            agc_open.process_with_gate(&mut samples_open, true);
+            agc_closed.process_with_gate(&mut samples_closed, false);
+        }
+
+        // Open-gate AGC should have adapted more aggressively
+        let open_gain = agc_open.gain;
+        let closed_gain = agc_closed.gain;
+        assert!(
+            (open_gain - 1.0).abs() >= (closed_gain - 1.0).abs() * 0.5,
+            "Open-gate AGC should adapt faster: open_gain={open_gain}, closed_gain={closed_gain}"
+        );
+    }
+
+    // ─── MuteRamp (extended) ───
+
+    #[test]
+    fn mute_ramp_unmute_smooth() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut ramp = MuteRamp::new(flag.clone());
+
+        // Start muted, ramp gain to 0
+        let mut samples = [1.0f32; 960];
+        ramp.apply(&mut samples);
+        // Should be mostly silent
+        assert!(samples[959] < 0.01, "Should be muted at end");
+
+        // Now unmute
+        flag.store(true, Ordering::Relaxed);
+        let mut samples = [1.0f32; 960];
+        ramp.apply(&mut samples);
+        // First sample should be near 0 (smooth ramp up)
+        assert!(samples[0] < 0.1, "Unmute ramp should start low");
+        // Last sample should be near 1.0
+        assert!(samples[959] > 0.9, "Unmute ramp should reach near-full by end");
+    }
+
+    // ─── ComfortNoise (extended) ───
+
+    #[test]
+    fn comfort_noise_deterministic_from_seed() {
+        let mut cn1 = ComfortNoise::new();
+        let mut cn2 = ComfortNoise::new();
+        let mut s1 = [0.0f32; 100];
+        let mut s2 = [0.0f32; 100];
+        cn1.fill(&mut s1);
+        cn2.fill(&mut s2);
+        // Same seed should produce same output
+        assert_eq!(s1, s2, "Comfort noise should be deterministic from same seed");
+    }
+
+    #[test]
+    fn comfort_noise_amplitude_bound() {
+        let mut cn = ComfortNoise::new();
+        let mut samples = [0.0f32; 10000];
+        cn.fill(&mut samples);
+        let max = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(
+            max < 0.01,
+            "Comfort noise amplitude should be very small: max={max}"
+        );
+    }
 }

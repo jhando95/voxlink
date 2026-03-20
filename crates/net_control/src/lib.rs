@@ -492,6 +492,116 @@ mod tests {
         assert!(!client.is_udp_active());
         assert_eq!(client.ping_ms(), -1);
     }
+
+    // ─── Connection lifecycle tests ───
+
+    #[tokio::test]
+    async fn connect_to_invalid_server_fails() {
+        let mut client = NetworkClient::new();
+        let result = client.connect("ws://127.0.0.1:1").await;
+        assert!(result.is_err(), "Connecting to invalid server should fail");
+        assert!(!client.is_connected());
+    }
+
+    #[tokio::test]
+    async fn try_reconnect_without_prior_connect() {
+        let mut client = NetworkClient::new();
+        // No prior connect means no stored URL
+        let result = client.try_reconnect().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false, "Should return false when no URL stored");
+    }
+
+    #[tokio::test]
+    async fn disconnect_when_not_connected() {
+        let mut client = NetworkClient::new();
+        // Should not panic
+        client.disconnect().await;
+        assert!(!client.is_connected());
+        assert!(!client.is_udp_active());
+    }
+
+    #[tokio::test]
+    async fn send_signal_when_not_connected() {
+        let client = NetworkClient::new();
+        let msg = shared_types::SignalMessage::LeaveRoom;
+        let result = client.send_signal(&msg).await;
+        assert!(result.is_err(), "Sending when not connected should fail");
+    }
+
+    #[tokio::test]
+    async fn send_audio_when_not_connected() {
+        let client = NetworkClient::new();
+        // Should not panic, just silently succeed (no-op)
+        let result = client.send_audio(&[0xAA, 0xBB]).await;
+        assert!(result.is_ok(), "send_audio with no connection should not error");
+    }
+
+    #[test]
+    fn try_recv_signal_empty() {
+        let mut client = NetworkClient::new();
+        assert!(client.try_recv_signal().is_none());
+    }
+
+    #[test]
+    fn try_recv_audio_empty() {
+        let mut client = NetworkClient::new();
+        assert!(client.try_recv_audio().is_none());
+    }
+
+    #[test]
+    fn try_recv_screen_empty() {
+        let mut client = NetworkClient::new();
+        assert!(client.try_recv_screen_frame().is_none());
+    }
+
+    // ─── Frame parsing edge cases ───
+
+    #[test]
+    fn parse_audio_frame_max_id_len() {
+        // id_len=255 (max u8), but data is short
+        let frame = vec![shared_types::MEDIA_PACKET_AUDIO, 255, b'x'];
+        assert!(parse_audio_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn parse_audio_frame_zero_id_len() {
+        // id_len=0 means sender_id is empty string
+        let frame = vec![shared_types::MEDIA_PACKET_AUDIO, 0, 0xAA];
+        let result = parse_audio_frame(&frame);
+        assert!(result.is_some());
+        let (sender, data) = result.unwrap();
+        assert_eq!(sender, "");
+        assert_eq!(data, &[0xAA]);
+    }
+
+    #[test]
+    fn parse_audio_frame_large_payload() {
+        let mut frame = vec![shared_types::MEDIA_PACKET_AUDIO, 3];
+        frame.extend_from_slice(b"abc");
+        frame.extend_from_slice(&vec![0xBB; 1024]);
+        let (sender, data) = parse_audio_frame(&frame).unwrap();
+        assert_eq!(sender, "abc");
+        assert_eq!(data.len(), 1024);
+    }
+
+    #[test]
+    fn parse_screen_frame_zero_id_len() {
+        let frame = vec![shared_types::MEDIA_PACKET_SCREEN, 0, 0x01];
+        let result = parse_screen_frame(&frame);
+        assert!(result.is_some());
+        let (sender, data) = result.unwrap();
+        assert_eq!(sender, "");
+        assert_eq!(data, &[0x01]);
+    }
+
+    // ─── Hex decode edge cases ───
+
+    #[test]
+    fn hex_decode_8_mixed_case() {
+        let result = hex_decode_8("aAbBcCdDeEfF0011");
+        assert_eq!(result, Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]));
+    }
 }
 
 /// Discover a Voxlink server on the local network via UDP broadcast.

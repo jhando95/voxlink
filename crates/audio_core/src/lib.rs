@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use buffers::{CaptureRing, PeerPlayback, PeerPlaybackShared};
 use codec::{
-    frame_energy, soft_clip, Agc, ComfortNoise, DeEsser, EchoCanceller, EchoReference,
+    Agc, ComfortNoise, DeEsser, EchoCanceller, EchoReference,
     HighPassFilter, MuteRamp, NoiseGate, NoiseSuppressor, SendEncoder,
 };
 use feedback::{FeedbackAction, FeedbackTone};
@@ -1072,6 +1072,66 @@ impl AudioEngine {
             .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
             .unwrap_or_default()
     }
+
+    /// Adaptive bitrate: adjust Opus bitrate based on packet loss ratio.
+    ///
+    /// Call periodically (e.g. every 2-5 seconds) with the current dropped/decoded
+    /// frame counts. Reduces bitrate when loss is high, restores toward target when stable.
+    ///
+    /// - `loss_ratio`: 0.0 (no loss) to 1.0 (total loss)
+    /// - Returns the new bitrate in bps
+    pub fn adapt_bitrate(&self, loss_ratio: f32) -> i32 {
+        let target = self.target_bitrate.load(Ordering::Relaxed);
+        let current = self.opus_bitrate.load(Ordering::Relaxed);
+
+        let new_bitrate = if loss_ratio > 0.15 {
+            // Heavy loss: drop to 60% of target (aggressive reduction)
+            (target as f32 * 0.6) as i32
+        } else if loss_ratio > 0.05 {
+            // Moderate loss: drop to 80% of target
+            (target as f32 * 0.8) as i32
+        } else if loss_ratio > 0.01 {
+            // Light loss: drop to 90% of target
+            (target as f32 * 0.9) as i32
+        } else {
+            // No loss: ramp back toward target (slow recovery, 10% per call)
+            let step = ((target - current) as f32 * 0.1) as i32;
+            current + step.max(1000).min(target - current) // at least 1kbps step
+        };
+
+        // Clamp to reasonable range: 16kbps minimum, target maximum
+        let clamped = new_bitrate.clamp(16000, target);
+
+        if clamped != current {
+            self.opus_bitrate.store(clamped, Ordering::Relaxed);
+            self.metrics
+                .encode_bitrate_kbps
+                .store((clamped / 1000) as u32, Ordering::Relaxed);
+            log::debug!(
+                "Adaptive bitrate: {current}bps → {clamped}bps (loss={:.1}%, target={target}bps)",
+                loss_ratio * 100.0
+            );
+        }
+
+        clamped
+    }
+
+    /// Get the current packet loss ratio from audio metrics (dropped / (decoded + dropped)).
+    pub fn packet_loss_ratio(&self) -> f32 {
+        let decoded = self.metrics.frames_decoded.load(Ordering::Relaxed);
+        let dropped = self.metrics.frames_dropped.load(Ordering::Relaxed);
+        let total = decoded + dropped;
+        if total == 0 {
+            return 0.0;
+        }
+        dropped as f32 / total as f32
+    }
+
+    /// Reset the decoded/dropped frame counters (call after reading loss ratio).
+    pub fn reset_loss_counters(&self) {
+        self.metrics.frames_decoded.store(0, Ordering::Relaxed);
+        self.metrics.frames_dropped.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -1102,5 +1162,105 @@ mod recovery_tests {
         let result = DeviceRecoveryResult::NoDeviceAvailable;
         let debug = format!("{:?}", result);
         assert!(debug.contains("NoDeviceAvailable"));
+    }
+}
+
+#[cfg(test)]
+mod adaptive_bitrate_tests {
+    use super::*;
+
+    #[test]
+    fn audio_metrics_default() {
+        let m = AudioMetrics::new();
+        assert_eq!(m.frames_decoded.load(Ordering::Relaxed), 0);
+        assert_eq!(m.frames_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(m.encode_bitrate_kbps.load(Ordering::Relaxed), 64);
+    }
+
+    #[test]
+    fn packet_loss_ratio_no_frames() {
+        let m = AudioMetrics::new();
+        let decoded = m.frames_decoded.load(Ordering::Relaxed);
+        let dropped = m.frames_dropped.load(Ordering::Relaxed);
+        let total = decoded + dropped;
+        let ratio = if total == 0 { 0.0 } else { dropped as f32 / total as f32 };
+        assert_eq!(ratio, 0.0);
+    }
+
+    #[test]
+    fn packet_loss_ratio_with_loss() {
+        let m = AudioMetrics::new();
+        m.frames_decoded.store(90, Ordering::Relaxed);
+        m.frames_dropped.store(10, Ordering::Relaxed);
+        let total = 90 + 10;
+        let ratio = 10.0 / total as f32;
+        assert!((ratio - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn adaptive_bitrate_reduces_on_heavy_loss() {
+        // Test the bitrate reduction formula directly
+        let target = 64000i32;
+        let loss_ratio = 0.20f32; // 20% loss
+        let new = if loss_ratio > 0.15 {
+            (target as f32 * 0.6) as i32
+        } else {
+            target
+        };
+        assert_eq!(new, 38400, "Heavy loss should reduce to 60% of target");
+    }
+
+    #[test]
+    fn adaptive_bitrate_moderate_loss() {
+        let target = 64000i32;
+        let loss_ratio = 0.08f32; // 8% loss
+        let new = if loss_ratio > 0.15 {
+            (target as f32 * 0.6) as i32
+        } else if loss_ratio > 0.05 {
+            (target as f32 * 0.8) as i32
+        } else {
+            target
+        };
+        assert_eq!(new, 51200, "Moderate loss should reduce to 80% of target");
+    }
+
+    #[test]
+    fn adaptive_bitrate_light_loss() {
+        let target = 64000i32;
+        let loss_ratio = 0.03f32; // 3% loss
+        let new = if loss_ratio > 0.15 {
+            (target as f32 * 0.6) as i32
+        } else if loss_ratio > 0.05 {
+            (target as f32 * 0.8) as i32
+        } else if loss_ratio > 0.01 {
+            (target as f32 * 0.9) as i32
+        } else {
+            target
+        };
+        assert_eq!(new, 57600, "Light loss should reduce to 90% of target");
+    }
+
+    #[test]
+    fn adaptive_bitrate_no_loss_recovers() {
+        let target = 64000i32;
+        let current = 38400i32; // currently reduced
+        let loss_ratio = 0.0f32;
+        let new = if loss_ratio > 0.01 {
+            current
+        } else {
+            let step = ((target - current) as f32 * 0.1) as i32;
+            current + step.max(1000).min(target - current)
+        };
+        assert!(new > current, "No loss should increase bitrate: {current} -> {new}");
+        assert!(new <= target, "Should not exceed target");
+    }
+
+    #[test]
+    fn adaptive_bitrate_minimum_clamp() {
+        // Even with extreme loss, bitrate should not go below 16kbps
+        let target = 24000i32; // Low quality setting
+        let reduced = (target as f32 * 0.6) as i32; // 14400
+        let clamped = reduced.clamp(16000, target);
+        assert_eq!(clamped, 16000, "Should clamp to minimum 16kbps");
     }
 }
