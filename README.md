@@ -20,9 +20,9 @@ Voxlink is a lightweight voice chat app for groups. Think Discord voice channels
 
 ## Features
 
-- Crystal-clear voice (Opus 64kbps, fullband audio)
+- Crystal-clear voice (Opus adaptive bitrate, fullband audio)
 - Automatic gain control — everyone sounds the same volume
-- Noise suppression with adjustable sensitivity
+- Neural noise suppression (RNNoise) with adjustable sensitivity
 - Mute / Deafen with distinct audio feedback tones
 - Push-to-talk or open mic modes
 - Spaces & Channels (like Discord servers)
@@ -75,7 +75,7 @@ crates/
 └── shared_types/       Shared enums, DTOs, protocol messages
 ```
 
-Audio pipeline: cpal capture → high-pass filter → noise gate → AGC → de-esser → Opus encode → WebSocket → Opus decode (with PLC) → jitter buffer → soft clip → cpal playback
+Audio pipeline: cpal capture → high-pass filter → noise gate → AGC → de-esser → neural noise suppression → Opus encode (adaptive bitrate) → UDP/WebSocket → Opus decode (with PLC/FEC) → jitter buffer → playback AGC → soft clip → cpal playback
 
 ## License
 

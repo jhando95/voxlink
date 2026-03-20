@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.0 — Reliability & Quality
+
+### New
+- **Adaptive bitrate** — Audio encoder automatically adjusts bitrate based on packet loss (60–100% of target).
+- **Server metrics** — Prometheus-format `/metrics` endpoint with UDP frame counters, room/space stats, and uptime tracking.
+- **Server module refactor** — Extracted type definitions into `types.rs` for maintainability.
+
+### Improved
+- **Test coverage** — 316 tests across all crates (up from ~235). Added 30+ audio DSP tests, 9 network edge-case tests, and fixed flaky integration tests.
+- **UDP safety** — Server UDP token parsing uses graceful error handling instead of unwrap (prevents panic on malformed packets).
+- **Audio pipeline docs** — README updated to reflect full DSP chain including neural noise suppression and adaptive bitrate.
+
+### Fixed
+- **Integration test build** — Removed invalid re-export, added missing dependency.
+- **Slint UI** — Removed invalid `vertical-alignment` on Rectangle elements.
+- **Config persistence** — `saved_servers` field now properly preserved on settings save.
+- **Test reliability** — Fixed message ordering issues in space join/text message tests (FriendSnapshot interleaving).
+
 ## v0.6.0 — Audio Quality & Transport
 
 ### New

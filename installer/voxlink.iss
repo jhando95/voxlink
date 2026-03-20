@@ -5,7 +5,7 @@
 #define MyAppName "Voxlink"
 #define MyAppVersion "0.7.0"
 #define MyAppPublisher "Voxlink"
-#define MyAppURL "https://github.com/voxlink"
+#define MyAppURL "https://github.com/jhando95/voxlink"
 #define MyAppExeName "Voxlink.exe"
 
 [Setup]
