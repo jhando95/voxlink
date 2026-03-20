@@ -157,4 +157,67 @@ mod tests {
         assert!(!snap.network_connected);
         assert_eq!(snap.dropped_frames, 0);
     }
+
+    #[test]
+    fn frame_loss_rate_calculation() {
+        let mut collector = PerfCollector::new();
+        // First snapshot establishes baseline
+        let _ = collector.snapshot();
+
+        // Simulate: 90 decoded + 10 dropped = 10% loss
+        collector.frames_decoded.store(90, Ordering::Relaxed);
+        collector.frames_dropped.store(10, Ordering::Relaxed);
+
+        let snap = collector.snapshot();
+        // Loss rate should be 10/100 = 0.1
+        assert!((snap.frame_loss_rate - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn frame_loss_rate_zero_when_no_frames() {
+        let mut collector = PerfCollector::new();
+        let _ = collector.snapshot(); // baseline
+        let snap = collector.snapshot();
+        assert!((snap.frame_loss_rate - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn multiple_snapshots_show_deltas() {
+        let mut collector = PerfCollector::new();
+        let _ = collector.snapshot(); // baseline
+
+        collector.frames_decoded.store(100, Ordering::Relaxed);
+        collector.frames_dropped.store(0, Ordering::Relaxed);
+        let snap1 = collector.snapshot();
+        assert!((snap1.frame_loss_rate - 0.0).abs() < f32::EPSILON);
+
+        // Now add 10 dropped in the next interval
+        collector.frames_decoded.store(200, Ordering::Relaxed);
+        collector.frames_dropped.store(10, Ordering::Relaxed);
+        let snap2 = collector.snapshot();
+        // Delta: 100 decoded, 10 dropped = 10/110 ≈ 0.0909
+        assert!(snap2.frame_loss_rate > 0.05);
+        assert!(snap2.frame_loss_rate < 0.15);
+    }
+
+    #[test]
+    fn jitter_and_bitrate_metrics() {
+        let collector = PerfCollector::new();
+        collector.current_jitter_ms.store(60, Ordering::Relaxed);
+        collector.encode_bitrate.store(64000, Ordering::Relaxed);
+        collector.active_peers.store(3, Ordering::Relaxed);
+
+        let mut c = collector;
+        let snap = c.snapshot();
+        assert_eq!(snap.jitter_buffer_ms, 60);
+        assert_eq!(snap.encode_bitrate_kbps, 64); // 64000/1000
+        assert_eq!(snap.decode_peers, 3);
+    }
+
+    #[test]
+    fn default_trait() {
+        let collector = PerfCollector::default();
+        assert!(!collector.audio_active.load(Ordering::Relaxed));
+        assert_eq!(collector.dropped_frames.load(Ordering::Relaxed), 0);
+    }
 }

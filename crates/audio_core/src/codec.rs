@@ -661,7 +661,7 @@ impl EchoCanceller {
 
 /// Compute RMS energy — O(n), no allocations
 #[inline(always)]
-pub(crate) fn frame_energy(pcm: &[f32]) -> f32 {
+pub fn frame_energy(pcm: &[f32]) -> f32 {
     if pcm.is_empty() {
         return 0.0;
     }
@@ -671,7 +671,7 @@ pub(crate) fn frame_energy(pcm: &[f32]) -> f32 {
 
 /// Fast soft-clip — polynomial approximation, no transcendentals.
 #[inline(always)]
-pub(crate) fn soft_clip(x: f32) -> f32 {
+pub fn soft_clip(x: f32) -> f32 {
     if x > 1.0 {
         let d = x - 1.0;
         1.0 + d / (1.0 + d * d)

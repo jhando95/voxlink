@@ -1,6 +1,10 @@
 mod buffers;
+/// Audio DSP primitives. Hot-path functions are re-exported at crate root for benchmarks.
 mod codec;
 mod feedback;
+
+// Re-export hot-path DSP functions for benchmarks and external use
+pub use codec::{frame_energy, soft_clip};
 
 use anyhow::{Context, Result};
 use audiopus::coder::{Decoder as OpusDecoder, Encoder as OpusEncoder};

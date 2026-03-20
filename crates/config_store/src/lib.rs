@@ -363,4 +363,108 @@ mod tests {
         assert!(config.favorite_friends.is_empty());
         assert!(config.saved_servers.is_empty());
     }
+
+    #[test]
+    fn effective_server_address_uses_default_saved_server() {
+        let config = AppConfig {
+            server_address: "ws://legacy:9090".into(),
+            saved_servers: vec![
+                SavedServer {
+                    name: "Secondary".into(),
+                    address: "ws://second:9090".into(),
+                    is_default: false,
+                },
+                SavedServer {
+                    name: "Primary".into(),
+                    address: "ws://primary:9090".into(),
+                    is_default: true,
+                },
+            ],
+            ..AppConfig::default()
+        };
+        assert_eq!(config.effective_server_address(), "ws://primary:9090");
+    }
+
+    #[test]
+    fn effective_server_address_falls_back_to_legacy() {
+        let config = AppConfig {
+            server_address: "ws://legacy:9090".into(),
+            saved_servers: vec![
+                SavedServer {
+                    name: "NonDefault".into(),
+                    address: "ws://other:9090".into(),
+                    is_default: false,
+                },
+            ],
+            ..AppConfig::default()
+        };
+        assert_eq!(config.effective_server_address(), "ws://legacy:9090");
+    }
+
+    #[test]
+    fn effective_server_address_empty_servers_uses_legacy() {
+        let config = AppConfig {
+            server_address: "ws://legacy:9090".into(),
+            saved_servers: Vec::new(),
+            ..AppConfig::default()
+        };
+        assert_eq!(config.effective_server_address(), "ws://legacy:9090");
+    }
+
+    #[test]
+    fn saved_server_serialization_round_trip() {
+        let servers = vec![
+            SavedServer {
+                name: "Home".into(),
+                address: "ws://192.168.1.1:9090".into(),
+                is_default: true,
+            },
+            SavedServer {
+                name: "Cloud".into(),
+                address: "wss://voxlink.example.com:443".into(),
+                is_default: false,
+            },
+        ];
+        let json = serde_json::to_string(&servers).unwrap();
+        let decoded: Vec<SavedServer> = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].name, "Home");
+        assert!(decoded[0].is_default);
+        assert_eq!(decoded[1].address, "wss://voxlink.example.com:443");
+        assert!(!decoded[1].is_default);
+    }
+
+    #[test]
+    fn peer_volumes_round_trip() {
+        let mut config = AppConfig::default();
+        config.peer_volumes.insert("peer1".into(), 0.5);
+        config.peer_volumes.insert("peer2".into(), 1.5);
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.peer_volumes.len(), 2);
+        assert!((decoded.peer_volumes["peer1"] - 0.5).abs() < f32::EPSILON);
+        assert!((decoded.peer_volumes["peer2"] - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn user_notes_round_trip() {
+        let mut config = AppConfig::default();
+        config.user_notes.insert("u123".into(), "Good moderator".into());
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.user_notes["u123"], "Good moderator");
+    }
+
+    #[test]
+    fn default_config_has_correct_audio_defaults() {
+        let config = AppConfig::default();
+        assert!((config.input_volume - 1.0).abs() < f32::EPSILON);
+        assert!((config.output_volume - 1.0).abs() < f32::EPSILON);
+        assert!((config.noise_suppression - 0.5).abs() < f32::EPSILON);
+        assert!(!config.neural_noise_suppression);
+        assert!(!config.echo_cancellation);
+        assert!(config.feedback_sound);
+        assert!(config.notifications_enabled);
+        assert!(config.minimize_to_tray);
+    }
 }

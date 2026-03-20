@@ -460,7 +460,7 @@ fn apply_config(
     window.set_selected_input(input_idx);
     window.set_selected_output(output_idx);
     window.set_user_name(config.user_name.clone().into());
-    window.set_server_address(config.effective_server_address().to_string().into());
+    window.set_server_address(config.effective_server_address().into());
     if let Some(ref code) = config.last_room_code {
         window.set_join_code(code.clone().into());
     }

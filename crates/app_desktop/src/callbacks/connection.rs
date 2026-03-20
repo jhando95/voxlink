@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
+
+/// Guards config read-modify-write to prevent races between save and remove.
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn setup_connect(
     window: &MainWindow,
@@ -131,6 +134,7 @@ pub fn setup_save_server(window: &MainWindow) {
 
         let window_weak = window_weak.clone();
         std::thread::spawn(move || {
+            let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let mut cfg = config_store::load_config();
             // Don't add duplicates
             if cfg.saved_servers.iter().any(|s| s.address == address) {
@@ -168,6 +172,7 @@ pub fn setup_remove_server(window: &MainWindow) {
         let idx = idx as usize;
         let window_weak = window_weak.clone();
         std::thread::spawn(move || {
+            let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let mut cfg = config_store::load_config();
             if idx < cfg.saved_servers.len() {
                 cfg.saved_servers.remove(idx);

@@ -123,4 +123,73 @@ mod tests {
         session.set_mic_mode(MicMode::OpenMic);
         assert_eq!(session.mic_mode, MicMode::OpenMic);
     }
+
+    #[test]
+    fn double_deafen_is_idempotent() {
+        let mut session = VoiceSession::new();
+        session.toggle_deafen();
+        assert!(session.is_deafened);
+        assert!(session.is_muted);
+
+        // Deafen again — should undeafen
+        session.toggle_deafen();
+        assert!(!session.is_deafened);
+        assert!(!session.is_muted);
+    }
+
+    #[test]
+    fn rapid_mute_toggle_consistency() {
+        let mut session = VoiceSession::new();
+        // Rapid toggle should always end up at the opposite state
+        for _ in 0..100 {
+            session.toggle_mute();
+        }
+        // 100 toggles from false → should be false (even number)
+        assert!(!session.is_muted);
+
+        session.toggle_mute();
+        assert!(session.is_muted);
+    }
+
+    #[test]
+    fn deafen_then_mute_then_undeafen_stays_muted() {
+        let mut session = VoiceSession::new();
+        // Start unmuted
+        assert!(!session.is_muted);
+
+        // Deafen (auto-mutes)
+        session.toggle_deafen();
+        assert!(session.is_deafened);
+        assert!(session.is_muted);
+
+        // Undeafen — should restore to NOT muted (was not muted before deafen)
+        session.toggle_deafen();
+        assert!(!session.is_deafened);
+        assert!(!session.is_muted);
+    }
+
+    #[test]
+    fn reset_after_complex_state() {
+        let mut session = VoiceSession::new();
+        session.toggle_mute();
+        session.toggle_deafen();
+        session.set_mic_mode(MicMode::PushToTalk);
+        assert!(session.is_muted);
+        assert!(session.is_deafened);
+        assert_eq!(session.mic_mode, MicMode::PushToTalk);
+
+        session.reset();
+        assert!(!session.is_muted);
+        assert!(!session.is_deafened);
+        // reset doesn't change mic mode — it's a preference, not session state
+        assert_eq!(session.mic_mode, MicMode::PushToTalk);
+    }
+
+    #[test]
+    fn default_trait() {
+        let session = VoiceSession::default();
+        assert!(!session.is_muted);
+        assert!(!session.is_deafened);
+        assert_eq!(session.mic_mode, MicMode::OpenMic);
+    }
 }

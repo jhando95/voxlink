@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 /// Benchmark the frame energy calculation (hot path in audio pipeline).
+/// Uses the real `frame_energy` function from audio_core.
 fn bench_frame_energy(c: &mut Criterion) {
     // Simulate a 960-sample frame (20ms at 48kHz)
     let frame: Vec<f32> = (0..960)
@@ -8,17 +9,12 @@ fn bench_frame_energy(c: &mut Criterion) {
         .collect();
 
     c.bench_function("frame_energy_960", |b| {
-        b.iter(|| {
-            let mut sum_sq: f32 = 0.0;
-            for &s in black_box(&frame) {
-                sum_sq += s * s;
-            }
-            black_box((sum_sq / frame.len() as f32).sqrt())
-        })
+        b.iter(|| audio_core::frame_energy(black_box(&frame)))
     });
 }
 
 /// Benchmark soft clipping (applied to every output sample).
+/// Uses the real `soft_clip` function from audio_core.
 fn bench_soft_clip(c: &mut Criterion) {
     let samples: Vec<f32> = (0..960)
         .map(|i| (i as f32 / 480.0) - 1.0) // range -1.0 to 1.0
@@ -27,13 +23,8 @@ fn bench_soft_clip(c: &mut Criterion) {
     c.bench_function("soft_clip_960", |b| {
         b.iter(|| {
             let mut output = samples.clone();
-            for s in black_box(&mut output) {
-                // Inline soft clip logic
-                if *s > 1.0 {
-                    *s = 1.0 - (-(*s - 1.0)).exp() * 0.1;
-                } else if *s < -1.0 {
-                    *s = -1.0 + (-(-*s - 1.0)).exp() * 0.1;
-                }
+            for s in output.iter_mut() {
+                *s = audio_core::soft_clip(black_box(*s));
             }
             black_box(output)
         })
@@ -63,7 +54,9 @@ fn bench_peer_mixing(c: &mut Criterion) {
     let peer_buffers: Vec<Vec<f32>> = (0..num_peers)
         .map(|p| {
             (0..frame_size)
-                .map(|i| ((i + p * 100) as f32 / frame_size as f32 * std::f32::consts::TAU).sin() * 0.3)
+                .map(|i| {
+                    ((i + p * 100) as f32 / frame_size as f32 * std::f32::consts::TAU).sin() * 0.3
+                })
                 .collect()
         })
         .collect();
@@ -81,10 +74,38 @@ fn bench_peer_mixing(c: &mut Criterion) {
     });
 }
 
+/// Benchmark frame energy on silence (DTX optimization path).
+fn bench_frame_energy_silence(c: &mut Criterion) {
+    let silence = vec![0.0f32; 960];
+
+    c.bench_function("frame_energy_silence", |b| {
+        b.iter(|| audio_core::frame_energy(black_box(&silence)))
+    });
+}
+
+/// Benchmark soft clip on values that don't clip (common case).
+fn bench_soft_clip_passthrough(c: &mut Criterion) {
+    let samples: Vec<f32> = (0..960)
+        .map(|i| (i as f32 / 960.0) * 0.8 - 0.4) // range -0.4 to 0.4 (no clipping)
+        .collect();
+
+    c.bench_function("soft_clip_passthrough_960", |b| {
+        b.iter(|| {
+            let mut output = samples.clone();
+            for s in output.iter_mut() {
+                *s = audio_core::soft_clip(black_box(*s));
+            }
+            black_box(output)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_frame_energy,
+    bench_frame_energy_silence,
     bench_soft_clip,
+    bench_soft_clip_passthrough,
     bench_i16_to_f32_conversion,
     bench_peer_mixing,
 );

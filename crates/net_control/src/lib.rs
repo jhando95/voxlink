@@ -426,6 +426,72 @@ mod tests {
         let client = NetworkClient::new();
         assert!(!client.is_udp_active());
     }
+
+    #[test]
+    fn parse_audio_frame_too_short() {
+        assert!(parse_audio_frame(&[]).is_none());
+        assert!(parse_audio_frame(&[0x01]).is_none());
+        assert!(parse_audio_frame(&[0x01, 0x02]).is_none());
+    }
+
+    #[test]
+    fn parse_audio_frame_wrong_type() {
+        let frame = vec![0xFF, 2, b'p', b'1', 0xAA];
+        assert!(parse_audio_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn parse_audio_frame_id_len_exceeds_data() {
+        // id_len says 10 but only 2 bytes of id follow
+        let frame = vec![shared_types::MEDIA_PACKET_AUDIO, 10, b'p', b'1'];
+        assert!(parse_audio_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn parse_audio_frame_empty_audio_data() {
+        // Valid header but audio data is exactly 0 bytes
+        let frame = vec![shared_types::MEDIA_PACKET_AUDIO, 2, b'p', b'1'];
+        // id_len=2, total len=4, 2+id_len=4, so len <= 2+id_len → None
+        assert!(parse_audio_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn parse_audio_frame_single_byte_audio() {
+        let frame = vec![shared_types::MEDIA_PACKET_AUDIO, 2, b'p', b'1', 0xFF];
+        let (sender, data) = parse_audio_frame(&frame).unwrap();
+        assert_eq!(sender, "p1");
+        assert_eq!(data, &[0xFF]);
+    }
+
+    #[test]
+    fn parse_screen_frame_valid() {
+        let mut frame = vec![shared_types::MEDIA_PACKET_SCREEN, 3];
+        frame.extend_from_slice(b"abc");
+        frame.extend_from_slice(&[0x01, 0x02, 0x03]);
+        let (sender, data) = parse_screen_frame(&frame).unwrap();
+        assert_eq!(sender, "abc");
+        assert_eq!(data, &[0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn parse_screen_frame_invalid() {
+        assert!(parse_screen_frame(&[]).is_none());
+        assert!(parse_screen_frame(&[shared_types::MEDIA_PACKET_AUDIO, 1, b'x', 0xFF]).is_none());
+    }
+
+    #[test]
+    fn hex_decode_8_uppercase() {
+        let result = hex_decode_8("0123456789ABCDEF");
+        assert_eq!(result, Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]));
+    }
+
+    #[test]
+    fn network_client_default_state() {
+        let client = NetworkClient::new();
+        assert!(!client.is_connected());
+        assert!(!client.is_udp_active());
+        assert_eq!(client.ping_ms(), -1);
+    }
 }
 
 /// Discover a Voxlink server on the local network via UDP broadcast.
