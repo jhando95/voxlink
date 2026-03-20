@@ -234,7 +234,14 @@ fn main() {
     }
 
     // System tray icon — minimize-to-tray on close, context menu for quick actions
-    let tray = tray::load_icon_rgba().and_then(|(rgba, w, h)| tray::Tray::new(rgba, w, h));
+    // Wrapped in catch_unwind because muda panics on macOS if ObjC classes already exist
+    let tray = tray::load_icon_rgba().and_then(|(rgba, w, h)| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tray::Tray::new(rgba, w, h)
+        }))
+        .ok()
+        .flatten()
+    });
     if let Some(tray) = tray {
         log::info!("System tray icon created");
         // Override close button: hide to tray if enabled, otherwise quit normally
