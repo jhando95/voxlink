@@ -37,6 +37,8 @@ pub fn setup(
     connection::setup_connect(window, network, rt_handle);
     connection::setup_disconnect(window, network, rt_handle);
     connection::setup_find_server(window, rt_handle);
+    connection::setup_save_server(window);
+    connection::setup_remove_server(window);
 
     // Room
     room::setup_create_room(window, network, rt_handle);

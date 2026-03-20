@@ -460,13 +460,27 @@ fn apply_config(
     window.set_selected_input(input_idx);
     window.set_selected_output(output_idx);
     window.set_user_name(config.user_name.clone().into());
-    window.set_server_address(config.server_address.clone().into());
+    window.set_server_address(config.effective_server_address().to_string().into());
     if let Some(ref code) = config.last_room_code {
         window.set_join_code(code.clone().into());
     }
     if config.mic_mode == "push_to_talk" {
         window.set_is_open_mic(false);
         voice.borrow_mut().set_mic_mode(MicMode::PushToTalk);
+    }
+
+    // Populate saved servers list
+    if !config.saved_servers.is_empty() {
+        let server_model: Vec<ui_shell::SavedServerData> = config
+            .saved_servers
+            .iter()
+            .map(|s| ui_shell::SavedServerData {
+                name: s.name.clone().into(),
+                address: s.address.clone().into(),
+                is_default: s.is_default,
+            })
+            .collect();
+        window.set_saved_servers(Rc::new(slint::VecModel::from(server_model)).into());
     }
 
     // Populate saved spaces list
@@ -589,7 +603,7 @@ fn auto_connect(
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
-    let server_addr = config.server_address.clone();
+    let server_addr = config.effective_server_address().to_string();
     let last_room = config.last_room_code.clone();
     let last_space_invite = config.last_space_id.as_ref().and_then(|space_id| {
         config

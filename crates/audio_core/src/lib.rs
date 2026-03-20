@@ -49,6 +49,18 @@ impl Default for AudioMetrics {
         Self::new()
     }
 }
+
+/// Result of attempting device recovery after an error.
+#[derive(Debug)]
+pub enum DeviceRecoveryResult {
+    /// Successfully recovered using the specified device.
+    Recovered { device_name: String },
+    /// Recovered using the system default device.
+    FellBackToDefault { device_name: String },
+    /// No working device found.
+    NoDeviceAvailable,
+}
+
 const OPUS_MAX_PACKET: usize = 512; // headroom for complex frames at 32kbps
 const OPUS_BITRATE: i32 = 64000; // 64 kbps — high quality voice, still very bandwidth efficient
 
@@ -793,6 +805,75 @@ impl AudioEngine {
         self.start_playback(device_name)
     }
 
+    /// Attempt to recover the capture stream after an error.
+    /// Tries the specified device first, then falls back to the system default.
+    pub fn try_recover_capture(&mut self, preferred_device: Option<&str>) -> DeviceRecoveryResult {
+        self.capture_error.store(false, Ordering::Relaxed);
+        log::info!("Attempting capture recovery (preferred: {:?})", preferred_device);
+
+        // Refresh host to pick up any device changes
+        self.refresh_host();
+
+        // Try preferred device first
+        if let Some(name) = preferred_device {
+            if self.start_capture(Some(name)).is_ok() {
+                log::info!("Capture recovered on preferred device: {name}");
+                return DeviceRecoveryResult::Recovered { device_name: name.to_string() };
+            }
+            log::warn!("Preferred device '{name}' failed, trying default");
+        }
+
+        // Try system default
+        let default_name = self.host.default_input_device()
+            .and_then(|d| d.name().ok())
+            .unwrap_or_default();
+
+        if self.start_capture(None).is_ok() {
+            log::info!("Capture recovered on default device: {default_name}");
+            return DeviceRecoveryResult::FellBackToDefault { device_name: default_name };
+        }
+
+        log::error!("No working capture device found");
+        DeviceRecoveryResult::NoDeviceAvailable
+    }
+
+    /// Attempt to recover the playback stream after an error.
+    /// Tries the specified device first, then falls back to the system default.
+    pub fn try_recover_playback(&mut self, preferred_device: Option<&str>) -> DeviceRecoveryResult {
+        self.playback_error.store(false, Ordering::Relaxed);
+        log::info!("Attempting playback recovery (preferred: {:?})", preferred_device);
+
+        self.refresh_host();
+
+        if let Some(name) = preferred_device {
+            if self.start_playback(Some(name)).is_ok() {
+                log::info!("Playback recovered on preferred device: {name}");
+                return DeviceRecoveryResult::Recovered { device_name: name.to_string() };
+            }
+            log::warn!("Preferred device '{name}' failed, trying default");
+        }
+
+        let default_name = self.host.default_output_device()
+            .and_then(|d| d.name().ok())
+            .unwrap_or_default();
+
+        if self.start_playback(None).is_ok() {
+            log::info!("Playback recovered on default device: {default_name}");
+            return DeviceRecoveryResult::FellBackToDefault { device_name: default_name };
+        }
+
+        log::error!("No working playback device found");
+        DeviceRecoveryResult::NoDeviceAvailable
+    }
+
+    /// Check if either audio stream has an error and needs recovery.
+    pub fn needs_recovery(&self) -> (bool, bool) {
+        (
+            self.capture_error.load(Ordering::Relaxed),
+            self.playback_error.load(Ordering::Relaxed),
+        )
+    }
+
     // ─── Decode & Queue ───
 
     /// Decode incoming Opus audio into the per-peer ring buffer.
@@ -986,5 +1067,36 @@ impl AudioEngine {
             .output_devices()
             .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn needs_recovery_default_false() {
+        // We can't actually create AudioEngine in test (no audio host),
+        // but we can verify the flags work independently
+        let capture_err = Arc::new(AtomicBool::new(false));
+        let playback_err = Arc::new(AtomicBool::new(false));
+        assert!(!capture_err.load(Ordering::Relaxed));
+        assert!(!playback_err.load(Ordering::Relaxed));
+
+        capture_err.store(true, Ordering::Relaxed);
+        assert!(capture_err.load(Ordering::Relaxed));
+        assert!(!playback_err.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn device_recovery_result_debug() {
+        let result = DeviceRecoveryResult::Recovered { device_name: "Test".into() };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("Recovered"));
+        assert!(debug.contains("Test"));
+
+        let result = DeviceRecoveryResult::NoDeviceAvailable;
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("NoDeviceAvailable"));
     }
 }

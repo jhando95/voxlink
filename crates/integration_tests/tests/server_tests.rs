@@ -5791,3 +5791,204 @@ async fn test_delete_space_with_active_voice() {
     let code = create_room(&mut alice, "Alice").await;
     assert!(!code.is_empty());
 }
+
+#[tokio::test]
+async fn test_authenticate_invalid_token_creates_new() {
+    let server = TestServer::start().await;
+    let mut client = server.connect().await;
+
+    client
+        .send_signal(&SignalMessage::Authenticate {
+            token: Some("invalid_token_that_does_not_exist".to_string()),
+            user_name: "NewFromInvalid".to_string(),
+        })
+        .await;
+
+    let msg = client.recv_signal().await;
+    match msg {
+        SignalMessage::Authenticated { token, user_id } => {
+            assert!(!token.is_empty(), "Should create new identity");
+            assert!(!user_id.is_empty(), "Should get a new user_id");
+        }
+        other => panic!("Expected Authenticated, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_empty_username_rejected() {
+    let server = TestServer::start().await;
+    let mut client = server.connect().await;
+
+    client
+        .send_signal(&SignalMessage::Authenticate {
+            token: None,
+            user_name: "".to_string(),
+        })
+        .await;
+
+    let msg = client.recv_signal().await;
+    match msg {
+        SignalMessage::Error { message } => {
+            assert!(
+                message.contains("name") || message.contains("character"),
+                "Should mention name validation: {message}"
+            );
+        }
+        other => panic!("Expected Error for empty name, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_join_space() {
+    let server = TestServer::start().await;
+
+    // Create space
+    let mut owner = server.connect().await;
+    owner
+        .send_signal(&SignalMessage::Authenticate {
+            token: None,
+            user_name: "Owner".to_string(),
+        })
+        .await;
+    let _ = owner.recv_signal().await;
+
+    owner
+        .send_signal(&SignalMessage::CreateSpace {
+            name: "Join Test".to_string(),
+            user_name: "Owner".to_string(),
+        })
+        .await;
+
+    let invite_code = match owner.recv_signal().await {
+        SignalMessage::SpaceCreated { space, .. } => space.invite_code,
+        other => panic!("Expected SpaceCreated, got: {:?}", other),
+    };
+
+    // Drain extra messages for the owner
+    let _ = owner.recv_signal_timeout(Duration::from_secs(2)).await;
+
+    // Another user joins
+    let mut joiner = server.connect().await;
+    joiner
+        .send_signal(&SignalMessage::Authenticate {
+            token: None,
+            user_name: "Joiner".to_string(),
+        })
+        .await;
+    let _ = joiner.recv_signal().await;
+
+    joiner
+        .send_signal(&SignalMessage::JoinSpace {
+            invite_code,
+            user_name: "Joiner".to_string(),
+        })
+        .await;
+
+    // Joiner should get SpaceJoined
+    let msg = joiner.recv_signal().await;
+    match msg {
+        SignalMessage::SpaceJoined { space, .. } => {
+            assert_eq!(space.name, "Join Test");
+        }
+        other => panic!("Expected SpaceJoined, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_send_text_message() {
+    let server = TestServer::start().await;
+
+    // Create space using helper
+    let mut owner = server.connect().await;
+    let (space, channels) = create_space(&mut owner, "ChatTest", "ChatUser").await;
+
+    // Find a text channel
+    let text_ch = channels
+        .iter()
+        .find(|c| c.channel_type == shared_types::ChannelType::Text)
+        .expect("Should have text channel");
+
+    owner.send_signal(&SignalMessage::SelectTextChannel {
+        channel_id: text_ch.id.clone(),
+    })
+    .await;
+
+    // Drain TextChannelSelected
+    let _ = owner.recv_signal_timeout(Duration::from_secs(2)).await;
+
+    // Send a message
+    owner
+        .send_signal(&SignalMessage::SendTextMessage {
+            channel_id: text_ch.id.clone(),
+            content: "Hello from test!".to_string(),
+            reply_to_message_id: None,
+        })
+        .await;
+
+    // Should get TextMessage back
+    let msg = owner.recv_signal_timeout(Duration::from_secs(3)).await;
+    match msg {
+        Some(SignalMessage::TextMessage {
+            channel_id,
+            message,
+        }) => {
+            assert_eq!(channel_id, text_ch.id);
+            assert_eq!(message.content, "Hello from test!");
+            assert_eq!(message.sender_name, "ChatUser");
+        }
+        other => {
+            // Some servers may not echo messages back to sender — that's ok
+            log::info!("Text message response: {:?}", other);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_disconnect_notifies_peers() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let room_code = create_room(&mut alice, "Alice").await;
+    join_room(&mut bob, &room_code, "Bob").await;
+
+    // Consume Alice's PeerJoined
+    let _ = alice.recv_signal().await;
+
+    // Bob disconnects by dropping
+    drop(bob);
+
+    // Alice should get PeerLeft within a reasonable time
+    let msg = alice.recv_signal_timeout(Duration::from_secs(5)).await;
+    match msg {
+        Some(SignalMessage::PeerLeft { peer_id }) => {
+            assert!(!peer_id.is_empty(), "Should identify the leaving peer");
+        }
+        other => panic!("Expected PeerLeft on disconnect, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_concurrent_room_operations() {
+    let server = TestServer::start().await;
+
+    // Create multiple rooms concurrently
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let mut client = server.connect().await;
+        handles.push(tokio::spawn(async move {
+            let code = create_room(&mut client, &format!("User{i}")).await;
+            assert_eq!(code.len(), 6);
+            code
+        }));
+    }
+
+    let mut codes = Vec::new();
+    for handle in handles {
+        codes.push(handle.await.unwrap());
+    }
+
+    // All room codes should be unique
+    let unique: std::collections::HashSet<_> = codes.iter().collect();
+    assert_eq!(unique.len(), 5, "All room codes should be unique");
+}

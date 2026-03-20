@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { DirectMessageThreadData, SpaceData, VxTheme } from "../theme.slint";
+import { DirectMessageThreadData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
@@ -17,9 +17,12 @@ export component HomeView inherits Rectangle {
     in-out property <string> room-password: "";
     in property <[DirectMessageThreadData]> direct-message-threads: [];
     in property <int> unread-direct-messages-count: 0;
+    in property <[SavedServerData]> saved-servers: [];
     callback connect-server();
     callback disconnect-server();
     callback find-server();
+    callback save-server(string);
+    callback remove-server(int);
     callback select-space(string);
     callback create-space();
     callback join-space();
@@ -236,12 +239,84 @@ export component HomeView inherits Rectangle {
                             VerticalLayout {
                                 spacing: 6px;
                                 FieldLabel { text: "Server address"; }
-                                VxInput {
-                                    text <=> root.server-address;
-                                    horizontal-stretch: 1;
-                                    accepted => {
-                                        if !root.is-connected {
-                                            root.connect-server();
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VxInput {
+                                        text <=> root.server-address;
+                                        horizontal-stretch: 1;
+                                        accepted => {
+                                            if !root.is-connected {
+                                                root.connect-server();
+                                            }
+                                        }
+                                    }
+                                    VxButton {
+                                        label: "Save";
+                                        soft: true;
+                                        clicked => { root.save-server(root.server-address); }
+                                    }
+                                }
+                            }
+
+                            // Saved servers list
+                            if root.saved-servers.length > 0 : VerticalLayout {
+                                spacing: 4px;
+                                FieldLabel { text: "Saved servers"; }
+                                for server[idx] in root.saved-servers : Rectangle {
+                                    height: 32px;
+                                    border-radius: VxTheme.radius-card;
+                                    background: server-touch.has-hover ? VxTheme.bg-raised : transparent;
+
+                                    server-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.server-address = server.address;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 6px;
+                                        spacing: 8px;
+                                        alignment: center;
+
+                                        if server.is-default : Rectangle {
+                                            width: 6px;
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: VxTheme.accent;
+                                            vertical-alignment: center;
+                                        }
+
+                                        Text {
+                                            text: server.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: 500;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: server.address;
+                                            color: VxTheme.text-muted;
+                                            font-size: 10px;
+                                            vertical-alignment: center;
+                                        }
+
+                                        remove-touch := TouchArea {
+                                            width: 20px;
+                                            height: 20px;
+                                            mouse-cursor: pointer;
+                                            clicked => { root.remove-server(idx); }
+                                            Text {
+                                                text: "✕";
+                                                color: remove-touch.has-hover ? VxTheme.danger : VxTheme.text-muted;
+                                                font-size: 11px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                     }
                                 }
@@ -644,12 +719,84 @@ export component HomeView inherits Rectangle {
                         VerticalLayout {
                             spacing: 6px;
                             FieldLabel { text: "Server address"; }
-                            VxInput {
-                                text <=> root.server-address;
-                                horizontal-stretch: 1;
-                                accepted => {
-                                    if !root.is-connected {
-                                        root.connect-server();
+                            HorizontalLayout {
+                                spacing: 8px;
+                                VxInput {
+                                    text <=> root.server-address;
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if !root.is-connected {
+                                            root.connect-server();
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Save";
+                                    soft: true;
+                                    clicked => { root.save-server(root.server-address); }
+                                }
+                            }
+                        }
+
+                        // Saved servers list (narrow)
+                        if root.saved-servers.length > 0 : VerticalLayout {
+                            spacing: 4px;
+                            FieldLabel { text: "Saved servers"; }
+                            for server[idx] in root.saved-servers : Rectangle {
+                                height: 32px;
+                                border-radius: VxTheme.radius-card;
+                                background: narrow-server-touch.has-hover ? VxTheme.bg-raised : transparent;
+
+                                narrow-server-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.server-address = server.address;
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    alignment: center;
+
+                                    if server.is-default : Rectangle {
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: VxTheme.accent;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: server.name;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: server.address;
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    narrow-remove-touch := TouchArea {
+                                        width: 20px;
+                                        height: 20px;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.remove-server(idx); }
+                                        Text {
+                                            text: "✕";
+                                            color: narrow-remove-touch.has-hover ? VxTheme.danger : VxTheme.text-muted;
+                                            font-size: 11px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                 }
                             }

@@ -68,6 +68,9 @@ pub struct AppConfig {
     /// Private user notes (user_id -> note text). Local only, never sent to server.
     #[serde(default)]
     pub user_notes: std::collections::HashMap<String, String>,
+    /// Saved servers for easy switching between multiple voice servers.
+    #[serde(default)]
+    pub saved_servers: Vec<SavedServer>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +79,13 @@ pub struct SavedSpace {
     pub name: String,
     pub invite_code: String,
     pub server_address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedServer {
+    pub name: String,
+    pub address: String,
+    pub is_default: bool,
 }
 
 fn default_user_name() -> String {
@@ -106,6 +116,8 @@ fn default_minimize_to_tray() -> bool {
 }
 
 fn default_server_address() -> String {
+    // Default to the production Oracle Cloud server.
+    // Users can add additional servers via the saved servers UI.
     "ws://129.158.231.26:9090".into()
 }
 
@@ -149,7 +161,20 @@ impl Default for AppConfig {
             recent_direct_messages: Vec::new(),
             peer_volumes: std::collections::HashMap::new(),
             user_notes: std::collections::HashMap::new(),
+            saved_servers: Vec::new(),
         }
+    }
+}
+
+impl AppConfig {
+    /// Get the effective server address: first default from saved_servers,
+    /// then the legacy server_address field, then the hardcoded default.
+    pub fn effective_server_address(&self) -> &str {
+        self.saved_servers
+            .iter()
+            .find(|s| s.is_default)
+            .map(|s| s.address.as_str())
+            .unwrap_or(&self.server_address)
     }
 }
 
@@ -276,6 +301,11 @@ mod tests {
             }],
             peer_volumes: std::collections::HashMap::new(),
             user_notes: std::collections::HashMap::new(),
+            saved_servers: vec![SavedServer {
+                name: "Primary".into(),
+                address: "ws://server1:9090".into(),
+                is_default: true,
+            }],
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
@@ -301,6 +331,9 @@ mod tests {
         assert_eq!(decoded.favorite_friends[0].user_id, "u1");
         assert_eq!(decoded.recent_direct_messages.len(), 1);
         assert_eq!(decoded.recent_direct_messages[0].user_id, "u1");
+        assert_eq!(decoded.saved_servers.len(), 1);
+        assert_eq!(decoded.saved_servers[0].name, "Primary");
+        assert!(decoded.saved_servers[0].is_default);
     }
 
     #[test]
@@ -328,5 +361,6 @@ mod tests {
         assert!(config.member_widget_x.is_none());
         assert!(config.member_widget_y.is_none());
         assert!(config.favorite_friends.is_empty());
+        assert!(config.saved_servers.is_empty());
     }
 }

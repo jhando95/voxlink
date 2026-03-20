@@ -46,6 +46,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
+      - name: Benchmarks (dry run)
+        run: cargo bench --workspace --no-run
+
   build-matrix:
     name: Build (${{ matrix.name }})
     needs: check

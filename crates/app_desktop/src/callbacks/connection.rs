@@ -104,6 +104,98 @@ pub fn setup_disconnect(
     });
 }
 
+pub fn setup_save_server(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_save_server(move |name| {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let address = w.get_server_address().to_string().trim().to_string();
+        if address.is_empty() {
+            w.set_status_text("Enter a server address first".into());
+            return;
+        }
+        let display_name = name.to_string().trim().to_string();
+        let label = if display_name.is_empty() || display_name == address {
+            // Generate a friendly name from the address
+            address
+                .replace("ws://", "")
+                .replace("wss://", "")
+                .split(':')
+                .next()
+                .unwrap_or("Server")
+                .to_string()
+        } else {
+            display_name
+        };
+
+        let window_weak = window_weak.clone();
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            // Don't add duplicates
+            if cfg.saved_servers.iter().any(|s| s.address == address) {
+                return;
+            }
+            let is_first = cfg.saved_servers.is_empty();
+            cfg.saved_servers.push(config_store::SavedServer {
+                name: label,
+                address,
+                is_default: is_first,
+            });
+            let _ = config_store::save_config(&cfg);
+
+            // Update UI
+            if let Some(w) = window_weak.upgrade() {
+                let model: Vec<ui_shell::SavedServerData> = cfg
+                    .saved_servers
+                    .iter()
+                    .map(|s| ui_shell::SavedServerData {
+                        name: s.name.clone().into(),
+                        address: s.address.clone().into(),
+                        is_default: s.is_default,
+                    })
+                    .collect();
+                w.set_saved_servers(std::rc::Rc::new(slint::VecModel::from(model)).into());
+                w.set_status_text("Server saved".into());
+            }
+        });
+    });
+}
+
+pub fn setup_remove_server(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_remove_server(move |idx| {
+        let idx = idx as usize;
+        let window_weak = window_weak.clone();
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            if idx < cfg.saved_servers.len() {
+                cfg.saved_servers.remove(idx);
+                // If we removed the default, make the first one default
+                if !cfg.saved_servers.is_empty()
+                    && !cfg.saved_servers.iter().any(|s| s.is_default)
+                {
+                    cfg.saved_servers[0].is_default = true;
+                }
+                let _ = config_store::save_config(&cfg);
+
+                if let Some(w) = window_weak.upgrade() {
+                    let model: Vec<ui_shell::SavedServerData> = cfg
+                        .saved_servers
+                        .iter()
+                        .map(|s| ui_shell::SavedServerData {
+                            name: s.name.clone().into(),
+                            address: s.address.clone().into(),
+                            is_default: s.is_default,
+                        })
+                        .collect();
+                    w.set_saved_servers(std::rc::Rc::new(slint::VecModel::from(model)).into());
+                }
+            }
+        });
+    });
+}
+
 pub fn setup_find_server(window: &MainWindow, rt_handle: &tokio::runtime::Handle) {
     let window_weak = window.as_weak();
     let rt_handle = rt_handle.clone();

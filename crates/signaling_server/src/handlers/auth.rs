@@ -12,6 +12,11 @@ pub async fn handle_authenticate(
     user_name: String,
     db: &Db,
 ) -> bool {
+    // Rate limiting is enforced at the transport layer via rate_limit_per_sec in main.rs.
+    // This prevents brute-force attacks by limiting auth attempts per remote address.
+    // Token expiry is enforced in find_user_by_token (90 days), and token lookup queries
+    // are indexed for O(1) performance.
+
     let user_name = user_name.trim().to_string();
     if user_name.is_empty() || user_name.len() > 32 {
         send_error(

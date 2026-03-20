@@ -1,4 +1,4 @@
-import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
+import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, SavedServerData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
@@ -213,8 +213,11 @@ export component MainWindow inherits Window {
     callback connect-server();
     callback save-settings();
     callback find-server();
+    callback save-server(string);
+    callback remove-server(int);
     callback volume-changed(string, float);
     callback disconnect-server();
+    in-out property <[SavedServerData]> saved-servers: [];
     callback copy-room-code();
     callback clear-keybind(string);
     callback toggle-dark-mode();
@@ -347,6 +350,7 @@ export component MainWindow inherits Window {
                             wide: root.desktop-layout;
                             first-run: root.first-run;
                             server-address <=> root.server-address;
+                            saved-servers: root.saved-servers;
                             user-name <=> root.user-name;
                             status-text: root.status-text;
                             is-connected: root.is-connected;
@@ -361,6 +365,8 @@ export component MainWindow inherits Window {
                             connect-server => { root.connect-server(); }
                             disconnect-server => { root.disconnect-server(); }
                             find-server => { root.find-server(); }
+                            save-server(name) => { root.save-server(name); }
+                            remove-server(idx) => { root.remove-server(idx); }
                             select-space(space-id) => { root.select-space(space-id); }
                             create-space => { root.create-space(); }
                             join-space => { root.join-space(); }
