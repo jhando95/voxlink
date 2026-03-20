@@ -104,23 +104,46 @@ pub fn setup_send_text_message(
         }
         w.set_chat_input(slint::SharedString::default());
         let network = network.clone();
+        let window_weak2 = window_weak.clone();
         rt_handle.spawn(async move {
-            let net = network.lock().await;
-            let _ = if is_direct_message {
-                net.send_signal(&SignalMessage::SendDirectMessage {
-                    user_id: target_id,
-                    content,
-                    reply_to_message_id,
-                })
-                .await
-            } else {
-                net.send_signal(&SignalMessage::SendTextMessage {
-                    channel_id: target_id,
-                    content,
-                    reply_to_message_id,
-                })
-                .await
+            let ok = match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                network.lock(),
+            )
+            .await
+            {
+                Ok(net) => {
+                    let res = if is_direct_message {
+                        net.send_signal(&SignalMessage::SendDirectMessage {
+                            user_id: target_id,
+                            content: content.clone(),
+                            reply_to_message_id,
+                        })
+                        .await
+                    } else {
+                        net.send_signal(&SignalMessage::SendTextMessage {
+                            channel_id: target_id,
+                            content: content.clone(),
+                            reply_to_message_id,
+                        })
+                        .await
+                    };
+                    if let Err(e) = &res {
+                        log::error!("Failed to send message: {e}");
+                    }
+                    res.is_ok()
+                }
+                Err(_) => {
+                    log::error!("Network lock timed out sending message");
+                    false
+                }
             };
+            if !ok {
+                // Restore the message so the user doesn't lose it
+                if let Some(w) = window_weak2.upgrade() {
+                    w.set_chat_input(content.into());
+                }
+            }
         });
     });
 }

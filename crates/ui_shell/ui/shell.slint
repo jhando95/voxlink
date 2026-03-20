@@ -570,8 +570,11 @@ export component WorkspaceRail inherits Rectangle {
 
                 Divider {}
 
-                VerticalLayout {
-                    spacing: 6px;
+                Flickable {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 6px;
+
                     SectionLabel { text: "SPACES"; }
 
                     if root.spaces.length == 0 : Rectangle {
@@ -646,7 +649,6 @@ export component WorkspaceRail inherits Rectangle {
                             }
                         }
                     }
-                }
 
                 if root.show-members && root.members.length > 0 : Divider {}
 
@@ -702,6 +704,9 @@ export component WorkspaceRail inherits Rectangle {
                         }
                     }
                 }
+                } // close Flickable VerticalLayout
+                } // close Flickable
+
             }
         }
     }

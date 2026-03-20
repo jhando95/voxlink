@@ -1718,6 +1718,8 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
 
     if let Some(peer) = state.read().await.peers.get(peer_id) {
         peer.set_room_code(None).await;
+        // Clear whisper targets so stale whispers don't persist
+        peer.whisper_targets.lock().await.clear();
     }
 }
 

@@ -931,7 +931,10 @@ impl AudioEngine {
 
         let mut peers = match self.peer_buffers.try_lock() {
             Ok(p) => p,
-            Err(_) => return false,
+            Err(_) => {
+                log::trace!("queue_decoded_audio: peer_buffers lock contended for {sender_id}");
+                return false;
+            }
         };
 
         let is_new = !peers.contains_key(sender_id);

@@ -3,6 +3,7 @@ use audio_core::AudioEngine;
 use net_control::NetworkClient;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 
 pub struct MediaSession {
@@ -32,12 +33,16 @@ impl MediaSession {
         // Bounded channel: backpressure after 8 frames (~160ms). Drops oldest on overflow.
         let (tx, mut rx) = mpsc::channel::<Arc<[u8]>>(8);
 
-        // Single sender task — one lock acquisition per batch, not per frame
+        // Single sender task — acquires network lock per frame with timeout
         let net = self.network.clone();
         tokio::spawn(async move {
             let mut sent: u64 = 0;
             while let Some(data) = rx.recv().await {
-                let net = net.lock().await;
+                let Ok(net) = tokio::time::timeout(Duration::from_millis(100), net.lock()).await
+                else {
+                    // Network lock contended — skip this frame rather than blocking audio
+                    continue;
+                };
                 match net.send_audio(&data).await {
                     Ok(()) => {
                         sent += 1;
@@ -59,15 +64,13 @@ impl MediaSession {
 
         // Audio capture callback pushes Arc<[u8]> frames — no extra copy
         let dropped = self.dropped_frames.clone();
-        {
-            let audio = self.audio.lock().await;
-            audio.set_on_encoded_frame(move |encoded_data| {
-                // try_send: if channel is full, drop the frame (better than blocking audio thread)
-                if tx.try_send(encoded_data).is_err() {
-                    dropped.fetch_add(1, Ordering::Relaxed);
-                }
-            });
-        }
+        let audio = self.audio.lock().await;
+        audio.set_on_encoded_frame(move |encoded_data| {
+            // try_send: if channel is full, drop the frame (better than blocking audio thread)
+            if tx.try_send(encoded_data).is_err() {
+                dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        });
 
         log::info!("MediaSession::start — audio pipeline fully wired");
         Ok(())

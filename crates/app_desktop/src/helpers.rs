@@ -1,13 +1,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
 pub const THEME_PRESET_COUNT: i32 = 7;
+
+/// Global lock for config load-modify-save operations to prevent data races.
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Auto-save all settings to config file with device hot-swap.
 pub fn auto_save_settings(
@@ -41,6 +44,7 @@ pub fn auto_save_settings(
             log::info!("Audio devices hot-swapped");
         }
 
+        let _lock = CONFIG_LOCK.lock().ok();
         let existing = config_store::load_config();
         let cfg = config_store::AppConfig {
             input_device: input_name,
@@ -120,6 +124,7 @@ pub fn theme_preset_index(key: &str) -> i32 {
 /// Save room code to config in background (non-blocking).
 pub fn save_room_code_async(code: String) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_room_code = Some(code);
         let _ = config_store::save_config(&cfg);
@@ -129,6 +134,7 @@ pub fn save_room_code_async(code: String) {
 /// Clear saved room code so we don't auto-rejoin on next launch.
 pub fn clear_room_code_async() {
     std::thread::spawn(|| {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_room_code = None;
         let _ = config_store::save_config(&cfg);
@@ -171,6 +177,7 @@ pub fn copy_to_clipboard(text: &str) -> bool {
 
 /// Save window dimensions to config (called on exit).
 pub fn save_window_size(width: u32, height: u32) {
+    let _lock = CONFIG_LOCK.lock().ok();
     let mut cfg = config_store::load_config();
     cfg.window_width = Some(width);
     cfg.window_height = Some(height);
@@ -196,6 +203,7 @@ pub fn send_notification(title: &str, body: &str) {
 /// Save auth token to config in background.
 pub fn save_auth_token_async(token: String) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.auth_token = Some(token);
         let _ = config_store::save_config(&cfg);
@@ -204,6 +212,7 @@ pub fn save_auth_token_async(token: String) {
 
 pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_space_id = Some(space_id);
         cfg.last_channel_id = Some(channel_id);
@@ -212,6 +221,7 @@ pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
 }
 
 pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo) {
+    let _lock = CONFIG_LOCK.lock().ok();
     let mut cfg = config_store::load_config();
     let server_address = cfg.server_address.clone();
     if let Some(existing) = cfg
@@ -254,6 +264,7 @@ pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo
 
 pub fn remove_saved_space_async(space_id: String) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.saved_spaces.retain(|space| space.id != space_id);
         if cfg.last_space_id.as_deref() == Some(space_id.as_str()) {
@@ -266,6 +277,7 @@ pub fn remove_saved_space_async(space_id: String) {
 
 pub fn clear_deleted_channel_async(space_id: String, channel_id: String) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         if cfg.last_space_id.as_deref() == Some(space_id.as_str())
             && cfg.last_channel_id.as_deref() == Some(channel_id.as_str())
@@ -299,6 +311,7 @@ pub fn sync_saved_spaces_ui(window: &MainWindow, exclude_space_id: Option<&str>)
 
 pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)>) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.member_widget_visible = visible;
         if let Some((x, y)) = position {
@@ -311,6 +324,7 @@ pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)
 
 pub fn save_favorite_friends_async(favorites: Vec<shared_types::FavoriteFriend>) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.favorite_friends = favorites;
         let _ = config_store::save_config(&cfg);
@@ -319,6 +333,7 @@ pub fn save_favorite_friends_async(favorites: Vec<shared_types::FavoriteFriend>)
 
 pub fn save_recent_direct_messages_async(threads: Vec<shared_types::DirectMessageThread>) {
     std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.recent_direct_messages = threads;
         let _ = config_store::save_config(&cfg);
@@ -345,7 +360,7 @@ pub fn check_for_updates(window: &MainWindow) {
 
 fn fetch_latest_version() -> Option<String> {
     // GitHub Releases API returns latest release tag
-    let url = "https://api.github.com/repos/jph/voxlink/releases/latest";
+    let url = "https://api.github.com/repos/jhando95/voxlink/releases/latest";
     let body = ureq::get(url)
         .header("Accept", "application/vnd.github.v3+json")
         .header("User-Agent", "Voxlink-Desktop")

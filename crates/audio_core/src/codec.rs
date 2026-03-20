@@ -472,8 +472,16 @@ impl NoiseSuppressor {
     const SUB_FRAME: usize = nnnoiseless::DenoiseState::FRAME_SIZE; // 480
 
     pub fn new() -> Self {
+        let state = match std::panic::catch_unwind(nnnoiseless::DenoiseState::new) {
+            Ok(s) => s,
+            Err(_) => {
+                log::error!("NoiseSuppressor: DenoiseState::new() panicked; using fallback");
+                // Create a second attempt — if this panics too, it's unrecoverable
+                nnnoiseless::DenoiseState::new()
+            }
+        };
         Self {
-            state: nnnoiseless::DenoiseState::new(),
+            state,
             enabled: false,
             primed: false,
         }
@@ -589,8 +597,9 @@ impl EchoCanceller {
     pub fn new(frame_size: usize) -> Self {
         Self {
             enabled: false,
-            // Extra samples for delay search (up to ~10ms lookaround)
-            ref_buf: vec![0.0; frame_size + 480],
+            // Extra samples for delay search (up to ~10ms lookaround).
+            // +1 headroom to prevent off-by-one at max offset boundary.
+            ref_buf: vec![0.0; frame_size + 480 + 1],
         }
     }
 

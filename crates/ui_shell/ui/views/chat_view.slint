@@ -429,7 +429,7 @@ export component ChatView inherits Rectangle {
                                         // Action buttons: only visible on hover (Discord-style)
                                         if msg-hover.has-hover && !root.chat-is-direct-message : HorizontalLayout {
                                             spacing: 6px;
-                                            for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}"] : Rectangle {
+                                            for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}", "\u{1F602}", "\u{1F914}", "\u{1F525}"] : Rectangle {
                                                 height: 22px;
                                                 border-radius: VxTheme.radius-pill;
                                                 background: react-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;

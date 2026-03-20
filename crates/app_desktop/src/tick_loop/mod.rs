@@ -784,17 +784,35 @@ fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32)
         return;
     };
     let target = aud.target_bitrate();
-    if target <= 0 || ping_ms < 0 {
+    if target <= 0 {
         return;
     }
 
-    let new_bitrate = if ping_ms > 200 {
-        target / 2 // 50% — poor network
+    // Use packet loss ratio as primary signal, RTT as secondary
+    let loss = aud.packet_loss_ratio();
+    let new_bitrate = if loss > 0.15 {
+        // Heavy loss (>15%): aggressive reduction
+        (target as f32 * 0.5) as i32
+    } else if loss > 0.05 {
+        // Moderate loss (>5%): reduce to 70%
+        (target as f32 * 0.7) as i32
+    } else if loss > 0.01 {
+        // Light loss (>1%): reduce to 85%
+        (target as f32 * 0.85) as i32
+    } else if ping_ms > 200 {
+        // No loss but high RTT: reduce to 75%
+        target * 3 / 4
     } else if ping_ms > 100 {
-        target * 3 / 4 // 75% — moderate network
+        // No loss, moderate RTT: reduce to 90%
+        target * 9 / 10
     } else {
-        target // 100% — good network
-    };
+        // Good conditions: full target
+        target
+    }
+    .max(16_000); // Floor: 16kbps minimum
+
+    // Reset loss counters each adaptation window
+    aud.reset_loss_counters();
 
     let current = aud.current_bitrate();
     // Update metrics with current bitrate
@@ -805,9 +823,10 @@ fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32)
     if new_bitrate != current {
         aud.set_bitrate(new_bitrate);
         log::debug!(
-            "Adaptive bitrate: {}bps → {}bps (ping={}ms, target={}bps)",
+            "Adaptive bitrate: {}bps → {}bps (loss={:.1}%, ping={}ms, target={}bps)",
             current,
             new_bitrate,
+            loss * 100.0,
             ping_ms,
             target
         );
