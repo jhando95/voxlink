@@ -1624,7 +1624,26 @@ async fn relay_audio_udp(
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
-    let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    let others = {
+        let all = handlers::collect_room_others(state, &room_code, sender_id).await;
+        // Whisper filtering: if sender has whisper targets, only send to those peers
+        let whisper_targets: Vec<String> = {
+            let s = state.read().await;
+            if let Some(sender) = s.peers.get(sender_id) {
+                sender.whisper_targets.lock().await.clone()
+            } else {
+                Vec::new()
+            }
+        };
+        if whisper_targets.is_empty() {
+            all
+        } else {
+            let target_set: HashSet<String> = whisper_targets.into_iter().collect();
+            all.into_iter()
+                .filter(|p| target_set.contains(&p.id))
+                .collect()
+        }
+    };
     metrics
         .audio_frames_in_total
         .fetch_add(1, Ordering::Relaxed);

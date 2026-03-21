@@ -98,6 +98,17 @@ pub fn process_signals(
                     ui_shell::set_members(w, &[]);
                     ui_shell::set_space_audit_log(w, &[]);
                     w.set_status_text("Saved space no longer exists on the server".into());
+                    // Stop audio if it was running (user may have been in a channel)
+                    if *ctx.audio_started.borrow() {
+                        *ctx.audio_started.borrow_mut() = false;
+                        ctx.audio_active_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        let audio = ctx.audio.clone();
+                        ctx.rt_handle.spawn(async move {
+                            let mut aud = audio.lock().await;
+                            aud.stop_capture();
+                            aud.stop_playback();
+                        });
+                    }
                     continue;
                 }
                 log::error!("Server error: {message}");
@@ -347,6 +358,15 @@ pub fn process_signals(
                 ui_shell::set_space_audit_log(w, &[]);
                 crate::friends::sync_ui(w, state);
                 ctx.screen_share.stop_capture();
+                // Stop audio streams — prevents mic/playback leaking after kick
+                *ctx.audio_started.borrow_mut() = false;
+                ctx.audio_active_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                let audio = ctx.audio.clone();
+                ctx.rt_handle.spawn(async move {
+                    let mut aud = audio.lock().await;
+                    aud.stop_capture();
+                    aud.stop_playback();
+                });
                 if w.get_notifications_enabled() {
                     crate::helpers::send_notification("Voxlink", reason);
                 }
@@ -433,7 +453,10 @@ pub fn process_signals(
             SignalMessage::MemberTimeoutExpired { member_id } => {
                 log::info!("Timeout expired for {member_id}");
             }
-            _ => {}
+            other => {
+                log::trace!("Unhandled signal (client-to-server variant): {:?}",
+                    std::mem::discriminant(other));
+            }
         }
     }
 }
