@@ -175,16 +175,25 @@ impl NetworkClient {
 
     pub async fn send_audio(&self, data: &[u8]) -> Result<()> {
         // Prefer UDP when available — lower latency, no head-of-line blocking
-        if self.udp_active.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.udp_active.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(ref token) = *self.udp_token.lock().await {
                 if let Some(ref socket) = *self.udp_socket.lock().await {
                     // UDP packet: [token(8)][MEDIA_PACKET_AUDIO(1)][opus_data]
-                    let mut packet = Vec::with_capacity(8 + 1 + data.len());
-                    packet.extend_from_slice(token);
-                    packet.push(shared_types::MEDIA_PACKET_AUDIO);
-                    packet.extend_from_slice(data);
-                    // Fire-and-forget: UDP is unreliable by design
-                    let _ = socket.send(&packet).await;
+                    // Use stack buffer for common case (most Opus frames < 500 bytes)
+                    let pkt_len = 8 + 1 + data.len();
+                    if pkt_len <= 512 {
+                        let mut buf = [0u8; 512];
+                        buf[..8].copy_from_slice(token);
+                        buf[8] = shared_types::MEDIA_PACKET_AUDIO;
+                        buf[9..pkt_len].copy_from_slice(data);
+                        let _ = socket.send(&buf[..pkt_len]).await;
+                    } else {
+                        let mut packet = Vec::with_capacity(pkt_len);
+                        packet.extend_from_slice(token);
+                        packet.push(shared_types::MEDIA_PACKET_AUDIO);
+                        packet.extend_from_slice(data);
+                        let _ = socket.send(&packet).await;
+                    }
                     return Ok(());
                 }
             }
@@ -192,9 +201,18 @@ impl NetworkClient {
 
         // Fallback: WebSocket
         if let Some(tx) = self.ws_tx.lock().await.as_mut() {
-            let mut packet = Vec::with_capacity(data.len() + 1);
-            packet.push(shared_types::MEDIA_PACKET_AUDIO);
-            packet.extend_from_slice(data);
+            let pkt_len = 1 + data.len();
+            let packet = if pkt_len <= 512 {
+                let mut buf = vec![0u8; pkt_len];
+                buf[0] = shared_types::MEDIA_PACKET_AUDIO;
+                buf[1..].copy_from_slice(data);
+                buf
+            } else {
+                let mut p = Vec::with_capacity(pkt_len);
+                p.push(shared_types::MEDIA_PACKET_AUDIO);
+                p.extend_from_slice(data);
+                p
+            };
             tx.send(Message::Binary(packet.into())).await?;
         }
         Ok(())
@@ -294,8 +312,16 @@ impl NetworkClient {
             log::info!("UDP receive task ended");
         });
 
+        // Store socket and token BEFORE setting udp_active and spawning tasks
+        // that read them, to prevent races where send_audio() or keepalive sees
+        // udp_active=true but socket/token are still None.
+        *self.udp_socket.lock().await = Some(socket.clone());
+        *self.udp_token.lock().await = Some(token);
+        self.udp_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
         // Start UDP keepalive task — prevents NAT mapping from expiring
-        let keepalive_socket = socket.clone();
+        let keepalive_socket = socket;
         let keepalive_active = self.udp_active.clone();
         tokio::spawn(async move {
             let interval = std::time::Duration::from_secs(shared_types::UDP_KEEPALIVE_INTERVAL_SECS);
@@ -304,7 +330,7 @@ impl NetworkClient {
                                     shared_types::UDP_KEEPALIVE];
             loop {
                 tokio::time::sleep(interval).await;
-                if !keepalive_active.load(std::sync::atomic::Ordering::Relaxed) {
+                if !keepalive_active.load(std::sync::atomic::Ordering::Acquire) {
                     break;
                 }
                 if keepalive_socket.send(&keepalive_packet).await.is_err() {
@@ -313,10 +339,6 @@ impl NetworkClient {
             }
         });
 
-        *self.udp_socket.lock().await = Some(socket);
-        *self.udp_token.lock().await = Some(token);
-        self.udp_active
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         log::info!("UDP audio transport active → {udp_target}");
 
         Ok(())

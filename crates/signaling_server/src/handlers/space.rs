@@ -717,9 +717,9 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
 
     let owner_identity = stable_peer_id(state, peer_id).await;
 
-    // Check ownership
-    {
-        let s = state.read().await;
+    // Check ownership and remove space atomically under write lock to prevent TOCTOU
+    let member_peers: Vec<Arc<Peer>> = {
+        let mut s = state.write().await;
         let is_owner = s
             .spaces
             .get(&space_id)
@@ -730,12 +730,10 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
             send_error(state, peer_id, "Only the space creator can delete it").await;
             return;
         }
-    }
 
-    // Collect all members to notify
-    let member_peers: Vec<Arc<Peer>> = {
-        let s = state.read().await;
-        s.spaces
+        // Collect members to notify while we hold the lock
+        let members: Vec<Arc<Peer>> = s
+            .spaces
             .get(&space_id)
             .map(|space| {
                 space
@@ -744,20 +742,18 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
                     .filter_map(|id| s.peers.get(id).cloned())
                     .collect()
             })
-            .unwrap_or_default()
-    };
+            .unwrap_or_default();
 
-    // Remove space, its rooms, and invite index entry
-    {
-        let mut s = state.write().await;
+        // Remove space, its rooms, and invite index entry
         if let Some(space) = s.spaces.remove(&space_id) {
             s.invite_index.remove(&space.invite_code);
-            // Remove all channel rooms
             for ch in &space.channels {
                 s.rooms.remove(&ch.room_key);
             }
         }
-    }
+
+        members
+    };
 
     // Clear space_id and room_code for all members, notify them
     let mut affected_user_ids = Vec::new();

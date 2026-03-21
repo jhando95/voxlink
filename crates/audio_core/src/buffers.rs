@@ -286,6 +286,8 @@ impl PeerPlaybackShared {
 pub(crate) struct PeerPlayback {
     pub shared: Arc<PeerPlaybackShared>,
     pub playback_agc: PlaybackAgc,
+    /// Reusable buffer for i16→f32 conversion on decode path (avoids allocation per frame)
+    pub convert_buf: Vec<f32>,
     // Jitter adaptation state (only accessed from decode side)
     last_underrun_count: u32,
     last_callback_count: u32,
@@ -300,6 +302,7 @@ impl PeerPlayback {
         Self {
             shared: Arc::new(PeerPlaybackShared::new()),
             playback_agc: PlaybackAgc::new(),
+            convert_buf: Vec::with_capacity(shared_types::FRAME_SIZE),
             last_underrun_count: 0,
             last_callback_count: 0,
             consecutive_underrun_checks: 0,

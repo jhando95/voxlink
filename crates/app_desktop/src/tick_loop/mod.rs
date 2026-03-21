@@ -278,7 +278,7 @@ pub fn start(
 
             // --- Retry pending messages every ~2s ---
             if tick.is_multiple_of(80) {
-                retry_pending_messages(&state, &network, &rt_handle);
+                retry_pending_messages(&state, &network, &rt_handle, &w);
             }
 
             // --- Ping every ~3s ---
@@ -337,6 +337,7 @@ fn handle_keybind_listening(
     if state.total_ticks >= KEYBIND_LISTEN_TIMEOUT_TICKS {
         log::info!("Keybind listening timed out after 10s");
         w.set_listening_keybind("".into());
+        w.set_status_text("Keybind listening timed out".into());
         *ls = None;
         return;
     }
@@ -728,18 +729,30 @@ fn retry_pending_messages(
     state: &Rc<RefCell<shared_types::AppState>>,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     rt_handle: &tokio::runtime::Handle,
+    w: &MainWindow,
 ) {
     let mut to_send: Vec<shared_types::PendingMessage> = Vec::new();
+    let mut dropped_count = 0u32;
     {
         let mut s = state.borrow_mut();
         for mut msg in s.pending_messages.drain(..) {
             if msg.retry_count >= 3 {
                 log::warn!("Dropping message after 3 retries: {}", msg.content.chars().take(50).collect::<String>());
+                dropped_count += 1;
                 continue;
             }
             msg.retry_count += 1;
             to_send.push(msg);
         }
+    }
+
+    if dropped_count > 0 {
+        let text = if dropped_count == 1 {
+            "Message failed to send after 3 attempts".to_string()
+        } else {
+            format!("{dropped_count} messages failed to send after 3 attempts")
+        };
+        w.set_status_text(text.into());
     }
 
     if to_send.is_empty() {
@@ -810,6 +823,18 @@ fn adapt_bitrate(audio: &Arc<TokioMutex<audio_core::AudioEngine>>, ping_ms: i32)
         target
     }
     .max(16_000); // Floor: 16kbps minimum
+
+    // Dynamically adjust Opus FEC redundancy based on observed loss
+    let fec_pct = if loss > 0.15 {
+        20
+    } else if loss > 0.05 {
+        10
+    } else if loss > 0.01 {
+        5
+    } else {
+        2
+    };
+    aud.set_fec_loss_pct(fec_pct);
 
     // Reset loss counters each adaptation window
     aud.reset_loss_counters();

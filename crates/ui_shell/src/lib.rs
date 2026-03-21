@@ -813,8 +813,11 @@ fn render_markdown(content: &str) -> (String, bool) {
         // Strip optional language tag on first line
         let code = if let Some(newline_pos) = inner.find('\n') {
             let first_line = &inner[..newline_pos];
-            if first_line.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-                inner[newline_pos + 1..].trim_end().to_string()
+            let after_tag = &inner[newline_pos + 1..];
+            if first_line.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                && !after_tag.trim().is_empty()
+            {
+                after_tag.trim_end().to_string()
             } else {
                 inner.trim().to_string()
             }

@@ -540,15 +540,20 @@ impl NoiseSuppressor {
 /// Shared echo reference buffer — written by playback, read by capture.
 /// Uses atomic cursors for lock-free cross-thread access.
 pub(crate) struct EchoReference {
-    buf: Vec<f32>,
+    buf: std::cell::UnsafeCell<Vec<f32>>,
     write: std::sync::atomic::AtomicUsize,
     cap: usize,
 }
 
+// Safety: buf is only mutated by the single-threaded playback callback (record),
+// and read_recent only reads stale-safe samples behind the atomic write cursor.
+unsafe impl Send for EchoReference {}
+unsafe impl Sync for EchoReference {}
+
 impl EchoReference {
     pub fn new(capacity: usize) -> Self {
         Self {
-            buf: vec![0.0; capacity],
+            buf: std::cell::UnsafeCell::new(vec![0.0; capacity]),
             write: std::sync::atomic::AtomicUsize::new(0),
             cap: capacity,
         }
@@ -557,11 +562,8 @@ impl EchoReference {
     /// Called from the playback callback to record what was sent to speakers.
     pub fn record(&self, data: &[f32]) {
         let mut w = self.write.load(Ordering::Relaxed);
-        // Safety: we're the only writer (playback callback is single-threaded).
-        // The buf is pre-allocated and never resized.
-        let buf = unsafe {
-            &mut *(std::ptr::addr_of!(self.buf) as *mut Vec<f32>)
-        };
+        // Safety: playback callback is the sole writer; UnsafeCell provides interior mutability.
+        let buf = unsafe { &mut *self.buf.get() };
         for &s in data {
             buf[w % self.cap] = s;
             w = w.wrapping_add(1);
@@ -574,16 +576,14 @@ impl EchoReference {
     pub fn read_recent(&self, out: &mut [f32]) {
         let w = self.write.load(Ordering::Acquire);
         let len = out.len().min(self.cap);
+        // Safety: we only read behind the write cursor with Acquire ordering.
+        let buf = unsafe { &*self.buf.get() };
         let start = w.wrapping_sub(len);
         for (i, s) in out[..len].iter_mut().enumerate() {
-            *s = self.buf[(start.wrapping_add(i)) % self.cap];
+            *s = buf[(start.wrapping_add(i)) % self.cap];
         }
     }
 }
-
-// Safety: EchoReference is designed for cross-thread use (single writer + single reader).
-unsafe impl Send for EchoReference {}
-unsafe impl Sync for EchoReference {}
 
 /// Lightweight echo canceller — detects echo via cross-correlation with
 /// the playback reference and attenuates the capture signal when detected.

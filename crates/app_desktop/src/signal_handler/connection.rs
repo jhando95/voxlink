@@ -177,10 +177,15 @@ pub fn check_connection(
     if connected && !prev_connected {
         w.set_status_text("Connected".into());
         w.set_room_status(slint::SharedString::default());
+
+        // Snapshot all UI state atomically before spawning async task.
+        // This prevents the race where user navigates away between snapshot
+        // and the async rejoin, which would rejoin a stale room/space.
+        let current_view = w.get_current_view();
         let room_code = w.get_room_code().to_string();
         let user_name = w.get_user_name().to_string();
         let space_invite = w.get_current_space_invite().to_string();
-        let direct_message_user_id = if w.get_current_view()
+        let direct_message_user_id = if current_view
             == ui_shell::view_to_index(AppView::TextChat)
             && w.get_chat_is_direct_message()
         {
@@ -195,8 +200,28 @@ pub fn check_connection(
         let is_in_space = !space_invite.is_empty();
         let is_muted = w.get_is_muted();
         let is_deafened = w.get_is_deafened();
+        let snapshot_view = current_view;
         let network = network.clone();
+        let window_weak = w.as_weak();
         rt_handle.spawn(async move {
+            // Verify UI hasn't navigated away since snapshot (user may have left room)
+            let view_still_valid = window_weak
+                .upgrade()
+                .map(|w| w.get_current_view() == snapshot_view)
+                .unwrap_or(false);
+            if !view_still_valid && (is_in_room || is_in_space) {
+                log::info!("Skipping auto-rejoin: user navigated away during reconnect");
+                // Still re-authenticate even if we skip rejoin
+                let net = network.lock().await;
+                let cfg = config_store::load_config();
+                let _ = net
+                    .send_signal(&SignalMessage::Authenticate {
+                        token: cfg.auth_token,
+                        user_name,
+                    })
+                    .await;
+                return;
+            }
             let net = network.lock().await;
 
             // Re-authenticate after reconnect

@@ -163,8 +163,15 @@ pub fn setup_refresh_devices(
                 ui_shell::set_device_lists(&w, &inputs, &outputs);
                 let max_input = inputs.len().saturating_sub(1) as i32;
                 let max_output = outputs.len().saturating_sub(1) as i32;
-                w.set_selected_input(w.get_selected_input().min(max_input).max(0));
-                w.set_selected_output(w.get_selected_output().min(max_output).max(0));
+                let prev_input = w.get_selected_input();
+                let prev_output = w.get_selected_output();
+                let new_input = prev_input.min(max_input).max(0);
+                let new_output = prev_output.min(max_output).max(0);
+                w.set_selected_input(new_input);
+                w.set_selected_output(new_output);
+                if new_input != prev_input || new_output != prev_output {
+                    w.set_status_text("Audio device changed — selection updated".into());
+                }
             }
         });
     });

@@ -533,6 +533,9 @@ impl Database {
         query: &str,
         limit: u32,
     ) -> Result<Vec<MessageRow>, String> {
+        if query.len() > 256 {
+            return Err("Search query too long (max 256 characters)".to_string());
+        }
         let conn = self.lock_conn()?;
         let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
         let mut stmt = conn

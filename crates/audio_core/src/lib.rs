@@ -235,6 +235,8 @@ pub struct AudioEngine {
     feedback_tone: FeedbackTone,
     /// Runtime bitrate in bps. Encoder reads this each frame for dynamic quality switching.
     opus_bitrate: Arc<AtomicI32>,
+    /// FEC packet loss percentage hint for Opus encoder (0–100, updated dynamically)
+    opus_fec_loss_pct: Arc<AtomicI32>,
     /// Target (base) bitrate from voice quality setting. Adaptive bitrate reduces from this.
     target_bitrate: Arc<AtomicI32>,
     /// Set to true when a stream error occurs — signals the app to attempt recovery (#1)
@@ -270,6 +272,7 @@ impl AudioEngine {
             output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
             feedback_tone: FeedbackTone::new(),
             opus_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
+            opus_fec_loss_pct: Arc::new(AtomicI32::new(5)),
             target_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
@@ -530,6 +533,7 @@ impl AudioEngine {
         let echo_ref_capture = self.echo_ref.clone();
         let input_gain = self.input_gain.clone();
         let opus_bitrate = self.opus_bitrate.clone();
+        let opus_fec_loss_pct = self.opus_fec_loss_pct.clone();
 
         // All buffers pre-allocated once — zero allocation in the audio callback
         let mut capture_ring = CaptureRing::new(FRAME_SIZE * 4);
@@ -613,9 +617,11 @@ impl AudioEngine {
                         *out = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
                     }
 
-                    // Apply runtime bitrate (changed when joining channels with different quality)
+                    // Apply runtime bitrate and FEC loss hint (updated by adaptive bitrate)
                     let target_bps = opus_bitrate.load(Ordering::Relaxed);
                     opus_encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(target_bps)).ok();
+                    let fec_pct = opus_fec_loss_pct.load(Ordering::Relaxed) as u8;
+                    opus_encoder.set_packet_loss_perc(fec_pct).ok();
 
                     match opus_encoder.encode(&pcm_i16, &mut opus_out) {
                         Ok(len) => {
@@ -681,6 +687,12 @@ impl AudioEngine {
     /// Set the runtime Opus bitrate directly (used by adaptive bitrate logic).
     pub fn set_bitrate(&self, bitrate: i32) {
         self.opus_bitrate.store(bitrate, Ordering::Relaxed);
+    }
+
+    /// Set the Opus encoder's FEC packet loss hint (0–100%).
+    /// Higher values make Opus allocate more redundancy for loss recovery.
+    pub fn set_fec_loss_pct(&self, pct: i32) {
+        self.opus_fec_loss_pct.store(pct.clamp(0, 100), Ordering::Relaxed);
     }
 
     /// Get the target (base) bitrate from the voice quality setting.
@@ -943,16 +955,17 @@ impl AudioEngine {
             return false;
         };
 
-        // Convert i16 → f32, apply per-peer playback AGC, then push to SPSC ring
-        let mut f32_buf: Vec<f32> = pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)).collect();
-        peer.playback_agc.process(&mut f32_buf);
+        // Convert i16 → f32 into reusable buffer (zero allocation on hot path)
+        peer.convert_buf.clear();
+        peer.convert_buf.extend(pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)));
+        peer.playback_agc.process(&mut peer.convert_buf);
 
         let mut sum_sq: f32 = 0.0;
-        for &s in &f32_buf {
+        for &s in &peer.convert_buf {
             sum_sq += s * s;
         }
         // Push into the lock-free SPSC ring — playback callback reads without mutex
-        peer.shared.ring.push_slice(&f32_buf);
+        peer.shared.ring.push_slice(&peer.convert_buf);
 
         // Adapt jitter buffer based on playback underrun feedback
         peer.adapt_from_atomics();
@@ -969,7 +982,7 @@ impl AudioEngine {
             self.sync_playback_peers();
         }
 
-        let rms = (sum_sq / f32_buf.len() as f32).sqrt();
+        let rms = (sum_sq / pcm_i16.len() as f32).sqrt();
         rms >= 0.003
     }
 
@@ -1098,8 +1111,13 @@ impl AudioEngine {
             (target as f32 * 0.9) as i32
         } else {
             // No loss: ramp back toward target (slow recovery, 10% per call)
-            let step = ((target - current) as f32 * 0.1) as i32;
-            current + step.max(1000).min(target - current) // at least 1kbps step
+            let gap = target - current;
+            if gap <= 0 {
+                target
+            } else {
+                let step = ((gap as f32 * 0.1) as i32).max(1000).min(gap);
+                current + step
+            }
         };
 
         // Clamp to reasonable range: 16kbps minimum, target maximum
