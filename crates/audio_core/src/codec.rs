@@ -227,7 +227,7 @@ impl HighPassFilter {
             *s = self.prev_output;
 
             if i < fade_len {
-                *s *= i as f32 / fade_len as f32;
+                *s *= (i + 1) as f32 / fade_len as f32;
             }
         }
 

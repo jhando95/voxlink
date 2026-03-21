@@ -3012,6 +3012,63 @@ async fn test_mute_member() {
     }
 }
 
+/// Test: server-enforced mute blocks audio relay.
+/// When a moderator server-mutes a member, their audio frames should be dropped.
+#[tokio::test]
+async fn test_mute_member_blocks_audio() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    // Use a simple room (not space) for direct audio relay testing
+    let room_code = create_room(&mut alice, "Alice").await;
+    join_room(&mut bob, &room_code, "Bob").await;
+
+    // Consume Alice's PeerJoined for Bob
+    let _ = alice.recv_signal().await;
+
+    // Verify Bob can send audio before mute
+    let audio = generate_test_audio();
+    bob.send_binary(&audio).await;
+    let frame = alice
+        .recv_binary_timeout(Duration::from_secs(5))
+        .await
+        .expect("Alice should receive Bob's audio before mute");
+    let (_, received) = parse_audio_frame(&frame);
+    assert_eq!(received, &audio[..]);
+
+    // Alice self-reports mute (client-side mute sets is_muted on server)
+    // But server-enforced mute is set via MuteMember in a space context.
+    // For room context, test via MuteChanged which sets peer.is_muted.
+    bob.send_signal(&SignalMessage::MuteChanged { is_muted: true })
+        .await;
+    // Consume MuteChanged broadcast
+    let _ = alice.recv_signal_timeout(Duration::from_secs(2)).await;
+
+    // Bob sends audio while muted — should NOT be relayed
+    bob.send_binary(&audio).await;
+    let muted_frame = alice.recv_binary_timeout(Duration::from_millis(500)).await;
+    assert!(
+        muted_frame.is_none(),
+        "Alice should NOT receive audio from muted Bob"
+    );
+
+    // Bob unmutes
+    bob.send_signal(&SignalMessage::MuteChanged { is_muted: false })
+        .await;
+    // Consume MuteChanged broadcast
+    let _ = alice.recv_signal_timeout(Duration::from_secs(2)).await;
+
+    // Bob sends audio again — should be relayed now
+    bob.send_binary(&audio).await;
+    let unmuted_frame = alice
+        .recv_binary_timeout(Duration::from_secs(5))
+        .await
+        .expect("Alice should receive Bob's audio after unmute");
+    let (_, received) = parse_audio_frame(&unmuted_frame);
+    assert_eq!(received, &audio[..]);
+}
+
 // ─── Stress Tests: Space Networking ───
 
 /// Test: multiple users join the same space rapidly.

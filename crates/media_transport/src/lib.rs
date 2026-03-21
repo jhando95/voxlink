@@ -35,12 +35,14 @@ impl MediaSession {
 
         // Single sender task — acquires network lock per frame with timeout
         let net = self.network.clone();
+        let send_dropped = self.dropped_frames.clone();
         tokio::spawn(async move {
             let mut sent: u64 = 0;
             while let Some(data) = rx.recv().await {
                 let Ok(net) = tokio::time::timeout(Duration::from_millis(100), net.lock()).await
                 else {
                     // Network lock contended — skip this frame rather than blocking audio
+                    send_dropped.fetch_add(1, Ordering::Relaxed);
                     continue;
                 };
                 match net.send_audio(&data).await {

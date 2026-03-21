@@ -1279,6 +1279,11 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
             None => return,
         };
 
+        // Server-enforced mute: drop audio from muted peers
+        if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
         // #5: Audio frame rate limiting (lock-free)
         if !atomic_rate_check(&peer.audio_rate_window_ms, &peer.audio_frame_count, LIMITS.max_audio_fps) {
             return;
@@ -1599,6 +1604,11 @@ async fn relay_audio_udp(
             Some(p) => p.clone(),
             None => return,
         };
+
+        // Server-enforced mute: drop audio from muted peers
+        if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
 
         if !atomic_rate_check(
             &peer.audio_rate_window_ms,
