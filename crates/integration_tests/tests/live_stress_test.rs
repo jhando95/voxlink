@@ -602,18 +602,39 @@ async fn live_stress_space_race() {
                         })
                         .await;
 
-                    match client.recv_timeout(Duration::from_secs(10)).await {
-                        Some(SignalMessage::SpaceJoined { .. }) => {
-                            eprintln!("[{name}] ✓ joined");
+                    // Other joiners may trigger MemberOnline before our SpaceJoined arrives
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                    let mut joined = false;
+                    loop {
+                        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if remaining.is_zero() {
+                            break;
                         }
-                        Some(SignalMessage::Error { message }) => {
-                            eprintln!("[{name}] join error: {message}");
-                            errors.fetch_add(1, Ordering::Relaxed);
+                        match client.recv_timeout(remaining).await {
+                            Some(SignalMessage::SpaceJoined { .. }) => {
+                                eprintln!("[{name}] ✓ joined");
+                                joined = true;
+                                break;
+                            }
+                            Some(SignalMessage::MemberOnline { .. }) => {
+                                // Expected during concurrent joins — keep waiting
+                                continue;
+                            }
+                            Some(SignalMessage::Error { message }) => {
+                                eprintln!("[{name}] join error: {message}");
+                                errors.fetch_add(1, Ordering::Relaxed);
+                                break;
+                            }
+                            other => {
+                                eprintln!("[{name}] unexpected: {:?}", other);
+                                errors.fetch_add(1, Ordering::Relaxed);
+                                break;
+                            }
                         }
-                        other => {
-                            eprintln!("[{name}] unexpected: {:?}", other);
-                            errors.fetch_add(1, Ordering::Relaxed);
-                        }
+                    }
+                    if !joined && errors.load(Ordering::Relaxed) == 0 {
+                        eprintln!("[{name}] timed out waiting for SpaceJoined");
+                        errors.fetch_add(1, Ordering::Relaxed);
                     }
 
                     // Leave
