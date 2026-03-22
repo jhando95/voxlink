@@ -308,7 +308,7 @@ checksum = "170433209e817da6aae2c51aa0dd443009a613425dd041ebfb2492d1c4c11a25"
 
 [[package]]
 name = "app_desktop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "audio_core",
  "config_store",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "audio_core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "audiopus",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "config_store"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "directories",
  "log",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "integration_tests"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "futures-util",
  "log",
@@ -3822,7 +3822,7 @@ dependencies = [
 
 [[package]]
 name = "media_transport"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "audio_core",
@@ -3975,7 +3975,7 @@ dependencies = [
 
 [[package]]
 name = "net_control"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -4823,7 +4823,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf_metrics"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "shared_types",
  "sysinfo",
@@ -5871,8 +5871,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "shared_types"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5896,7 +5907,7 @@ dependencies = [
 
 [[package]]
 name = "signaling_server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "futures-util",
@@ -5905,6 +5916,7 @@ dependencies = [
  "rusqlite",
  "rustls-pemfile",
  "serde_json",
+ "sha2",
  "shared_types",
  "tokio",
  "tokio-rustls",
@@ -6889,7 +6901,7 @@ dependencies = [
 
 [[package]]
 name = "ui_shell"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "log",
  "shared_types",
@@ -7109,7 +7121,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voice_engine"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "log",
  "shared_types",

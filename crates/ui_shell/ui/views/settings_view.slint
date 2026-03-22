@@ -102,6 +102,9 @@ export component SettingsView inherits Rectangle {
     in property <bool> minimize-to-tray: true;
     in property <bool> neural-noise-suppression: false;
     in property <bool> echo-cancellation: false;
+    in property <bool> join-leave-sounds: true;
+    in property <bool> show-spoilers: false;
+    in property <bool> compact-chat: false;
     in-out property <string> listening-keybind: "";
     in property <string> ptt-key-display: "";
     in property <string> mute-key-display: "";
@@ -121,7 +124,15 @@ export component SettingsView inherits Rectangle {
     callback toggle-minimize-to-tray();
     callback toggle-neural-noise-suppression();
     callback toggle-echo-cancellation();
+    callback toggle-join-leave-sounds();
+    callback toggle-show-spoilers();
+    callback toggle-compact-chat();
     callback clear-keybind(string);
+    // Account
+    in property <bool> is-logged-in: false;
+    in property <string> account-email: "";
+    callback logout();
+    callback show-login();
 
     background: transparent;
 
@@ -732,6 +743,56 @@ export component SettingsView inherits Rectangle {
                                     toggled => { root.toggle-minimize-to-tray(); }
                                 }
                             }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Join and leave notification sounds";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.join-leave-sounds;
+                                    toggled => { root.toggle-join-leave-sounds(); }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "CHAT"; }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Compact chat density";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.compact-chat;
+                                    toggled => { root.toggle-compact-chat(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Show spoiler text by default";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.show-spoilers;
+                                    toggled => { root.toggle-show-spoilers(); }
+                                }
+                            }
                         }
                     }
 
@@ -1069,6 +1130,73 @@ export component SettingsView inherits Rectangle {
                             accent: true;
                             horizontal-stretch: 1;
                             clicked => { root.toggle-mic-mode(); }
+                        }
+                    }
+                }
+            }
+
+            // ACCOUNT
+            VxCard {
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 12px;
+                    SectionLabel { text: "ACCOUNT"; }
+
+                    if root.is-logged-in : VerticalLayout {
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Rectangle {
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: VxTheme.accent;
+                                Text {
+                                    text: "VX";
+                                    color: white;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: root.account-email;
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: "Signed in";
+                                    color: VxTheme.success;
+                                    font-size: 10px;
+                                }
+                            }
+                        }
+                        VxButton {
+                            label: "Sign out";
+                            soft: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.logout(); }
+                        }
+                    }
+
+                    if !root.is-logged-in : VerticalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: "Sign in or create an account to sync your identity across devices.";
+                            color: VxTheme.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        VxButton {
+                            label: "Sign in / Register";
+                            accent: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.show-login(); }
                         }
                     }
                 }

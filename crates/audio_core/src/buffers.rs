@@ -153,6 +153,40 @@ impl SpscRingBuf {
         count
     }
 
+    /// Peek at the RMS energy of buffered samples without consuming them.
+    /// Returns 0.0 if the buffer is empty. Used for ducking decisions.
+    /// Uses contiguous fast path to avoid modulo per sample.
+    #[inline]
+    pub fn peek_energy(&self) -> f32 {
+        let w = self.write.load(Ordering::Acquire);
+        let r = self.read.load(Ordering::Relaxed);
+        let available = (w + self.cap - r) % self.cap;
+        if available == 0 {
+            return 0.0;
+        }
+        let count = available.min(480); // ~10ms at 48kHz
+        let cap = self.cap;
+        let first = cap - r; // contiguous samples before wrap
+        let mut sum = 0.0f32;
+        if count <= first {
+            for i in 0..count {
+                let s = self.data[r + i];
+                sum += s * s;
+            }
+        } else {
+            for i in 0..first {
+                let s = self.data[r + i];
+                sum += s * s;
+            }
+            let remaining = count - first;
+            for i in 0..remaining {
+                let s = self.data[i];
+                sum += s * s;
+            }
+        }
+        (sum / count as f32).sqrt()
+    }
+
     /// Discard all buffered samples.
     pub fn clear(&self) {
         let w = self.write.load(Ordering::Relaxed);
@@ -595,5 +629,27 @@ mod tests {
         assert!((shared.volume_f32() - 1.0).abs() < 0.01);
         shared.volume.store(500, Ordering::Relaxed);
         assert!((shared.volume_f32() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn spsc_ring_peek_energy_empty() {
+        let ring = SpscRingBuf::new(1024);
+        assert_eq!(ring.peek_energy(), 0.0);
+    }
+
+    #[test]
+    fn spsc_ring_peek_energy_nonzero_after_push() {
+        let ring = SpscRingBuf::new(1024);
+        // Push a sine-like signal with known energy
+        for i in 0..480 {
+            let t = i as f32 / 48000.0;
+            ring.push((std::f32::consts::TAU * 440.0 * t).sin() * 0.5);
+        }
+        let energy = ring.peek_energy();
+        assert!(energy > 0.0, "peek_energy should be non-zero after pushing samples, got {energy}");
+        // RMS of 0.5 * sin should be ~0.35
+        assert!(energy > 0.1 && energy < 0.6, "Energy {energy} outside expected range");
+        // peek_energy should not consume samples
+        assert_eq!(ring.len(), 480);
     }
 }

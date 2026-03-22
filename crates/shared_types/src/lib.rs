@@ -80,6 +80,22 @@ pub enum SpaceRole {
     Member,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserStatus {
+    #[default]
+    Online,
+    Idle,
+    DoNotDisturb,
+    Invisible,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BanInfo {
+    pub user_id: String,
+    pub user_name: String,
+    pub banned_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelInfo {
     pub id: String,
@@ -150,6 +166,10 @@ pub struct MemberInfo {
     pub status: String,
     #[serde(default)]
     pub bio: String,
+    #[serde(default)]
+    pub nickname: Option<String>,
+    #[serde(default)]
+    pub status_preset: UserStatus,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -493,6 +513,43 @@ pub enum SignalMessage {
         token: String,
         user_id: String,
     },
+    /// Create a new account with email and password.
+    CreateAccount {
+        email: String,
+        password: String,
+        display_name: String,
+    },
+    /// Account created successfully — client should store the token.
+    AccountCreated {
+        token: String,
+        user_id: String,
+    },
+    /// Login with email and password.
+    Login {
+        email: String,
+        password: String,
+    },
+    /// Login succeeded — token + user_id + display_name returned.
+    LoginSuccess {
+        token: String,
+        user_id: String,
+        display_name: String,
+    },
+    /// Login or account creation failed.
+    AuthError {
+        message: String,
+    },
+    /// Logout — server invalidates the token, client clears local state.
+    Logout,
+    /// Server confirms logout.
+    LoggedOut,
+    /// Change password (requires current password).
+    ChangePassword {
+        current_password: String,
+        new_password: String,
+    },
+    /// Password changed successfully.
+    PasswordChanged,
     FriendSnapshot {
         friends: Vec<FavoriteFriend>,
         incoming_requests: Vec<FriendRequest>,
@@ -715,6 +772,114 @@ pub enum SignalMessage {
         user_id: String,
         bio: String,
     },
+
+    // v0.8.0: Status presets
+    SetStatusPreset {
+        preset: UserStatus,
+    },
+    StatusPresetChanged {
+        member_id: String,
+        preset: UserStatus,
+    },
+
+    // v0.8.0: @Mention notifications
+    MentionNotification {
+        channel_id: String,
+        channel_name: String,
+        sender_name: String,
+        preview: String,
+    },
+
+    // v0.8.0: Block/Unblock users
+    BlockUser {
+        user_id: String,
+    },
+    UnblockUser {
+        user_id: String,
+    },
+    UserBlocked {
+        user_id: String,
+    },
+    UserUnblocked {
+        user_id: String,
+    },
+
+    // v0.8.0: Ban management
+    UnbanMember {
+        user_id: String,
+    },
+    ListBans,
+    BanList {
+        bans: Vec<BanInfo>,
+    },
+
+    // v0.8.0: Group DMs
+    CreateGroupDM {
+        user_ids: Vec<String>,
+        name: Option<String>,
+    },
+    GroupDMCreated {
+        group_id: String,
+        name: String,
+        members: Vec<String>,
+    },
+    SendGroupMessage {
+        group_id: String,
+        content: String,
+        #[serde(default)]
+        reply_to_message_id: Option<String>,
+    },
+    GroupMessage {
+        group_id: String,
+        message: TextMessageData,
+    },
+    SelectGroupDM {
+        group_id: String,
+    },
+    GroupDMSelected {
+        group_id: String,
+        name: String,
+        members: Vec<String>,
+        history: Vec<TextMessageData>,
+    },
+
+    // v0.8.0: Invite expiration
+    SetInviteSettings {
+        expires_hours: Option<u32>,
+        max_uses: Option<u32>,
+    },
+    InviteSettingsUpdated {
+        expires_hours: Option<u32>,
+        max_uses: Option<u32>,
+        uses: u32,
+    },
+
+    // v0.8.0: Message threads
+    GetThread {
+        channel_id: String,
+        message_id: String,
+    },
+    ThreadMessages {
+        channel_id: String,
+        root_message_id: String,
+        messages: Vec<TextMessageData>,
+    },
+
+    // v0.8.0: Server nicknames
+    SetNickname {
+        nickname: String,
+    },
+    NicknameChanged {
+        user_id: String,
+        nickname: Option<String>,
+    },
+
+    // v0.8.0: Message forwarding
+    ForwardMessage {
+        source_channel_id: String,
+        message_id: String,
+        target_channel_id: String,
+    },
 }
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
@@ -763,6 +928,8 @@ pub struct TextMessageData {
     pub reply_preview: Option<String>,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub forwarded_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1125,6 +1292,8 @@ mod tests {
                 channel_name: Some("General".into()),
                 status: String::new(),
                 bio: String::new(),
+                nickname: None,
+                status_preset: UserStatus::Online,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1289,6 +1458,7 @@ mod tests {
                 reply_to_sender_name: None,
                 reply_preview: None,
                 pinned: false,
+                forwarded_from: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1528,5 +1698,410 @@ mod tests {
         let json = r#"{"id":"p1","name":"Alice","is_muted":false}"#;
         let info: ParticipantInfo = serde_json::from_str(json).unwrap();
         assert!(!info.is_priority_speaker);
+    }
+
+    // ─── v0.8.0 tests ───
+
+    #[test]
+    fn user_status_serialization_round_trip() {
+        for (variant, expected_str) in [
+            (UserStatus::Online, "\"Online\""),
+            (UserStatus::Idle, "\"Idle\""),
+            (UserStatus::DoNotDisturb, "\"DoNotDisturb\""),
+            (UserStatus::Invisible, "\"Invisible\""),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_str);
+            let decoded: UserStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    #[test]
+    fn ban_info_serialization() {
+        let ban = BanInfo {
+            user_id: "u42".into(),
+            user_name: "Troll".into(),
+            banned_at: 1700000000,
+        };
+        let json = serde_json::to_string(&ban).unwrap();
+        let decoded: BanInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.user_id, "u42");
+        assert_eq!(decoded.user_name, "Troll");
+        assert_eq!(decoded.banned_at, 1700000000);
+    }
+
+    #[test]
+    fn text_message_data_with_forwarded_from() {
+        let msg = TextMessageData {
+            sender_id: "u1".into(),
+            sender_name: "Alice".into(),
+            content: "forwarded content".into(),
+            timestamp: 1000,
+            message_id: "m99".into(),
+            edited: false,
+            reactions: Vec::new(),
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+            forwarded_from: Some("general".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: TextMessageData = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.forwarded_from.as_deref(), Some("general"));
+
+        // Backward compat: missing forwarded_from defaults to None
+        let old_json = r#"{"sender_id":"u1","sender_name":"A","content":"hi","timestamp":1}"#;
+        let old: TextMessageData = serde_json::from_str(old_json).unwrap();
+        assert!(old.forwarded_from.is_none());
+    }
+
+    #[test]
+    fn member_info_with_nickname_and_status_preset() {
+        let member = MemberInfo {
+            id: "p1".into(),
+            user_id: Some("u1".into()),
+            name: "Alice".into(),
+            role: SpaceRole::Admin,
+            channel_id: None,
+            channel_name: None,
+            status: "custom status".into(),
+            bio: "hello world".into(),
+            nickname: Some("Ally".into()),
+            status_preset: UserStatus::DoNotDisturb,
+        };
+        let json = serde_json::to_string(&member).unwrap();
+        let decoded: MemberInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.nickname.as_deref(), Some("Ally"));
+        assert_eq!(decoded.status_preset, UserStatus::DoNotDisturb);
+
+        // Backward compat: missing nickname/status_preset use defaults
+        let old_json = r#"{"id":"p1","name":"Bob"}"#;
+        let old: MemberInfo = serde_json::from_str(old_json).unwrap();
+        assert!(old.nickname.is_none());
+        assert_eq!(old.status_preset, UserStatus::Online);
+    }
+
+    #[test]
+    fn signal_message_round_trip_set_status_preset() {
+        let msg = SignalMessage::SetStatusPreset {
+            preset: UserStatus::Idle,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetStatusPreset { preset } => assert_eq!(preset, UserStatus::Idle),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_status_preset_changed() {
+        let msg = SignalMessage::StatusPresetChanged {
+            member_id: "p1".into(),
+            preset: UserStatus::DoNotDisturb,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::StatusPresetChanged { member_id, preset } => {
+                assert_eq!(member_id, "p1");
+                assert_eq!(preset, UserStatus::DoNotDisturb);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_mention_notification() {
+        let msg = SignalMessage::MentionNotification {
+            channel_id: "c1".into(),
+            channel_name: "General".into(),
+            sender_name: "Bob".into(),
+            preview: "@Alice check this".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::MentionNotification {
+                channel_id,
+                channel_name,
+                sender_name,
+                preview,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(channel_name, "General");
+                assert_eq!(sender_name, "Bob");
+                assert_eq!(preview, "@Alice check this");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_block_unblock() {
+        let msg = SignalMessage::BlockUser {
+            user_id: "u5".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::BlockUser { user_id } => assert_eq!(user_id, "u5"),
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::UnblockUser {
+            user_id: "u5".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::UnblockUser { user_id } => assert_eq!(user_id, "u5"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_user_blocked_unblocked() {
+        let msg = SignalMessage::UserBlocked {
+            user_id: "u5".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<SignalMessage>(&json).unwrap(),
+            SignalMessage::UserBlocked { .. }
+        ));
+
+        let msg = SignalMessage::UserUnblocked {
+            user_id: "u5".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<SignalMessage>(&json).unwrap(),
+            SignalMessage::UserUnblocked { .. }
+        ));
+    }
+
+    #[test]
+    fn signal_message_round_trip_ban_management() {
+        let msg = SignalMessage::UnbanMember {
+            user_id: "u3".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::UnbanMember { user_id } => assert_eq!(user_id, "u3"),
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::ListBans;
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<SignalMessage>(&json).unwrap(),
+            SignalMessage::ListBans
+        ));
+
+        let msg = SignalMessage::BanList {
+            bans: vec![BanInfo {
+                user_id: "u3".into(),
+                user_name: "BadUser".into(),
+                banned_at: 999,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::BanList { bans } => {
+                assert_eq!(bans.len(), 1);
+                assert_eq!(bans[0].user_id, "u3");
+                assert_eq!(bans[0].user_name, "BadUser");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_group_dm() {
+        let msg = SignalMessage::CreateGroupDM {
+            user_ids: vec!["u1".into(), "u2".into(), "u3".into()],
+            name: Some("Squad".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::CreateGroupDM { user_ids, name } => {
+                assert_eq!(user_ids, vec!["u1", "u2", "u3"]);
+                assert_eq!(name.as_deref(), Some("Squad"));
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::GroupDMCreated {
+            group_id: "g1".into(),
+            name: "Squad".into(),
+            members: vec!["u1".into(), "u2".into()],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::GroupDMCreated {
+                group_id,
+                name,
+                members,
+            } => {
+                assert_eq!(group_id, "g1");
+                assert_eq!(name, "Squad");
+                assert_eq!(members.len(), 2);
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::SendGroupMessage {
+            group_id: "g1".into(),
+            content: "hello group".into(),
+            reply_to_message_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SendGroupMessage {
+                group_id, content, ..
+            } => {
+                assert_eq!(group_id, "g1");
+                assert_eq!(content, "hello group");
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_invite_settings() {
+        let msg = SignalMessage::SetInviteSettings {
+            expires_hours: Some(24),
+            max_uses: Some(10),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetInviteSettings {
+                expires_hours,
+                max_uses,
+            } => {
+                assert_eq!(expires_hours, Some(24));
+                assert_eq!(max_uses, Some(10));
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::InviteSettingsUpdated {
+            expires_hours: Some(48),
+            max_uses: None,
+            uses: 3,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::InviteSettingsUpdated {
+                expires_hours,
+                max_uses,
+                uses,
+            } => {
+                assert_eq!(expires_hours, Some(48));
+                assert!(max_uses.is_none());
+                assert_eq!(uses, 3);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_threads() {
+        let msg = SignalMessage::GetThread {
+            channel_id: "c1".into(),
+            message_id: "m1".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::GetThread {
+                channel_id,
+                message_id,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(message_id, "m1");
+            }
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::ThreadMessages {
+            channel_id: "c1".into(),
+            root_message_id: "m1".into(),
+            messages: vec![],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::ThreadMessages {
+                channel_id,
+                root_message_id,
+                messages,
+            } => {
+                assert_eq!(channel_id, "c1");
+                assert_eq!(root_message_id, "m1");
+                assert!(messages.is_empty());
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_nickname() {
+        let msg = SignalMessage::SetNickname {
+            nickname: "Cool Guy".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::SetNickname { nickname } => assert_eq!(nickname, "Cool Guy"),
+            _ => panic!("Wrong variant"),
+        }
+
+        let msg = SignalMessage::NicknameChanged {
+            user_id: "u1".into(),
+            nickname: Some("Ally".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::NicknameChanged { user_id, nickname } => {
+                assert_eq!(user_id, "u1");
+                assert_eq!(nickname.as_deref(), Some("Ally"));
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_forward_message() {
+        let msg = SignalMessage::ForwardMessage {
+            source_channel_id: "c1".into(),
+            message_id: "m5".into(),
+            target_channel_id: "c2".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::ForwardMessage {
+                source_channel_id,
+                message_id,
+                target_channel_id,
+            } => {
+                assert_eq!(source_channel_id, "c1");
+                assert_eq!(message_id, "m5");
+                assert_eq!(target_channel_id, "c2");
+            }
+            _ => panic!("Wrong variant"),
+        }
     }
 }

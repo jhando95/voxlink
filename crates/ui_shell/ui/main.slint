@@ -1,4 +1,5 @@
 import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, SavedServerData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
+import { VxCard, VxInput } from "components.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
@@ -50,7 +51,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
-    in-out property <string> version-text: "0.7.0";
+    in-out property <string> version-text: "0.8.0";
     in-out property <string> uptime-text: "0s";
     in-out property <string> listening-keybind: "";
     in-out property <string> ptt-key-display: "Space";
@@ -145,10 +146,16 @@ export component MainWindow inherits Window {
     in-out property <bool> minimize-to-tray: true;
     in-out property <bool> neural-noise-suppression: false;
     in-out property <bool> echo-cancellation: false;
+    in-out property <bool> join-leave-sounds: true;
+    in-out property <bool> show-spoilers: false;
+    in-out property <bool> compact-chat: false;
     callback toggle-notifications();
     callback toggle-minimize-to-tray();
     callback toggle-neural-noise-suppression();
     callback toggle-echo-cancellation();
+    callback toggle-join-leave-sounds();
+    callback toggle-show-spoilers();
+    callback toggle-compact-chat();
     callback toggle-member-widget();
     callback send-friend-request(string);
     callback accept-friend-request(string);
@@ -265,6 +272,26 @@ export component MainWindow inherits Window {
     callback whisper-to(/* comma-separated peer IDs */ string);
     callback stop-whisper();
     callback save-user-note(/* user_id */ string, /* note */ string);
+
+    // Account system
+    in-out property <bool> show-login-view: false;
+    in-out property <bool> login-mode: true; // true=login, false=register
+    in-out property <string> auth-email: "";
+    in-out property <string> auth-password: "";
+    in-out property <string> auth-display-name: "";
+    in-out property <string> auth-error: "";
+    in-out property <bool> is-logged-in: false;
+    in-out property <string> account-email: "";
+    callback login();
+    callback create-account();
+    callback logout();
+    callback change-password(string, string);
+
+    // Quick switcher
+    in-out property <bool> quick-switcher-visible: false;
+    in-out property <string> quick-switcher-query: "";
+    in-out property <[ChannelData]> quick-switcher-items: [];
+    callback quick-switcher-select(string);
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -462,7 +489,17 @@ export component MainWindow inherits Window {
                             toggle-minimize-to-tray => { root.toggle-minimize-to-tray(); }
                             toggle-neural-noise-suppression => { root.toggle-neural-noise-suppression(); }
                             toggle-echo-cancellation => { root.toggle-echo-cancellation(); }
+                            join-leave-sounds: root.join-leave-sounds;
+                            show-spoilers: root.show-spoilers;
+                            compact-chat: root.compact-chat;
+                            toggle-join-leave-sounds => { root.toggle-join-leave-sounds(); }
+                            toggle-show-spoilers => { root.toggle-show-spoilers(); }
+                            toggle-compact-chat => { root.toggle-compact-chat(); }
                             clear-keybind(binding) => { root.clear-keybind(binding); }
+                            is-logged-in: root.is-logged-in;
+                            account-email: root.account-email;
+                            logout => { root.logout(); }
+                            show-login => { root.show-login-view = true; root.login-mode = true; root.auth-error = ""; }
                         }
 
                         if root.current-view == 4 : SpaceView {
@@ -520,6 +557,7 @@ export component MainWindow inherits Window {
 
                         if root.current-view == 5 : ChatView {
                             wide: root.desktop-layout;
+                            compact-mode: root.compact-chat;
                             current-space-name: root.current-space-name;
                             chat-channel-name: root.chat-channel-name;
                             chat-is-direct-message: root.chat-is-direct-message;
@@ -595,6 +633,271 @@ export component MainWindow inherits Window {
                         current-view: root.current-view;
                         unread-direct-messages-count: root.unread-direct-messages-count;
                         navigate(view-index) => { root.navigate(view-index); }
+                    }
+                }
+            }
+        }
+
+        // Quick Switcher overlay (Ctrl+K)
+        // Account login/register overlay
+        if root.show-login-view : Rectangle {
+            background: VxTheme.bg-canvas.transparentize(0.15);
+            TouchArea { clicked => {} } // block clicks
+
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VxCard {
+                        width: 360px;
+                        VerticalLayout {
+                            padding: 28px;
+                            spacing: 16px;
+
+                            // Brand header
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text {
+                                    text: "VX";
+                                    color: VxTheme.accent;
+                                    font-size: 22px;
+                                    font-weight: 900;
+                                }
+                                Text {
+                                    text: root.login-mode ? "Sign In" : "Create Account";
+                                    color: VxTheme.text-primary;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                }
+                            }
+
+                            // Error display
+                            if root.auth-error != "" : Rectangle {
+                                background: VxTheme.danger.transparentize(0.85);
+                                border-radius: 6px;
+                                height: auth-err-text.preferred-height + 12px;
+                                auth-err-text := Text {
+                                    text: root.auth-error;
+                                    color: VxTheme.danger;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            // Email field
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: "Email";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    letter-spacing: 0.5px;
+                                }
+                                VxInput {
+                                    placeholder: "you@example.com";
+                                    text <=> root.auth-email;
+                                }
+                            }
+
+                            // Password field
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: "Password";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    letter-spacing: 0.5px;
+                                }
+                                VxInput {
+                                    placeholder: root.login-mode ? "Enter password" : "Min 6 characters";
+                                    text <=> root.auth-password;
+                                }
+                            }
+
+                            // Display name (register only)
+                            if !root.login-mode : VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: "Display Name";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    letter-spacing: 0.5px;
+                                }
+                                VxInput {
+                                    placeholder: "How others will see you";
+                                    text <=> root.auth-display-name;
+                                }
+                            }
+
+                            // Submit button
+                            Rectangle {
+                                height: 36px;
+                                border-radius: 8px;
+                                background: login-submit-touch.has-hover ? VxTheme.accent.darker(0.15) : VxTheme.accent;
+                                login-submit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.auth-error = "";
+                                        if root.login-mode {
+                                            root.login();
+                                        } else {
+                                            root.create-account();
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: root.login-mode ? "Sign In" : "Create Account";
+                                    color: white;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            // Toggle login/register
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: root.login-mode ? "Don't have an account?" : "Already have an account?";
+                                    color: VxTheme.text-muted;
+                                    font-size: 11px;
+                                }
+                                Text {
+                                    text: root.login-mode ? "Register" : "Sign In";
+                                    color: VxTheme.accent;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.login-mode = !root.login-mode;
+                                            root.auth-error = "";
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Skip / continue without account
+                            HorizontalLayout {
+                                alignment: center;
+                                Text {
+                                    text: "Continue without account";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.show-login-view = false; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.quick-switcher-visible : Rectangle {
+            background: #00000080;
+            TouchArea {
+                clicked => { root.quick-switcher-visible = false; root.quick-switcher-query = ""; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height * 0.18;
+                width: min(500px, parent.width - 40px);
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.bg-raised;
+                border-color: VxTheme.accent-border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "Quick Switcher";
+                            color: VxTheme.text-primary;
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "Esc to close";
+                            color: VxTheme.text-muted;
+                            font-size: 9px;
+                        }
+                    }
+
+                    VxInput {
+                        text <=> root.quick-switcher-query;
+                        placeholder: "Search channels, DMs, spaces...";
+                        horizontal-stretch: 1;
+                        accepted => {
+                            if root.quick-switcher-items.length > 0 {
+                                root.quick-switcher-select(root.quick-switcher-items[0].id);
+                                root.quick-switcher-visible = false;
+                                root.quick-switcher-query = "";
+                            }
+                        }
+                    }
+
+                    if root.quick-switcher-items.length == 0 && root.quick-switcher-query != "" : Text {
+                        text: "No matches found";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                    }
+
+                    for item[idx] in root.quick-switcher-items : Rectangle {
+                        height: idx < 8 ? 40px : 0px;
+                        visible: idx < 8;
+                        border-radius: VxTheme.radius-control;
+                        background: qs-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                        border-color: VxTheme.border-subtle;
+                        border-width: 1px;
+
+                        qs-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.quick-switcher-select(item.id);
+                                root.quick-switcher-visible = false;
+                                root.quick-switcher-query = "";
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 10px;
+                            alignment: center;
+                            Text {
+                                text: item.is-voice ? "VC" : "TXT";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 800;
+                                width: 28px;
+                            }
+                            Text {
+                                text: item.name;
+                                color: VxTheme.text-primary;
+                                font-size: 11px;
+                                font-weight: 600;
+                                horizontal-stretch: 1;
+                            }
+                            if item.status != "" : Text {
+                                text: item.status;
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                            }
+                        }
                     }
                 }
             }

@@ -588,6 +588,8 @@ pub async fn handle_join_space(
                     channel_name: ch_name,
                     status: p.status.lock().await.clone(),
                     bio: String::new(),
+                    nickname: None,
+                    status_preset: shared_types::UserStatus::Online,
                 });
             }
         }
@@ -614,6 +616,8 @@ pub async fn handle_join_space(
                 channel_name: None,
                 status: p.status.lock().await.clone(),
                 bio: String::new(),
+                nickname: None,
+                status_preset: shared_types::UserStatus::Online,
             })
         } else {
             None
@@ -925,4 +929,80 @@ pub async fn handle_set_member_role(
         detail,
     )
     .await;
+}
+
+pub async fn handle_set_invite_settings(
+    state: &State,
+    peer_id: &str,
+    expires_hours: Option<u32>,
+    max_uses: Option<u32>,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
+    else {
+        crate::send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !can_manage_channels(actor_role) {
+        crate::send_error(state, peer_id, "Insufficient permissions").await;
+        return;
+    }
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let eh = expires_hours;
+        let mu = max_uses;
+        let _ = tokio::task::spawn_blocking(move || {
+            db.set_invite_settings(&sid, eh, mu)
+        })
+        .await;
+    }
+
+    let notify = SignalMessage::InviteSettingsUpdated {
+        expires_hours,
+        max_uses,
+        uses: 0,
+    };
+    broadcast_to_space(state, &space_id, "", &notify).await;
+}
+
+pub async fn handle_set_nickname(
+    state: &State,
+    peer_id: &str,
+    nickname: String,
+    db: &Db,
+) {
+    let Some((space_id, actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
+    else {
+        crate::send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+
+    let nickname = nickname.trim().to_string();
+    let nick_opt = if nickname.is_empty() {
+        None
+    } else if nickname.len() > 32 {
+        crate::send_error(state, peer_id, "Nickname too long (max 32 characters)").await;
+        return;
+    } else {
+        Some(nickname)
+    };
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let uid = actor_user_id.clone();
+        let nick = nick_opt.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            db.set_space_nickname(&sid, &uid, nick.as_deref())
+        })
+        .await;
+    }
+
+    let notify = SignalMessage::NicknameChanged {
+        user_id: actor_user_id,
+        nickname: nick_opt,
+    };
+    broadcast_to_space(state, &space_id, "", &notify).await;
 }

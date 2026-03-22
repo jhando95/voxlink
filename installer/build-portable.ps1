@@ -14,7 +14,7 @@ cargo build --release
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed!" -ForegroundColor Red; exit 1 }
 
 # Create portable folder
-$version = "0.1.0"
+$version = (Select-String -Path "crates\app_desktop\Cargo.toml" -Pattern '^version = "(.*)"' | ForEach-Object { $_.Matches[0].Groups[1].Value })
 $outDir = "target\Voxlink-$version"
 if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use shared_types::{FriendPresence, SignalMessage};
+use shared_types::{FriendPresence, SignalMessage, UserStatus};
 
 use crate::{send_to, Peer, State};
 
@@ -171,4 +171,26 @@ pub async fn describe_user_presence(state: &State, user_id: &str) -> FriendPrese
     }
 
     best
+}
+
+pub async fn handle_set_status_preset(state: &State, peer_id: &str, preset: UserStatus) {
+    let (space_id, member_id) = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        let space_id = peer.space_id.lock().await.clone();
+        let member_id = peer_id.to_string();
+        (space_id, member_id)
+    };
+
+    if let Some(space_id) = space_id {
+        let notify = SignalMessage::StatusPresetChanged {
+            member_id: member_id.clone(),
+            preset,
+        };
+        super::space::broadcast_to_space(state, &space_id, peer_id, &notify).await;
+    }
+
+    notify_watchers_for_peer(state, peer_id).await;
 }

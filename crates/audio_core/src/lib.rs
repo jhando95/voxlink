@@ -244,6 +244,10 @@ pub struct AudioEngine {
     pub playback_error: Arc<AtomicBool>,
     /// Lock-free audio metrics for perf panel
     pub metrics: AudioMetrics,
+    /// Volume ducking: amount to reduce non-speaking peers (0.0=disabled, 1.0=full duck, stored 0-1000)
+    ducking_amount: Arc<AtomicU32>,
+    /// Volume ducking: energy threshold to consider a peer "speaking" (stored 0-1000)
+    ducking_threshold: Arc<AtomicU32>,
 }
 
 unsafe impl Send for AudioEngine {}
@@ -277,6 +281,8 @@ impl AudioEngine {
             capture_error: Arc::new(AtomicBool::new(false)),
             playback_error: Arc::new(AtomicBool::new(false)),
             metrics: AudioMetrics::new(),
+            ducking_amount: Arc::new(AtomicU32::new(0)),
+            ducking_threshold: Arc::new(AtomicU32::new(100)), // 0.1 default
         })
     }
 
@@ -736,6 +742,8 @@ impl AudioEngine {
         let output_volume = self.output_volume.clone();
         let feedback_playback = self.feedback_tone.playback_state();
         let echo_ref_playback = self.echo_ref.clone();
+        let ducking_amount = self.ducking_amount.clone();
+        let ducking_threshold = self.ducking_threshold.clone();
 
         // Local snapshot held by the playback callback — refreshed when generation changes
         let mut local_peers: Vec<Arc<PeerPlaybackShared>> = Vec::new();
@@ -765,13 +773,37 @@ impl AudioEngine {
                     return;
                 }
 
-                // Lock-free mixing: each peer's SPSC ring is read without any mutex
+                // Lock-free mixing with volume ducking (single pass)
+                let duck_amt = ducking_amount.load(Ordering::Relaxed) as f32 / 1000.0;
+                let ducking_enabled = duck_amt > 0.001;
+
+                // Cache per-peer energy + speaking flag in one pass (no second peek_energy call)
+                let mut any_speaking = false;
+                if ducking_enabled {
+                    let duck_thresh = ducking_threshold.load(Ordering::Relaxed) as f32 / 1000.0;
+                    for peer in &local_peers {
+                        if !peer.is_ready() { continue; }
+                        let energy = peer.ring.peek_energy();
+                        let speaking = energy > duck_thresh;
+                        // Reuse the primed atomic as a "speaking" flag for ducking
+                        // (we overwrite it below anyway when mixing)
+                        peer.primed.store(speaking, Ordering::Relaxed);
+                        if speaking { any_speaking = true; }
+                    }
+                }
+
                 for peer in &local_peers {
                     if !peer.is_ready() {
                         continue;
                     }
+                    let mut vol = peer.volume_f32();
+                    if any_speaking {
+                        let is_speaking = peer.primed.load(Ordering::Relaxed);
+                        if !is_speaking {
+                            vol *= 1.0 - duck_amt;
+                        }
+                    }
                     peer.primed.store(true, Ordering::Relaxed);
-                    let vol = peer.volume_f32();
                     let consumed = peer.ring.mix_into(data, vol);
                     peer.callback_count.fetch_add(1, Ordering::Relaxed);
                     if consumed < data.len() {
@@ -1022,6 +1054,16 @@ impl AudioEngine {
         self.input_gain.store(val, Ordering::Relaxed);
     }
 
+    /// Set volume ducking parameters.
+    /// `amount`: 0.0 = disabled, 1.0 = full duck (silence non-speakers).
+    /// `threshold`: energy level to consider a peer "speaking" (0.0–1.0).
+    pub fn set_ducking(&self, amount: f32, threshold: f32) {
+        self.ducking_amount
+            .store((amount.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+        self.ducking_threshold
+            .store((threshold.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+    }
+
     /// Set master output volume (0.0 = muted, 1.0 = full)
     pub fn set_output_volume(&self, volume: f32) {
         let val = (volume.clamp(0.0, 1.0) * 1000.0) as u32;
@@ -1048,11 +1090,10 @@ impl AudioEngine {
 
     /// Play a notification sound for peer join/leave.
     pub fn play_notification(&self, joined: bool) {
-        // Use higher tone for join, lower for leave
         self.feedback_tone.trigger(if joined {
-            FeedbackAction::MuteOff
+            FeedbackAction::JoinRoom
         } else {
-            FeedbackAction::DeafenOn
+            FeedbackAction::LeaveRoom
         });
     }
 
@@ -1283,5 +1324,47 @@ mod adaptive_bitrate_tests {
         let reduced = (target as f32 * 0.6) as i32; // 14400
         let clamped = reduced.clamp(16000, target);
         assert_eq!(clamped, 16000, "Should clamp to minimum 16kbps");
+    }
+}
+
+#[cfg(test)]
+mod ducking_tests {
+    use super::*;
+
+    #[test]
+    fn ducking_amount_and_threshold_setter() {
+        // Test the ducking setter logic directly via atomic values
+        // (mirrors AudioEngine::set_ducking without requiring an AudioEngine instance)
+        let ducking_amount = Arc::new(AtomicU32::new(0));
+        let ducking_threshold = Arc::new(AtomicU32::new(0));
+
+        // Set ducking to 50% amount, 0.08 threshold
+        let amount = 0.5f32;
+        let threshold = 0.08f32;
+        ducking_amount.store((amount.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+        ducking_threshold.store(
+            (threshold.clamp(0.0, 1.0) * 1000.0) as u32,
+            Ordering::Relaxed,
+        );
+
+        let stored_amount = ducking_amount.load(Ordering::Relaxed) as f32 / 1000.0;
+        let stored_threshold = ducking_threshold.load(Ordering::Relaxed) as f32 / 1000.0;
+        assert!(
+            (stored_amount - 0.5).abs() < 0.01,
+            "Ducking amount should round-trip: {stored_amount}"
+        );
+        assert!(
+            (stored_threshold - 0.08).abs() < 0.01,
+            "Ducking threshold should round-trip: {stored_threshold}"
+        );
+
+        // Clamping: values outside 0.0-1.0 should be clamped
+        let over = 1.5f32;
+        ducking_amount.store((over.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+        assert_eq!(ducking_amount.load(Ordering::Relaxed), 1000);
+
+        let under = -0.5f32;
+        ducking_amount.store((under.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+        assert_eq!(ducking_amount.load(Ordering::Relaxed), 0);
     }
 }

@@ -34,6 +34,7 @@ export struct SpaceData {
     member-count: int,
     channel-count: int,
     color-index: int,
+    has-unread: bool,
 }
 
 export struct ChatMessage {
@@ -51,6 +52,7 @@ export struct ChatMessage {
     edited: bool,
     reactions: string,
     is-code-block: bool,
+    forwarded-from: string,
 }
 
 export struct ChannelData {
@@ -66,6 +68,8 @@ export struct ChannelData {
     status: string,
     user-limit: int,
     slow-mode-secs: int,
+    is-category-header: bool,
+    mention-count: int,
 }
 
 export struct MemberData {

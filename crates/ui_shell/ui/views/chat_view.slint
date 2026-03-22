@@ -4,6 +4,7 @@ import { Divider, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPil
 
 export component ChatView inherits Rectangle {
     in property <bool> wide: false;
+    in property <bool> compact-mode: false;
     in property <string> current-space-name: "";
     in property <string> chat-channel-name: "";
     in property <bool> chat-is-direct-message: false;
@@ -319,8 +320,8 @@ export component ChatView inherits Rectangle {
                     vertical-stretch: 1;
 
                     VerticalLayout {
-                        padding: root.wide ? 20px : 16px;
-                        spacing: 10px;
+                        padding: root.wide ? 20px : (root.compact-mode ? 8px : 16px);
+                        spacing: root.compact-mode ? 4px : 10px;
 
                         if root.chat-messages.length == 0 : Rectangle {
                             border-radius: VxTheme.radius-card;
@@ -379,13 +380,13 @@ export component ChatView inherits Rectangle {
                             msg-hover := TouchArea {}
 
                             HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 14px;
-                                padding-top: 14px;
-                                padding-bottom: 14px;
-                                spacing: 12px;
+                                padding-left: root.compact-mode ? 8px : 14px;
+                                padding-right: root.compact-mode ? 8px : 14px;
+                                padding-top: root.compact-mode ? 6px : 14px;
+                                padding-bottom: root.compact-mode ? 6px : 14px;
+                                spacing: root.compact-mode ? 8px : 12px;
 
-                                VxAvatar {
+                                if !root.compact-mode : VxAvatar {
                                     avatar-size: 30px;
                                     initial: msg.sender-initial;
                                     color-index: msg.color-index;
@@ -393,7 +394,7 @@ export component ChatView inherits Rectangle {
 
                                 VerticalLayout {
                                     horizontal-stretch: 1;
-                                    spacing: 6px;
+                                    spacing: root.compact-mode ? 2px : 6px;
 
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -488,6 +489,22 @@ export component ChatView inherits Rectangle {
                                             small: true;
                                             ghost: true;
                                             clicked => { root.delete-text-message(msg.message-id); }
+                                        }
+                                    }
+
+                                    if msg.forwarded-from != "" : HorizontalLayout {
+                                        spacing: 4px;
+                                        Text {
+                                            text: "Forwarded from";
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                            font-weight: 600;
+                                        }
+                                        Text {
+                                            text: "#" + msg.forwarded-from;
+                                            color: VxTheme.accent;
+                                            font-size: 9px;
+                                            font-weight: 700;
                                         }
                                     }
 

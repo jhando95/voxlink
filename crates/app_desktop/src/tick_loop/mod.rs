@@ -90,6 +90,9 @@ pub fn start(
     let audio_flag_conn = audio_active_flag.clone();
     let audio_recovery = Rc::new(RefCell::new(AudioRecoveryState::default()));
     let was_in_call = Rc::new(RefCell::new(false));
+    let last_input_tick = Rc::new(RefCell::new(0u64));
+    let prev_keys_for_idle: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
+    let is_idle = Rc::new(RefCell::new(false));
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -153,6 +156,14 @@ pub fn start(
                 *listen_state.borrow_mut() = None;
 
                 handle_escape(&keys, current_view, &w, &prev_esc_held);
+
+                // Ctrl+K quick switcher toggle
+                if keys.contains(&Keycode::LControl) && keys.contains(&Keycode::K) ||
+                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::K) {
+                    if !w.get_quick_switcher_visible() {
+                        w.set_quick_switcher_visible(true);
+                    }
+                }
 
                 if !in_call {
                     *ptt_was_held.borrow_mut() = false;
@@ -237,6 +248,39 @@ pub fn start(
             auto_hide_notification(&notification_at_tick, tick, &w);
             auto_clear_errors(&error_at_tick, tick, &w);
             auto_hide_copied(&copied_at_tick, tick, &w);
+
+            // --- Idle auto-status (compare slices without cloning) ---
+            {
+                let changed = keys != prev_keys_for_idle.borrow().as_slice();
+                if changed {
+                    *last_input_tick.borrow_mut() = tick;
+                    *prev_keys_for_idle.borrow_mut() = keys.to_vec();
+                    if *is_idle.borrow() {
+                        *is_idle.borrow_mut() = false;
+                        let net = network.clone();
+                        let rt = rt_handle.clone();
+                        rt.spawn(async move {
+                            let n = net.lock().await;
+                            let _ = n.send_signal(&SignalMessage::SetStatusPreset {
+                                preset: shared_types::UserStatus::Online,
+                            }).await;
+                        });
+                    }
+                }
+                // 5 min = 12000 ticks at 40Hz
+                let idle_threshold = 12000u64;
+                if !*is_idle.borrow() && tick.saturating_sub(*last_input_tick.borrow()) >= idle_threshold {
+                    *is_idle.borrow_mut() = true;
+                    let net = network.clone();
+                    let rt = rt_handle.clone();
+                    rt.spawn(async move {
+                        let n = net.lock().await;
+                        let _ = n.send_signal(&SignalMessage::SetStatusPreset {
+                            preset: shared_types::UserStatus::Idle,
+                        }).await;
+                    });
+                }
+            }
 
             // --- Slow updates every ~1s ---
             if tick.is_multiple_of(40) {

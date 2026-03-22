@@ -342,6 +342,7 @@ pub fn set_spaces(window: &MainWindow, spaces: &[shared_types::SpaceInfo]) {
                 member_count: s.member_count as i32,
                 channel_count: s.channel_count as i32,
                 color_index: color_index as i32,
+                has_unread: false,
             }
         })
         .collect();
@@ -365,6 +366,8 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             status: c.status.clone().into(),
             user_limit: c.user_limit as i32,
             slow_mode_secs: c.slow_mode_secs as i32,
+            is_category_header: false,
+            mention_count: 0,
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
@@ -425,6 +428,8 @@ pub fn render_space(
                 status: channel.status.clone().into(),
                 user_limit: channel.user_limit as i32,
                 slow_mode_secs: channel.slow_mode_secs as i32,
+                is_category_header: false,
+                mention_count: 0,
             }
         })
         .collect();
@@ -793,6 +798,7 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         edited: m.edited,
         reactions: reactions_str.into(),
         is_code_block,
+        forwarded_from: m.forwarded_from.clone().unwrap_or_default().into(),
     }
 }
 
@@ -865,6 +871,16 @@ fn render_inline(text: &str) -> String {
         if i + 1 < len && chars[i] == '~' && chars[i + 1] == '~' {
             if let Some(end) = find_closing(&chars, i + 2, &['~', '~']) {
                 let inner: String = chars[i + 2..end].iter().collect();
+                out.push_str(&inner);
+                i = end + 2;
+                continue;
+            }
+        }
+        // ||spoiler|| → [SPOILER] or revealed text
+        if i + 1 < len && chars[i] == '|' && chars[i + 1] == '|' {
+            if let Some(end) = find_closing(&chars, i + 2, &['|', '|']) {
+                let inner: String = chars[i + 2..end].iter().collect();
+                // Always reveal spoiler text (client config controls this at a higher level)
                 out.push_str(&inner);
                 i = end + 2;
                 continue;

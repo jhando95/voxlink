@@ -71,6 +71,39 @@ pub struct AppConfig {
     /// Saved servers for easy switching between multiple voice servers.
     #[serde(default)]
     pub saved_servers: Vec<SavedServer>,
+    /// Play notification sounds when peers join or leave the room.
+    #[serde(default = "default_true")]
+    pub join_leave_sounds: bool,
+    /// Show spoiler text by default instead of hiding it.
+    #[serde(default)]
+    pub show_spoilers: bool,
+    /// Use compact chat message layout (less padding, smaller font).
+    #[serde(default)]
+    pub compact_chat: bool,
+    /// List of blocked user IDs. Messages from these users are filtered client-side.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// User status preset (online, idle, dnd, invisible).
+    #[serde(default = "default_status_preset")]
+    pub status_preset: String,
+    /// Minutes of inactivity before auto-idle (0 = disabled).
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout_mins: u32,
+    /// Per-channel notification overrides: channel_id -> "all"/"mentions"/"none".
+    #[serde(default)]
+    pub channel_notification_overrides: std::collections::HashMap<String, String>,
+    /// Volume ducking amount (0.0 = disabled, 0.5 = 50% duck). Applied to non-speaking peers.
+    #[serde(default)]
+    pub ducking_amount: f32,
+    /// Energy threshold above which a peer is considered "speaking" for ducking.
+    #[serde(default = "default_ducking_threshold")]
+    pub ducking_threshold: f32,
+    /// Soundboard clip configurations.
+    #[serde(default)]
+    pub soundboard_clips: Vec<SoundboardClipConfig>,
+    /// Account email (set after login/registration). Used to pre-fill login form.
+    #[serde(default)]
+    pub account_email: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +119,14 @@ pub struct SavedServer {
     pub name: String,
     pub address: String,
     pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundboardClipConfig {
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub keybind: Option<String>,
 }
 
 fn default_user_name() -> String {
@@ -125,6 +166,22 @@ fn default_theme_preset() -> String {
     "voxlink".into()
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_status_preset() -> String {
+    "online".into()
+}
+
+fn default_idle_timeout() -> u32 {
+    5
+}
+
+fn default_ducking_threshold() -> f32 {
+    0.05
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -162,6 +219,17 @@ impl Default for AppConfig {
             peer_volumes: std::collections::HashMap::new(),
             user_notes: std::collections::HashMap::new(),
             saved_servers: Vec::new(),
+            join_leave_sounds: default_true(),
+            show_spoilers: false,
+            compact_chat: false,
+            blocked_users: Vec::new(),
+            status_preset: default_status_preset(),
+            idle_timeout_mins: default_idle_timeout(),
+            channel_notification_overrides: std::collections::HashMap::new(),
+            ducking_amount: 0.0,
+            ducking_threshold: default_ducking_threshold(),
+            soundboard_clips: Vec::new(),
+            account_email: None,
         }
     }
 }
@@ -306,6 +374,17 @@ mod tests {
                 address: "ws://server1:9090".into(),
                 is_default: true,
             }],
+            join_leave_sounds: true,
+            show_spoilers: false,
+            compact_chat: false,
+            blocked_users: Vec::new(),
+            status_preset: "online".into(),
+            idle_timeout_mins: 5,
+            channel_notification_overrides: std::collections::HashMap::new(),
+            ducking_amount: 0.0,
+            ducking_threshold: 0.1,
+            soundboard_clips: Vec::new(),
+            account_email: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
@@ -466,5 +545,98 @@ mod tests {
         assert!(config.feedback_sound);
         assert!(config.notifications_enabled);
         assert!(config.minimize_to_tray);
+    }
+
+    // ─── v0.8.0 tests ───
+
+    #[test]
+    fn v08_fields_default_from_empty_json() {
+        // Simulate a config from a pre-v0.8.0 install — only the required fields
+        let json = r#"{
+            "input_device": null,
+            "output_device": null,
+            "push_to_talk_key": null,
+            "open_mic_sensitivity": 0.5,
+            "mic_mode": "open_mic",
+            "user_name": "OldUser",
+            "server_address": "ws://localhost:9090"
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        // v0.8.0 fields should get their defaults
+        assert!(config.join_leave_sounds); // default true
+        assert!(!config.show_spoilers); // default false
+        assert!(!config.compact_chat); // default false
+        assert!(config.blocked_users.is_empty());
+        assert_eq!(config.status_preset, "online");
+        assert_eq!(config.idle_timeout_mins, 5);
+        assert!(config.channel_notification_overrides.is_empty());
+        assert!((config.ducking_amount - 0.0).abs() < f32::EPSILON);
+        assert!((config.ducking_threshold - 0.05).abs() < f32::EPSILON);
+        assert!(config.soundboard_clips.is_empty());
+    }
+
+    #[test]
+    fn soundboard_clip_config_serialization() {
+        let clip = SoundboardClipConfig {
+            name: "Airhorn".into(),
+            path: "/sounds/airhorn.wav".into(),
+            keybind: Some("F5".into()),
+        };
+        let json = serde_json::to_string(&clip).unwrap();
+        let decoded: SoundboardClipConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.name, "Airhorn");
+        assert_eq!(decoded.path, "/sounds/airhorn.wav");
+        assert_eq!(decoded.keybind.as_deref(), Some("F5"));
+
+        // Without keybind
+        let clip2 = SoundboardClipConfig {
+            name: "Rimshot".into(),
+            path: "/sounds/rimshot.wav".into(),
+            keybind: None,
+        };
+        let json2 = serde_json::to_string(&clip2).unwrap();
+        let decoded2: SoundboardClipConfig = serde_json::from_str(&json2).unwrap();
+        assert_eq!(decoded2.name, "Rimshot");
+        assert!(decoded2.keybind.is_none());
+    }
+
+    #[test]
+    fn v08_fields_round_trip() {
+        let mut config = AppConfig::default();
+        config.join_leave_sounds = false;
+        config.show_spoilers = true;
+        config.compact_chat = true;
+        config.blocked_users = vec!["u1".into(), "u2".into()];
+        config.status_preset = "dnd".into();
+        config.idle_timeout_mins = 10;
+        config
+            .channel_notification_overrides
+            .insert("c1".into(), "none".into());
+        config.ducking_amount = 0.5;
+        config.ducking_threshold = 0.08;
+        config.soundboard_clips = vec![SoundboardClipConfig {
+            name: "Horn".into(),
+            path: "/horn.wav".into(),
+            keybind: Some("F1".into()),
+        }];
+
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: AppConfig = serde_json::from_str(&json).unwrap();
+
+        assert!(!decoded.join_leave_sounds);
+        assert!(decoded.show_spoilers);
+        assert!(decoded.compact_chat);
+        assert_eq!(decoded.blocked_users, vec!["u1", "u2"]);
+        assert_eq!(decoded.status_preset, "dnd");
+        assert_eq!(decoded.idle_timeout_mins, 10);
+        assert_eq!(decoded.channel_notification_overrides["c1"], "none");
+        assert!((decoded.ducking_amount - 0.5).abs() < f32::EPSILON);
+        assert!((decoded.ducking_threshold - 0.08).abs() < f32::EPSILON);
+        assert_eq!(decoded.soundboard_clips.len(), 1);
+        assert_eq!(decoded.soundboard_clips[0].name, "Horn");
+        assert_eq!(
+            decoded.soundboard_clips[0].keybind.as_deref(),
+            Some("F1")
+        );
     }
 }

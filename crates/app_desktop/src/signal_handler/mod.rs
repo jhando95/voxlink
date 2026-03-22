@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use shared_types::{AppView, SignalMessage};
+use slint::Model;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
@@ -452,6 +453,170 @@ pub fn process_signals(
             }
             SignalMessage::MemberTimeoutExpired { member_id } => {
                 log::info!("Timeout expired for {member_id}");
+            }
+            // v0.8.0: Block/Unblock acknowledgments
+            SignalMessage::UserBlocked { user_id } => {
+                log::info!("Blocked user: {user_id}");
+                w.set_status_text(format!("Blocked user").into());
+            }
+            SignalMessage::UserUnblocked { user_id } => {
+                log::info!("Unblocked user: {user_id}");
+                w.set_status_text(format!("Unblocked user").into());
+            }
+            // v0.8.0: Ban list
+            SignalMessage::BanList { bans } => {
+                log::info!("Received ban list: {} entries", bans.len());
+                // Ban list UI would be handled here
+            }
+            // v0.8.0: Status presets
+            SignalMessage::StatusPresetChanged { member_id, preset } => {
+                log::trace!("Status preset changed for {member_id}: {preset:?}");
+            }
+            // v0.8.0: Mention notifications
+            SignalMessage::MentionNotification {
+                channel_id: _,
+                channel_name,
+                sender_name,
+                preview,
+            } => {
+                if w.get_notifications_enabled() {
+                    crate::helpers::send_notification(
+                        &format!("{sender_name} in #{channel_name}"),
+                        &preview,
+                    );
+                }
+            }
+            // v0.8.0: Group DMs
+            SignalMessage::GroupDMCreated {
+                group_id,
+                name,
+                members: _,
+            } => {
+                log::info!("Group DM created: {name} ({group_id})");
+                w.set_status_text(format!("Group created: {name}").into());
+            }
+            SignalMessage::GroupDMSelected {
+                group_id: _,
+                name,
+                members: _,
+                history,
+            } => {
+                let my_name = w.get_user_name().to_string();
+                w.set_chat_channel_name(name.into());
+                w.set_chat_is_direct_message(true);
+                w.set_chat_context_subtitle("Group message".into());
+                ui_shell::set_chat_messages(w, &history, &my_name);
+                w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
+            }
+            SignalMessage::GroupMessage {
+                group_id: _,
+                message,
+            } => {
+                let my_name = w.get_user_name().to_string();
+                let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
+                let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+                if let Some(model) = messages
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+                {
+                    model.push(chat_msg);
+                }
+            }
+            // v0.8.0: Invite settings
+            SignalMessage::InviteSettingsUpdated {
+                expires_hours,
+                max_uses,
+                uses,
+            } => {
+                log::info!("Invite settings updated: expires={expires_hours:?} max={max_uses:?} uses={uses}");
+            }
+            // v0.8.0: Threads
+            SignalMessage::ThreadMessages {
+                channel_id: _,
+                root_message_id: _,
+                messages: _,
+            } => {
+                log::info!("Thread messages received");
+                // Thread view rendering would go here
+            }
+            // v0.8.0: Nicknames
+            SignalMessage::NicknameChanged {
+                user_id,
+                nickname,
+            } => {
+                log::trace!("Nickname changed for {user_id}: {nickname:?}");
+                // Update member list display name if in space view
+                let mut s = state.borrow_mut();
+                if let Some(ref mut space) = s.space {
+                    if let Some(member) = space.members.iter_mut().find(|m| {
+                        m.user_id.as_deref() == Some(user_id.as_str())
+                    }) {
+                        member.nickname = nickname.clone();
+                    }
+                }
+            }
+            // v0.8.0: Account system
+            SignalMessage::AccountCreated { token, user_id } => {
+                log::info!("Account created: {user_id}");
+                state.borrow_mut().self_user_id = Some(user_id.clone());
+                w.set_first_run(false);
+                w.set_is_logged_in(true);
+                w.set_show_login_view(false);
+                w.set_auth_error(slint::SharedString::default());
+                if !token.is_empty() {
+                    crate::helpers::save_auth_token_async(token.clone());
+                }
+                // Also authenticate to get full session features
+                let net = ctx.network.clone();
+                let name = w.get_user_name().to_string();
+                let tok = token.clone();
+                ctx.rt_handle.spawn(async move {
+                    let net = net.lock().await;
+                    let _ = net.send_signal(&SignalMessage::Authenticate {
+                        token: Some(tok),
+                        user_name: name,
+                    }).await;
+                });
+            }
+            SignalMessage::LoginSuccess { token, user_id, display_name } => {
+                log::info!("Login success: {user_id} ({display_name})");
+                state.borrow_mut().self_user_id = Some(user_id.clone());
+                w.set_first_run(false);
+                w.set_is_logged_in(true);
+                w.set_show_login_view(false);
+                w.set_auth_error(slint::SharedString::default());
+                w.set_user_name(display_name.as_str().into());
+                if !token.is_empty() {
+                    crate::helpers::save_auth_token_async(token.clone());
+                }
+                // Save email to config
+                let email = w.get_auth_email().to_string();
+                w.set_account_email(email.as_str().into());
+                crate::helpers::save_account_email_async(email);
+                // Request UDP after login
+                let net = ctx.network.clone();
+                ctx.rt_handle.spawn(async move {
+                    let net = net.lock().await;
+                    if let Err(e) = net.request_udp().await {
+                        log::debug!("Failed to request UDP: {e}");
+                    }
+                });
+                crate::friends::sync_presence_subscription(state, &ctx.network, &ctx.rt_handle);
+            }
+            SignalMessage::AuthError { message } => {
+                log::warn!("Auth error: {message}");
+                w.set_auth_error(message.as_str().into());
+            }
+            SignalMessage::LoggedOut => {
+                log::info!("Logged out");
+                state.borrow_mut().self_user_id = None;
+                w.set_is_logged_in(false);
+                w.set_account_email(slint::SharedString::default());
+                crate::helpers::clear_auth_token_async();
+            }
+            SignalMessage::PasswordChanged => {
+                log::info!("Password changed successfully");
+                // Could show a notification in the future
             }
             other => {
                 log::trace!("Unhandled signal (client-to-server variant): {:?}",

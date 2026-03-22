@@ -177,7 +177,14 @@ fn main() {
     window.set_minimize_to_tray(config.minimize_to_tray);
     window.set_neural_noise_suppression(config.neural_noise_suppression);
     window.set_echo_cancellation(config.echo_cancellation);
+    window.set_join_leave_sounds(config.join_leave_sounds);
+    window.set_show_spoilers(config.show_spoilers);
+    window.set_compact_chat(config.compact_chat);
     window.set_first_run(config.auth_token.is_none());
+    if let Some(ref email) = config.account_email {
+        window.set_is_logged_in(true);
+        window.set_account_email(email.as_str().into());
+    }
 
     // Wire all UI callbacks
     callbacks::setup(

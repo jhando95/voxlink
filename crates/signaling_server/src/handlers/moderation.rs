@@ -293,3 +293,169 @@ pub async fn handle_ban_member(state: &State, peer_id: &str, member_id: String, 
     )
     .await;
 }
+
+pub async fn handle_unban_member(state: &State, peer_id: &str, user_id: String, db: &Db) {
+    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !can_manage_members(actor_role) {
+        send_error(state, peer_id, "You do not have permission to unban members").await;
+        return;
+    }
+
+    let Some(db_arc) = db else {
+        send_error(state, peer_id, "Persistence required for ban management").await;
+        return;
+    };
+
+    let db_clone = db_arc.clone();
+    let sid = space_id.clone();
+    let uid = user_id.clone();
+    let result = tokio::task::spawn_blocking(move || db_clone.delete_ban(&sid, &uid))
+        .await
+        .unwrap_or_else(|_| Err("Unban task failed".into()));
+
+    match result {
+        Ok(true) => {
+            log::info!("User {user_id} unbanned from space {space_id} by {peer_id}");
+            let _ = append_audit_entry(
+                state,
+                db,
+                &space_id,
+                &actor_user_id,
+                &actor_name,
+                "unban",
+                Some(user_id),
+                None,
+                "Unbanned the user from the space".into(),
+            )
+            .await;
+        }
+        Ok(false) => {
+            send_error(state, peer_id, "User is not banned").await;
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_list_bans(state: &State, peer_id: &str, db: &Db) {
+    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !can_manage_members(actor_role) {
+        send_error(state, peer_id, "You do not have permission to view bans").await;
+        return;
+    }
+
+    let Some(db) = db else {
+        send_error(state, peer_id, "Persistence required for ban management").await;
+        return;
+    };
+
+    let db_clone = db.clone();
+    let sid = space_id;
+    let result = tokio::task::spawn_blocking(move || db_clone.load_bans(&sid))
+        .await
+        .unwrap_or_else(|_| Err("Ban list task failed".into()));
+
+    match result {
+        Ok(bans) => {
+            let ban_infos: Vec<shared_types::BanInfo> = bans
+                .into_iter()
+                .map(|b| shared_types::BanInfo {
+                    user_id: b.user_id,
+                    user_name: String::new(),
+                    banned_at: b.banned_at as u64,
+                })
+                .collect();
+            let peer = {
+                let s = state.read().await;
+                s.peers.get(peer_id).cloned()
+            };
+            if let Some(peer) = peer {
+                send_to(&peer, &SignalMessage::BanList { bans: ban_infos }).await;
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_block_user(state: &State, peer_id: &str, user_id: String, db: &Db) {
+    let Some(db) = db else {
+        send_error(state, peer_id, "Persistence required").await;
+        return;
+    };
+    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Authenticate first").await;
+        return;
+    };
+
+    let db_clone = db.clone();
+    let blocker = current_user_id.clone();
+    let blocked = user_id.clone();
+    let result =
+        tokio::task::spawn_blocking(move || db_clone.save_user_block(&blocker, &blocked))
+            .await
+            .unwrap_or_else(|_| Err("Block task failed".into()));
+
+    match result {
+        Ok(()) => {
+            let peer = {
+                let s = state.read().await;
+                s.peers.get(peer_id).cloned()
+            };
+            if let Some(peer) = peer {
+                send_to(&peer, &SignalMessage::UserBlocked { user_id }).await;
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, db: &Db) {
+    let Some(db) = db else {
+        send_error(state, peer_id, "Persistence required").await;
+        return;
+    };
+    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Authenticate first").await;
+        return;
+    };
+
+    let db_clone = db.clone();
+    let blocker = current_user_id;
+    let blocked = user_id.clone();
+    let result =
+        tokio::task::spawn_blocking(move || db_clone.delete_user_block(&blocker, &blocked))
+            .await
+            .unwrap_or_else(|_| Err("Unblock task failed".into()));
+
+    match result {
+        Ok(()) => {
+            let peer = {
+                let s = state.read().await;
+                s.peers.get(peer_id).cloned()
+            };
+            if let Some(peer) = peer {
+                send_to(&peer, &SignalMessage::UserUnblocked { user_id }).await;
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}

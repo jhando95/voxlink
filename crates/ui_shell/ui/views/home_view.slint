@@ -438,6 +438,12 @@ export component HomeView inherits Rectangle {
                                         }
                                     }
 
+                                    if space.has-unread : Rectangle {
+                                        width: 8px;
+                                        height: 8px;
+                                        border-radius: 4px;
+                                        background: VxTheme.accent;
+                                    }
                                     VxStatusPill {
                                         label: "Open";
                                         tone: VxTheme.accent;
@@ -996,6 +1002,12 @@ export component HomeView inherits Rectangle {
                                         color: VxTheme.text-muted;
                                         font-size: 9px;
                                     }
+                                }
+                                if space.has-unread : Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: VxTheme.accent;
                                 }
                             }
                         }

@@ -123,7 +123,7 @@ pub fn handle_peer_joined(
     }
 
     // Play join notification sound
-    if w.get_feedback_sound() {
+    if w.get_join_leave_sounds() {
         if let Ok(aud) = audio.try_lock() {
             aud.play_notification(true);
         }
@@ -145,7 +145,7 @@ pub fn handle_peer_left(
     w.set_window_title(format!("Voxlink — {code} ({count})").into());
     if let Ok(aud) = audio.try_lock() {
         // Play leave notification sound
-        if w.get_feedback_sound() {
+        if w.get_join_leave_sounds() {
             aud.play_notification(false);
         }
         aud.remove_peer(peer_id);

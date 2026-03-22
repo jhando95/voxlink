@@ -36,6 +36,8 @@ pub(crate) enum FeedbackAction {
     DeafenOn,
     DeafenOff,
     OutputPreview,
+    JoinRoom,
+    LeaveRoom,
 }
 
 fn generate_tone(freq: f32) -> Vec<f32> {
@@ -56,6 +58,33 @@ fn generate_tone(freq: f32) -> Vec<f32> {
 }
 
 const PREVIEW_SAMPLES: usize = (SAMPLE_RATE * PREVIEW_TONE_MS / 1000) as usize;
+
+const JOIN_LEAVE_MS: u32 = 120;
+const JOIN_LEAVE_SAMPLES: usize = (SAMPLE_RATE * JOIN_LEAVE_MS / 1000) as usize;
+const FREQ_JOIN_LOW: f32 = 523.25; // C5
+const FREQ_JOIN_HIGH: f32 = 659.25; // E5
+const FREQ_LEAVE_LOW: f32 = 659.25; // E5
+const FREQ_LEAVE_HIGH: f32 = 523.25; // C5
+const JOIN_LEAVE_VOLUME: f32 = 0.20;
+
+fn generate_join_leave_tone(freq_first: f32, freq_second: f32) -> Vec<f32> {
+    let mut buf = vec![0.0f32; JOIN_LEAVE_SAMPLES];
+    let tau = std::f32::consts::TAU;
+    let split = JOIN_LEAVE_SAMPLES / 2;
+    for (i, sample) in buf.iter_mut().enumerate() {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let freq = if i < split { freq_first } else { freq_second };
+        let envelope = if i < FADE_SAMPLES {
+            i as f32 / FADE_SAMPLES as f32
+        } else if i > JOIN_LEAVE_SAMPLES - FADE_SAMPLES {
+            (JOIN_LEAVE_SAMPLES - i) as f32 / FADE_SAMPLES as f32
+        } else {
+            1.0
+        };
+        *sample = (tau * freq * t).sin() * JOIN_LEAVE_VOLUME * envelope;
+    }
+    buf
+}
 
 fn generate_preview_tone() -> Vec<f32> {
     let mut buf = vec![0.0f32; PREVIEW_SAMPLES];
@@ -82,7 +111,7 @@ fn generate_preview_tone() -> Vec<f32> {
 
 /// Pre-computed feedback tone buffers for all actions.
 pub(crate) struct FeedbackTone {
-    tones: [Arc<[f32]>; 5], // MuteOn, MuteOff, DeafenOn, DeafenOff, OutputPreview
+    tones: [Arc<[f32]>; 7], // MuteOn, MuteOff, DeafenOn, DeafenOff, OutputPreview, JoinRoom, LeaveRoom
     /// Which tone to play (index*TONE_SAMPLES + position, 0 = idle)
     cursor: Arc<AtomicU32>,
     /// Which tone index is active
@@ -98,6 +127,8 @@ impl FeedbackTone {
                 Arc::from(generate_tone(FREQ_DEAFEN_ON)),
                 Arc::from(generate_tone(FREQ_DEAFEN_OFF)),
                 Arc::from(generate_preview_tone()),
+                Arc::from(generate_join_leave_tone(FREQ_JOIN_LOW, FREQ_JOIN_HIGH)),
+                Arc::from(generate_join_leave_tone(FREQ_LEAVE_LOW, FREQ_LEAVE_HIGH)),
             ],
             cursor: Arc::new(AtomicU32::new(0)),
             active_tone: Arc::new(AtomicU32::new(0)),
@@ -123,7 +154,7 @@ impl FeedbackTone {
 
 /// Cloneable state for use in the playback callback.
 pub(crate) struct FeedbackPlayback {
-    tones: [Arc<[f32]>; 5],
+    tones: [Arc<[f32]>; 7],
     cursor: Arc<AtomicU32>,
     active_tone: Arc<AtomicU32>,
 }
@@ -167,7 +198,15 @@ mod tests {
     #[test]
     fn tone_generation_all_actions() {
         let tone = FeedbackTone::new();
-        let expected_lens = [TONE_SAMPLES, TONE_SAMPLES, TONE_SAMPLES, TONE_SAMPLES, PREVIEW_SAMPLES];
+        let expected_lens = [
+            TONE_SAMPLES,
+            TONE_SAMPLES,
+            TONE_SAMPLES,
+            TONE_SAMPLES,
+            PREVIEW_SAMPLES,
+            JOIN_LEAVE_SAMPLES,
+            JOIN_LEAVE_SAMPLES,
+        ];
         for (i, t) in tone.tones.iter().enumerate() {
             assert_eq!(t.len(), expected_lens[i], "Tone {i} wrong length");
             // Verify non-silent in middle region (single sample may hit a zero crossing)
@@ -244,5 +283,30 @@ mod tests {
             diff > 0.1,
             "Different actions should produce different tones"
         );
+    }
+
+    #[test]
+    fn join_leave_tones_exist_and_correct_length() {
+        let tone = FeedbackTone::new();
+        // JoinRoom is index 5, LeaveRoom is index 6
+        let join_tone = &tone.tones[FeedbackAction::JoinRoom as usize];
+        let leave_tone = &tone.tones[FeedbackAction::LeaveRoom as usize];
+
+        assert_eq!(join_tone.len(), JOIN_LEAVE_SAMPLES);
+        assert_eq!(leave_tone.len(), JOIN_LEAVE_SAMPLES);
+
+        // Both should have non-zero audio content
+        let join_energy: f32 = join_tone.iter().map(|s| s * s).sum();
+        let leave_energy: f32 = leave_tone.iter().map(|s| s * s).sum();
+        assert!(join_energy > 0.01, "Join tone should have energy");
+        assert!(leave_energy > 0.01, "Leave tone should have energy");
+
+        // Join and leave tones should differ (different frequency order)
+        let diff: f32 = join_tone
+            .iter()
+            .zip(leave_tone.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(diff > 0.1, "Join and leave tones should be distinct");
     }
 }

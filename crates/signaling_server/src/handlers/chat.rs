@@ -163,6 +163,7 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                     reply_to_sender_name: row.reply_to_sender_name,
                     reply_preview: row.reply_preview,
                     pinned: false,
+                    forwarded_from: None,
                 })
                 .collect();
             Ok((target_name, history))
@@ -447,6 +448,7 @@ pub async fn handle_send_text_message(
             .as_ref()
             .map(|(_, _, preview)| preview.clone()),
         pinned: false,
+        forwarded_from: None,
     };
 
     // Store message in memory
@@ -492,10 +494,32 @@ pub async fn handle_send_text_message(
         });
     }
 
+    // Extract @mentions from message content
+    let mentioned_names: Vec<String> = {
+        let mut names = Vec::new();
+        for word in msg_data.content.split_whitespace() {
+            if let Some(name) = word.strip_prefix('@') {
+                let clean = name.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                if !clean.is_empty() {
+                    names.push(clean.to_lowercase());
+                }
+            }
+        }
+        names
+    };
+
     // Broadcast to all space members
+    let channel_name = {
+        let s = state.read().await;
+        s.spaces
+            .get(&space_id)
+            .and_then(|sp| sp.channels.iter().find(|ch| ch.id == channel_id))
+            .map(|ch| ch.name.clone())
+            .unwrap_or_default()
+    };
     let notify = SignalMessage::TextMessage {
-        channel_id,
-        message: msg_data,
+        channel_id: channel_id.clone(),
+        message: msg_data.clone(),
     };
     let s = state.read().await;
     if let Some(space) = s.spaces.get(&space_id) {
@@ -505,8 +529,32 @@ pub async fn handle_send_text_message(
             .filter_map(|id| s.peers.get(id).cloned())
             .collect();
         drop(s);
-        for peer in members {
-            send_to(&peer, &notify).await;
+        for peer in &members {
+            send_to(peer, &notify).await;
+        }
+
+        // Send MentionNotification to mentioned users who are not the sender
+        if !mentioned_names.is_empty() {
+            let preview = if msg_data.content.len() > 100 {
+                format!("{}...", &msg_data.content[..97])
+            } else {
+                msg_data.content.clone()
+            };
+            for peer in &members {
+                let peer_name = peer.name.try_lock().map(|n| n.to_lowercase()).unwrap_or_default();
+                if mentioned_names.contains(&peer_name) && peer.id != peer_id {
+                    send_to(
+                        peer,
+                        &SignalMessage::MentionNotification {
+                            channel_id: channel_id.clone(),
+                            channel_name: channel_name.clone(),
+                            sender_name: msg_data.sender_name.clone(),
+                            preview: preview.clone(),
+                        },
+                    )
+                    .await;
+                }
+            }
         }
     }
 }
@@ -607,6 +655,7 @@ pub async fn handle_send_direct_message(
                 reply_to_sender_name: row.reply_to_sender_name,
                 reply_preview: row.reply_preview,
                 pinned: false,
+                forwarded_from: None,
             })
         })
         .await
@@ -1067,6 +1116,11 @@ async fn authenticated_user_id(state: &State, peer_id: &str) -> Option<String> {
     user_id
 }
 
+/// Public wrapper for cross-module access.
+pub async fn authenticated_user_id_pub(state: &State, peer_id: &str) -> Option<String> {
+    authenticated_user_id(state, peer_id).await
+}
+
 async fn peers_for_user(state: &State, user_id: &str) -> Vec<Arc<Peer>> {
     let peers = {
         let s = state.read().await;
@@ -1222,6 +1276,7 @@ pub async fn handle_search_messages(
                     reply_to_sender_name: m.reply_to_sender_name,
                     reply_preview: m.reply_preview,
                     pinned: m.pinned,
+                    forwarded_from: None,
                 })
                 .collect();
             let resp = SignalMessage::SearchResults {
@@ -1242,4 +1297,420 @@ fn ordered_user_pair(user_a: &str, user_b: &str) -> (String, String) {
     } else {
         (user_b.to_string(), user_a.to_string())
     }
+}
+
+// ─── v0.8.0: Group DMs ───
+
+pub async fn handle_create_group_dm(
+    state: &State,
+    peer_id: &str,
+    user_ids: Vec<String>,
+    name: Option<String>,
+    db: &Db,
+) {
+    let Some(db) = db.as_ref().cloned() else {
+        send_error(state, peer_id, "Persistence required for group DMs").await;
+        return;
+    };
+    let Some(current_user_id) = authenticated_user_id(state, peer_id).await else {
+        send_error(state, peer_id, "Authenticate first").await;
+        return;
+    };
+    if user_ids.is_empty() || user_ids.len() > 9 {
+        send_error(state, peer_id, "Group DM requires 1-9 other members").await;
+        return;
+    }
+
+    let mut all_members = vec![current_user_id.clone()];
+    all_members.extend(user_ids);
+    all_members.sort();
+    all_members.dedup();
+
+    let group_name = name.unwrap_or_else(|| "Group".into());
+    let group_id = {
+        let mut s = state.write().await;
+        s.alloc_message_id() // reuse ID allocator
+    };
+
+    let gid = group_id.clone();
+    let gname = group_name.clone();
+    let members = all_members.clone();
+    let result =
+        tokio::task::spawn_blocking(move || db.create_group_conversation(&gid, &gname, &members))
+            .await
+            .unwrap_or_else(|_| Err("Group DM creation failed".into()));
+
+    match result {
+        Ok(()) => {
+            let notify = SignalMessage::GroupDMCreated {
+                group_id,
+                name: group_name,
+                members: all_members.clone(),
+            };
+            for member_id in &all_members {
+                for peer in peers_for_user(state, member_id).await {
+                    send_to(&peer, &notify).await;
+                }
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_select_group_dm(
+    state: &State,
+    peer_id: &str,
+    group_id: String,
+    db: &Db,
+) {
+    let Some(db) = db.as_ref().cloned() else {
+        send_error(state, peer_id, "Persistence required").await;
+        return;
+    };
+    let Some(current_user_id) = authenticated_user_id(state, peer_id).await else {
+        send_error(state, peer_id, "Authenticate first").await;
+        return;
+    };
+
+    let gid = group_id.clone();
+    let uid = current_user_id;
+    let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        if !db.is_group_member(&gid, &uid)? {
+            return Err("Not a member of this group".into());
+        }
+        let members = db.load_group_members(&gid)?;
+        let name = db.load_group_name(&gid)?;
+        let history = db.load_group_messages(&gid, 500)?;
+        Ok((name, members, history))
+    })
+    .await
+    .unwrap_or_else(|_| Err("Group DM lookup failed".into()));
+
+    match result {
+        Ok((name, members, history)) => {
+            let msgs: Vec<shared_types::TextMessageData> = history
+                .into_iter()
+                .map(|m| shared_types::TextMessageData {
+                    sender_id: m.sender_id,
+                    sender_name: m.sender_name,
+                    content: m.content,
+                    timestamp: m.timestamp as u64,
+                    message_id: m.id,
+                    edited: m.edited,
+                    reactions: Vec::new(),
+                    reply_to_message_id: m.reply_to_message_id,
+                    reply_to_sender_name: m.reply_to_sender_name,
+                    reply_preview: m.reply_preview,
+                    pinned: false,
+                    forwarded_from: None,
+                })
+                .collect();
+            if let Some(peer) = peer_for_id(state, peer_id).await {
+                send_to(
+                    &peer,
+                    &SignalMessage::GroupDMSelected {
+                        group_id,
+                        name,
+                        members,
+                        history: msgs,
+                    },
+                )
+                .await;
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_send_group_message(
+    state: &State,
+    peer_id: &str,
+    group_id: String,
+    content: String,
+    reply_to_message_id: Option<String>,
+    db: &Db,
+) {
+    let content = content.trim().to_string();
+    if content.is_empty() || content.len() > 2000 {
+        return;
+    }
+    let Some(db) = db.as_ref().cloned() else {
+        return;
+    };
+    let Some(current_user_id) = authenticated_user_id(state, peer_id).await else {
+        return;
+    };
+    let sender_name = {
+        let s = state.read().await;
+        s.peers
+            .get(peer_id)
+            .map(|p| p.name.try_lock().map(|n| n.clone()).unwrap_or_default())
+    };
+    let Some(sender_name) = sender_name else {
+        return;
+    };
+    let message_id = {
+        let mut s = state.write().await;
+        s.alloc_message_id()
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let gid = group_id.clone();
+    let uid = current_user_id.clone();
+    let mid = message_id.clone();
+    let sname = sender_name.clone();
+    let cont = content.clone();
+    let reply_mid = reply_to_message_id.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+        if !db.is_group_member(&gid, &uid)? {
+            return Err("Not a member".into());
+        }
+        db.save_group_message(&crate::persistence::GroupMessageRow {
+            id: mid,
+            group_id: gid.clone(),
+            sender_id: uid,
+            sender_name: sname,
+            content: cont,
+            timestamp,
+            edited: false,
+            reply_to_message_id: reply_mid,
+            reply_to_sender_name: None,
+            reply_preview: None,
+        })?;
+        db.load_group_members(&gid)
+    })
+    .await
+    .unwrap_or_else(|_| Err("Group message send failed".into()));
+
+    match result {
+        Ok(members) => {
+            let msg = shared_types::TextMessageData {
+                sender_id: current_user_id,
+                sender_name,
+                content,
+                timestamp: timestamp as u64,
+                message_id,
+                edited: false,
+                reactions: Vec::new(),
+                reply_to_message_id,
+                reply_to_sender_name: None,
+                reply_preview: None,
+                pinned: false,
+                forwarded_from: None,
+            };
+            let notify = SignalMessage::GroupMessage {
+                group_id,
+                message: msg,
+            };
+            for member_id in &members {
+                for peer in peers_for_user(state, member_id).await {
+                    send_to(&peer, &notify).await;
+                }
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+// ─── v0.8.0: Message Threads ───
+
+pub async fn handle_get_thread(
+    state: &State,
+    peer_id: &str,
+    channel_id: String,
+    message_id: String,
+) {
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+    let Some(space_id) = space_id else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+
+    // Collect reply chain from in-memory messages
+    let thread_messages = {
+        let s = state.read().await;
+        let Some(space) = s.spaces.get(&space_id) else {
+            send_error(state, peer_id, "Space not found").await;
+            return;
+        };
+        let Some(msgs) = space.text_messages.get(&channel_id) else {
+            send_error(state, peer_id, "Channel not found").await;
+            return;
+        };
+        // Find all messages that form the reply chain
+        let mut thread = Vec::new();
+        // First, find the root message
+        if let Some(root) = msgs.iter().find(|m| m.message_id == message_id) {
+            thread.push(root.clone());
+        }
+        // Then find all messages that reply to this message (direct replies)
+        for msg in msgs.iter() {
+            if msg.reply_to_message_id.as_deref() == Some(message_id.as_str()) {
+                thread.push(msg.clone());
+            }
+        }
+        thread.sort_by_key(|m| m.timestamp);
+        thread
+    };
+
+    if let Some(peer) = peer_for_id(state, peer_id).await {
+        send_to(
+            &peer,
+            &SignalMessage::ThreadMessages {
+                channel_id,
+                root_message_id: message_id,
+                messages: thread_messages,
+            },
+        )
+        .await;
+    }
+}
+
+// ─── v0.8.0: Message Forwarding ───
+
+pub async fn handle_forward_message(
+    state: &State,
+    peer_id: &str,
+    source_channel_id: String,
+    message_id: String,
+    target_channel_id: String,
+    db: &Db,
+) {
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+    let Some(space_id) = space_id else { return };
+
+    let sender_name = {
+        let s = state.read().await;
+        s.peers
+            .get(peer_id)
+            .map(|p| p.name.try_lock().map(|n| n.clone()).unwrap_or_default())
+    };
+    let Some(sender_name) = sender_name else { return };
+    let stable_sender = super::space::stable_peer_id(state, peer_id).await;
+
+    // Find the source message
+    let source_msg = {
+        let s = state.read().await;
+        let Some(space) = s.spaces.get(&space_id) else {
+            return;
+        };
+        space
+            .text_messages
+            .get(&source_channel_id)
+            .and_then(|msgs| msgs.iter().find(|m| m.message_id == message_id).cloned())
+    };
+
+    let Some(source_msg) = source_msg else {
+        send_error(state, peer_id, "Source message not found").await;
+        return;
+    };
+
+    // Get source channel name for forwarded_from label
+    let source_channel_name = {
+        let s = state.read().await;
+        s.spaces
+            .get(&space_id)
+            .and_then(|space| {
+                space
+                    .channels
+                    .iter()
+                    .find(|ch| ch.id == source_channel_id)
+                    .map(|ch| ch.name.clone())
+            })
+            .unwrap_or_else(|| "unknown".into())
+    };
+
+    let new_message_id = {
+        let mut s = state.write().await;
+        s.alloc_message_id()
+    };
+
+    let forwarded_msg = shared_types::TextMessageData {
+        sender_id: stable_sender,
+        sender_name: sender_name.clone(),
+        content: source_msg.content,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        message_id: new_message_id.clone(),
+        edited: false,
+        reactions: Vec::new(),
+        reply_to_message_id: None,
+        reply_to_sender_name: None,
+        reply_preview: None,
+        pinned: false,
+        forwarded_from: Some(format!("#{source_channel_name}")),
+    };
+
+    // Store in memory
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            let msgs = space
+                .text_messages
+                .entry(target_channel_id.clone())
+                .or_default();
+            msgs.push_back(forwarded_msg.clone());
+            if msgs.len() > crate::max_channel_messages() {
+                msgs.pop_front();
+            }
+        }
+    }
+
+    // Persist
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let mid = new_message_id;
+        let cid = target_channel_id.clone();
+        let sid = forwarded_msg.sender_id.clone();
+        let sname = sender_name;
+        let ts = forwarded_msg.timestamp;
+        let cont = forwarded_msg.content.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.save_message(&crate::persistence::MessageRow {
+                id: mid,
+                channel_id: cid,
+                sender_id: sid,
+                sender_name: sname,
+                content: cont,
+                timestamp: ts as i64,
+                edited: false,
+                reply_to_message_id: None,
+                reply_to_sender_name: None,
+                reply_preview: None,
+                pinned: false,
+            }) {
+                log::error!("Failed to persist forwarded message: {e}");
+            }
+        });
+    }
+
+    // Broadcast
+    let notify = SignalMessage::TextMessage {
+        channel_id: target_channel_id,
+        message: forwarded_msg,
+    };
+    crate::handlers::broadcast_to_space(state, &space_id, "", &notify).await;
 }

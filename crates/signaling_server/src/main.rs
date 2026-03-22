@@ -452,6 +452,7 @@ async fn main() {
                                     reply_to_sender_name: m.reply_to_sender_name,
                                     reply_preview: m.reply_preview,
                                     pinned: m.pinned,
+                                    forwarded_from: None,
                                 })
                                 .collect();
                             if !dq.is_empty() {
@@ -1240,6 +1241,63 @@ async fn handle_signal(
             duration_secs,
         } => {
             handle_timeout_member(state, peer_id, member_id, duration_secs, db).await;
+        }
+        // v0.8.0: Block/Unblock
+        SignalMessage::BlockUser { user_id } => {
+            handlers::moderation::handle_block_user(state, peer_id, user_id, db).await;
+        }
+        SignalMessage::UnblockUser { user_id } => {
+            handlers::moderation::handle_unblock_user(state, peer_id, user_id, db).await;
+        }
+        // v0.8.0: Ban management
+        SignalMessage::UnbanMember { user_id } => {
+            handlers::moderation::handle_unban_member(state, peer_id, user_id, db).await;
+        }
+        SignalMessage::ListBans => {
+            handlers::moderation::handle_list_bans(state, peer_id, db).await;
+        }
+        // v0.8.0: Group DMs
+        SignalMessage::CreateGroupDM { user_ids, name } => {
+            handlers::chat::handle_create_group_dm(state, peer_id, user_ids, name, db).await;
+        }
+        SignalMessage::SelectGroupDM { group_id } => {
+            handlers::chat::handle_select_group_dm(state, peer_id, group_id, db).await;
+        }
+        SignalMessage::SendGroupMessage { group_id, content, reply_to_message_id } => {
+            handlers::chat::handle_send_group_message(state, peer_id, group_id, content, reply_to_message_id, db).await;
+        }
+        // v0.8.0: Invite settings
+        SignalMessage::SetInviteSettings { expires_hours, max_uses } => {
+            handlers::space::handle_set_invite_settings(state, peer_id, expires_hours, max_uses, db).await;
+        }
+        // v0.8.0: Message threads
+        SignalMessage::GetThread { channel_id, message_id } => {
+            handlers::chat::handle_get_thread(state, peer_id, channel_id, message_id).await;
+        }
+        // v0.8.0: Nicknames
+        SignalMessage::SetNickname { nickname } => {
+            handlers::space::handle_set_nickname(state, peer_id, nickname, db).await;
+        }
+        // v0.8.0: Message forwarding
+        SignalMessage::ForwardMessage { source_channel_id, message_id, target_channel_id } => {
+            handlers::chat::handle_forward_message(state, peer_id, source_channel_id, message_id, target_channel_id, db).await;
+        }
+        // v0.8.0: Status presets
+        SignalMessage::SetStatusPreset { preset } => {
+            handlers::presence::handle_set_status_preset(state, peer_id, preset).await;
+        }
+        // v0.8.0: Account system
+        SignalMessage::CreateAccount { email, password, display_name } => {
+            handlers::auth::handle_create_account(state, peer_id, email, password, display_name, db).await;
+        }
+        SignalMessage::Login { email, password } => {
+            handlers::auth::handle_login(state, peer_id, email, password, db).await;
+        }
+        SignalMessage::Logout => {
+            handlers::auth::handle_logout(state, peer_id, db).await;
+        }
+        SignalMessage::ChangePassword { current_password, new_password } => {
+            handlers::auth::handle_change_password(state, peer_id, current_password, new_password, db).await;
         }
         _ => {}
     }

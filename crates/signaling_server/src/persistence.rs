@@ -113,6 +113,20 @@ pub struct DirectMessageRow {
     pub reply_preview: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct GroupMessageRow {
+    pub id: String,
+    pub group_id: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub content: String,
+    pub timestamp: i64,
+    pub edited: bool,
+    pub reply_to_message_id: Option<String>,
+    pub reply_to_sender_name: Option<String>,
+    pub reply_preview: Option<String>,
+}
+
 impl Database {
     /// Lock the DB connection, recovering from poisoned mutex (a prior panic in a
     /// spawn_blocking task). This prevents a single DB error from crashing all future ops.
@@ -241,7 +255,46 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_friendships_low ON friendships(user_low_id);
                 CREATE INDEX IF NOT EXISTS idx_friendships_high ON friendships(user_high_id);
                 CREATE INDEX IF NOT EXISTS idx_direct_messages_pair ON direct_messages(user_low_id, user_high_id);
-                CREATE INDEX IF NOT EXISTS idx_direct_messages_timestamp ON direct_messages(timestamp);",
+                CREATE INDEX IF NOT EXISTS idx_direct_messages_timestamp ON direct_messages(timestamp);
+
+                CREATE TABLE IF NOT EXISTS user_blocks (
+                    blocker_id TEXT NOT NULL,
+                    blocked_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (blocker_id, blocked_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS group_conversations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS group_members (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    PRIMARY KEY (group_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS group_messages (
+                    id TEXT PRIMARY KEY,
+                    group_id TEXT NOT NULL,
+                    sender_id TEXT NOT NULL,
+                    sender_name TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    edited INTEGER NOT NULL DEFAULT 0,
+                    reply_to_message_id TEXT,
+                    reply_to_sender_name TEXT,
+                    reply_preview TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+
+                CREATE TABLE IF NOT EXISTS space_nicknames (
+                    space_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    nickname TEXT NOT NULL,
+                    PRIMARY KEY (space_id, user_id)
+                );",
             )
             .map_err(|e| format!("Failed to init tables: {e}"))?;
         }
@@ -256,6 +309,22 @@ impl Database {
         self.ensure_column("users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("channels", "voice_quality", "INTEGER NOT NULL DEFAULT 2")?;
         self.ensure_column("users", "bio", "TEXT NOT NULL DEFAULT ''")?;
+        // v0.8.0 migration columns
+        self.ensure_column("spaces", "invite_expires_at", "INTEGER")?;
+        self.ensure_column("spaces", "invite_max_uses", "INTEGER")?;
+        self.ensure_column("spaces", "invite_uses", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_message_column("forwarded_from", "TEXT")?;
+        // Account system columns
+        self.ensure_column("users", "email", "TEXT")?;
+        self.ensure_column("users", "password_hash", "TEXT")?;
+        // Index on email for login lookups
+        {
+            let conn = self.lock_conn()?;
+            let _ = conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL",
+                [],
+            );
+        }
         Ok(())
     }
 
@@ -678,6 +747,100 @@ impl Database {
              SET token = ?2, display_name = ?3, issued_at = ?4, last_seen_at = ?5
              WHERE user_id = ?1",
             params![user_id, token, name, issued_at, last_seen_at],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
+    // ─── Account (email + password) ───
+
+    /// Create an account with email and hashed password.
+    pub fn create_account(
+        &self,
+        user_id: &str,
+        email: &str,
+        password_hash: &str,
+        display_name: &str,
+        token: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO users (user_id, token, display_name, created_at, issued_at, last_seen_at, email, password_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![user_id, token, display_name, now, now, now, email, password_hash],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE constraint") {
+                "An account with this email already exists".to_string()
+            } else {
+                format!("Insert error: {e}")
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Find a user by email for login.
+    pub fn find_user_by_email(&self, email: &str) -> Result<Option<(UserRow, String)>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT user_id, token, display_name, created_at, issued_at, last_seen_at, password_hash
+                 FROM users WHERE email = ?1",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let result = stmt
+            .query_row(params![email], |row| {
+                Ok((
+                    UserRow {
+                        user_id: row.get(0)?,
+                        token: row.get(1)?,
+                        display_name: row.get(2)?,
+                        created_at: row.get(3)?,
+                        issued_at: row.get(4)?,
+                        last_seen_at: row.get(5)?,
+                    },
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .ok();
+        Ok(result)
+    }
+
+    /// Get the password hash for a user (for change password).
+    pub fn get_password_hash(&self, user_id: &str) -> Result<Option<String>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare("SELECT password_hash FROM users WHERE user_id = ?1")
+            .map_err(|e| format!("Query error: {e}"))?;
+        let result: Option<Option<String>> = stmt
+            .query_row(params![user_id], |row| row.get(0))
+            .ok();
+        Ok(result.flatten())
+    }
+
+    /// Update the password hash for a user.
+    pub fn update_password_hash(
+        &self,
+        user_id: &str,
+        password_hash: &str,
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE users SET password_hash = ?2 WHERE user_id = ?1",
+            params![user_id, password_hash],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
+    /// Invalidate token (logout).
+    pub fn invalidate_token(&self, user_id: &str) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        // Set token to empty string — find_user_by_token won't match empty tokens
+        conn.execute(
+            "UPDATE users SET token = '' WHERE user_id = ?1",
+            params![user_id],
         )
         .map_err(|e| format!("Update error: {e}"))?;
         Ok(())
@@ -1125,6 +1288,223 @@ impl Database {
             }
         }
         Ok(max_val)
+    }
+}
+
+// ─── v0.8.0: New Database Methods ───
+
+impl Database {
+    pub fn delete_ban(&self, space_id: &str, user_id: &str) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let changes = conn
+            .execute(
+                "DELETE FROM bans WHERE space_id = ?1 AND user_id = ?2",
+                params![space_id, user_id],
+            )
+            .map_err(|e| format!("Failed to delete ban: {e}"))?;
+        Ok(changes > 0)
+    }
+
+    pub fn load_bans(&self, space_id: &str) -> Result<Vec<BanRow>, String> {
+        self.load_bans_for_space(space_id)
+    }
+
+    pub fn save_user_block(&self, blocker_id: &str, blocked_id: &str) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?1, ?2, ?3)",
+            params![blocker_id, blocked_id, now],
+        )
+        .map_err(|e| format!("Failed to save block: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_user_block(&self, blocker_id: &str, blocked_id: &str) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "DELETE FROM user_blocks WHERE blocker_id = ?1 AND blocked_id = ?2",
+            params![blocker_id, blocked_id],
+        )
+        .map_err(|e| format!("Failed to delete block: {e}"))?;
+        Ok(())
+    }
+
+    pub fn is_blocked(&self, blocker_id: &str, blocked_id: &str) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM user_blocks WHERE blocker_id = ?1 AND blocked_id = ?2",
+                params![blocker_id, blocked_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to check block: {e}"))?;
+        Ok(count > 0)
+    }
+
+    pub fn create_group_conversation(
+        &self,
+        group_id: &str,
+        name: &str,
+        member_ids: &[String],
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT INTO group_conversations (id, name, created_at) VALUES (?1, ?2, ?3)",
+            params![group_id, name, now],
+        )
+        .map_err(|e| format!("Failed to create group: {e}"))?;
+        for uid in member_ids {
+            conn.execute(
+                "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?1, ?2)",
+                params![group_id, uid],
+            )
+            .map_err(|e| format!("Failed to add group member: {e}"))?;
+        }
+        Ok(())
+    }
+
+    pub fn is_group_member(&self, group_id: &str, user_id: &str) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM group_members WHERE group_id = ?1 AND user_id = ?2",
+                params![group_id, user_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to check group membership: {e}"))?;
+        Ok(count > 0)
+    }
+
+    pub fn load_group_members(&self, group_id: &str) -> Result<Vec<String>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare("SELECT user_id FROM group_members WHERE group_id = ?1")
+            .map_err(|e| format!("Failed to prepare: {e}"))?;
+        let rows = stmt
+            .query_map(params![group_id], |row| row.get(0))
+            .map_err(|e| format!("Failed to query: {e}"))?;
+        let mut members = Vec::new();
+        for row in rows {
+            members.push(row.map_err(|e| format!("Row error: {e}"))?);
+        }
+        Ok(members)
+    }
+
+    pub fn load_group_name(&self, group_id: &str) -> Result<String, String> {
+        let conn = self.lock_conn()?;
+        conn.query_row(
+            "SELECT name FROM group_conversations WHERE id = ?1",
+            params![group_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Group not found: {e}"))
+    }
+
+    pub fn load_group_messages(
+        &self,
+        group_id: &str,
+        limit: usize,
+    ) -> Result<Vec<GroupMessageRow>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, group_id, sender_id, sender_name, content, timestamp, edited,
+                        reply_to_message_id, reply_to_sender_name, reply_preview
+                 FROM group_messages WHERE group_id = ?1 ORDER BY timestamp DESC LIMIT ?2",
+            )
+            .map_err(|e| format!("Failed to prepare: {e}"))?;
+        let rows = stmt
+            .query_map(params![group_id, limit as i64], |row| {
+                Ok(GroupMessageRow {
+                    id: row.get(0)?,
+                    group_id: row.get(1)?,
+                    sender_id: row.get(2)?,
+                    sender_name: row.get(3)?,
+                    content: row.get(4)?,
+                    timestamp: row.get(5)?,
+                    edited: row.get::<_, i64>(6)? != 0,
+                    reply_to_message_id: row.get(7)?,
+                    reply_to_sender_name: row.get(8)?,
+                    reply_preview: row.get(9)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query: {e}"))?;
+        let mut messages: Vec<GroupMessageRow> = Vec::new();
+        for row in rows {
+            messages.push(row.map_err(|e| format!("Row error: {e}"))?);
+        }
+        messages.reverse(); // ascending order
+        Ok(messages)
+    }
+
+    pub fn save_group_message(&self, msg: &GroupMessageRow) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO group_messages (id, group_id, sender_id, sender_name, content, timestamp, edited, reply_to_message_id, reply_to_sender_name, reply_preview) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                msg.id, msg.group_id, msg.sender_id, msg.sender_name,
+                msg.content, msg.timestamp, msg.edited as i64,
+                msg.reply_to_message_id, msg.reply_to_sender_name, msg.reply_preview
+            ],
+        )
+        .map_err(|e| format!("Failed to save group message: {e}"))?;
+        Ok(())
+    }
+
+    pub fn set_invite_settings(
+        &self,
+        space_id: &str,
+        expires_hours: Option<u32>,
+        max_uses: Option<u32>,
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let expires_at: Option<i64> = expires_hours.map(|h| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+                + (h as i64 * 3600)
+        });
+        conn.execute(
+            "UPDATE spaces SET invite_expires_at = ?1, invite_max_uses = ?2 WHERE id = ?3",
+            params![expires_at, max_uses.map(|u| u as i64), space_id],
+        )
+        .map_err(|e| format!("Failed to update invite settings: {e}"))?;
+        Ok(())
+    }
+
+    pub fn set_space_nickname(
+        &self,
+        space_id: &str,
+        user_id: &str,
+        nickname: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        match nickname {
+            Some(nick) => {
+                conn.execute(
+                    "INSERT OR REPLACE INTO space_nicknames (space_id, user_id, nickname) VALUES (?1, ?2, ?3)",
+                    params![space_id, user_id, nick],
+                )
+                .map_err(|e| format!("Failed to set nickname: {e}"))?;
+            }
+            None => {
+                conn.execute(
+                    "DELETE FROM space_nicknames WHERE space_id = ?1 AND user_id = ?2",
+                    params![space_id, user_id],
+                )
+                .map_err(|e| format!("Failed to remove nickname: {e}"))?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1607,6 +1987,181 @@ mod tests {
         })
         .unwrap();
         assert_eq!(db.max_id_suffix("spaces", "id").unwrap(), 12);
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ─── v0.8.0 tests ───
+
+    #[test]
+    fn user_blocks_round_trip() {
+        let (db, path) = temp_db();
+        // Initially not blocked
+        assert!(!db.is_blocked("u1", "u2").unwrap());
+
+        // Block
+        db.save_user_block("u1", "u2").unwrap();
+        assert!(db.is_blocked("u1", "u2").unwrap());
+        // Direction matters
+        assert!(!db.is_blocked("u2", "u1").unwrap());
+
+        // Unblock
+        db.delete_user_block("u1", "u2").unwrap();
+        assert!(!db.is_blocked("u1", "u2").unwrap());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ban_save_load_delete() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+
+        db.save_ban(&BanRow {
+            space_id: "s1".into(),
+            user_id: "u1".into(),
+            banned_at: 1000,
+        })
+        .unwrap();
+        db.save_ban(&BanRow {
+            space_id: "s1".into(),
+            user_id: "u2".into(),
+            banned_at: 2000,
+        })
+        .unwrap();
+
+        let bans = db.load_bans("s1").unwrap();
+        assert_eq!(bans.len(), 2);
+        assert!(db.is_banned("s1", "u1").unwrap());
+        assert!(db.is_banned("s1", "u2").unwrap());
+
+        // Delete one ban
+        assert!(db.delete_ban("s1", "u1").unwrap());
+        assert!(!db.is_banned("s1", "u1").unwrap());
+        assert!(db.is_banned("s1", "u2").unwrap());
+        let bans = db.load_bans("s1").unwrap();
+        assert_eq!(bans.len(), 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn group_conversation_round_trip() {
+        let (db, path) = temp_db();
+        let members = vec!["u1".into(), "u2".into(), "u3".into()];
+        db.create_group_conversation("g1", "Squad", &members)
+            .unwrap();
+
+        assert!(db.is_group_member("g1", "u1").unwrap());
+        assert!(db.is_group_member("g1", "u2").unwrap());
+        assert!(db.is_group_member("g1", "u3").unwrap());
+        assert!(!db.is_group_member("g1", "u99").unwrap());
+
+        let loaded_members = db.load_group_members("g1").unwrap();
+        assert_eq!(loaded_members.len(), 3);
+
+        let name = db.load_group_name("g1").unwrap();
+        assert_eq!(name, "Squad");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn group_messages_round_trip() {
+        let (db, path) = temp_db();
+        let members = vec!["u1".into(), "u2".into()];
+        db.create_group_conversation("g1", "Duo", &members)
+            .unwrap();
+
+        db.save_group_message(&GroupMessageRow {
+            id: "gm1".into(),
+            group_id: "g1".into(),
+            sender_id: "u1".into(),
+            sender_name: "Alice".into(),
+            content: "Hey group!".into(),
+            timestamp: 1000,
+            edited: false,
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+        })
+        .unwrap();
+        db.save_group_message(&GroupMessageRow {
+            id: "gm2".into(),
+            group_id: "g1".into(),
+            sender_id: "u2".into(),
+            sender_name: "Bob".into(),
+            content: "Hello!".into(),
+            timestamp: 2000,
+            edited: false,
+            reply_to_message_id: Some("gm1".into()),
+            reply_to_sender_name: Some("Alice".into()),
+            reply_preview: Some("Hey group!".into()),
+        })
+        .unwrap();
+
+        let messages = db.load_group_messages("g1", 50).unwrap();
+        assert_eq!(messages.len(), 2);
+        // Should be in ascending order
+        assert_eq!(messages[0].id, "gm1");
+        assert_eq!(messages[1].id, "gm2");
+        assert_eq!(messages[1].reply_to_message_id.as_deref(), Some("gm1"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn space_nickname_persistence() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+
+        // Set a nickname
+        db.set_space_nickname("s1", "u1", Some("Ally")).unwrap();
+        // Set another
+        db.set_space_nickname("s1", "u1", Some("NewNick")).unwrap();
+
+        // Remove nickname
+        db.set_space_nickname("s1", "u1", None).unwrap();
+        // Should not error when removing a non-existent nickname
+        db.set_space_nickname("s1", "u1", None).unwrap();
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn invite_settings_persistence() {
+        let (db, path) = temp_db();
+        db.save_space(&SpaceRow {
+            id: "s1".into(),
+            name: "S".into(),
+            invite_code: "X".into(),
+            owner_id: "p1".into(),
+            created_at: 0,
+        })
+        .unwrap();
+
+        // Set invite settings with expiry and max uses
+        db.set_invite_settings("s1", Some(24), Some(10)).unwrap();
+
+        // Set without expiry
+        db.set_invite_settings("s1", None, Some(5)).unwrap();
+
+        // Clear both
+        db.set_invite_settings("s1", None, None).unwrap();
+
         let _ = std::fs::remove_file(path);
     }
 }

@@ -224,24 +224,39 @@ export component SpaceView inherits Rectangle {
                             }
 
                             for channel in root.channels : Rectangle {
-                                height: channel.is-voice ? 0px :
+                                height: channel.is-category-header ? 28px :
+                                    channel.is-voice ? 0px :
                                     (root.topic-edit-channel-id == channel.id ? 100px : 58px);
-                                visible: !channel.is-voice;
-                                border-radius: VxTheme.radius-card;
-                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                visible: channel.is-category-header ? true : !channel.is-voice;
+                                border-radius: channel.is-category-header ? 0px : VxTheme.radius-card;
+                                background: channel.is-category-header ? transparent :
+                                            channel.is-active ? VxTheme.tab-active-bg :
                                             channel.unread-count > 0 ? VxTheme.accent-subtle :
                                             text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: channel.is-active || channel.unread-count > 0
+                                border-color: channel.is-category-header ? transparent :
+                                    channel.is-active || channel.unread-count > 0
                                     ? VxTheme.accent-border
                                     : VxTheme.border-subtle;
-                                border-width: 1px;
+                                border-width: channel.is-category-header ? 0px : 1px;
 
-                                text-channel-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.select-text-channel(channel.id); }
+                                if channel.is-category-header : HorizontalLayout {
+                                    padding-left: 4px;
+                                    alignment: start;
+                                    Text {
+                                        text: channel.name;
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        font-weight: 800;
+                                        letter-spacing: 0.5px;
+                                    }
                                 }
 
-                                VerticalLayout {
+                                text-channel-touch := TouchArea {
+                                    mouse-cursor: channel.is-category-header ? default : pointer;
+                                    clicked => { if !channel.is-category-header { root.select-text-channel(channel.id); } }
+                                }
+
+                                if !channel.is-category-header : VerticalLayout {
                                     HorizontalLayout {
                                         padding-left: 14px;
                                         padding-right: 14px;
@@ -294,12 +309,17 @@ export component SpaceView inherits Rectangle {
                                             }
                                         }
 
+                                        if channel.mention-count > 0 : VxStatusPill {
+                                            label: "@" + channel.mention-count;
+                                            tone: VxTheme.danger;
+                                            fill: VxTheme.danger.transparentize(0.85);
+                                        }
                                         if channel.unread-count > 0 : VxStatusPill {
                                             label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
                                             tone: VxTheme.accent;
                                             fill: VxTheme.accent-subtle;
                                         }
-                                        if channel.unread-count == 0 : VxStatusPill {
+                                        if channel.unread-count == 0 && channel.mention-count == 0 : VxStatusPill {
                                             label: channel.is-active ? "Recent" : "Open";
                                             tone: channel.is-active ? VxTheme.success : VxTheme.accent;
                                             fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;

@@ -761,3 +761,165 @@ pub fn setup_noise_suppression(
         });
     });
 }
+
+pub fn setup_quick_switcher(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let _state_ref = state.clone();
+    window.on_quick_switcher_select({
+        let window_weak = window_weak.clone();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        move |item_id| {
+            let Some(w) = window_weak.upgrade() else { return };
+            let item_id_str = item_id.to_string();
+            // Try to select as text channel
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::SelectTextChannel {
+                        channel_id: item_id_str,
+                    })
+                    .await;
+            });
+            w.set_current_view(5);
+        }
+    });
+}
+
+pub fn setup_toggle_join_leave_sounds(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_join_leave_sounds(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_join_leave_sounds();
+        w.set_join_leave_sounds(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.join_leave_sounds = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_toggle_show_spoilers(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_show_spoilers(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_show_spoilers();
+        w.set_show_spoilers(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.show_spoilers = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_toggle_compact_chat(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_compact_chat(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_compact_chat();
+        w.set_compact_chat(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.compact_chat = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_login(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_login(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let email = w.get_auth_email().to_string();
+        let password = w.get_auth_password().to_string();
+        if email.is_empty() || password.is_empty() {
+            w.set_auth_error("Email and password are required".into());
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::Login { email, password })
+                .await;
+        });
+    });
+}
+
+pub fn setup_create_account(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_create_account(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let email = w.get_auth_email().to_string();
+        let password = w.get_auth_password().to_string();
+        let display_name = w.get_auth_display_name().to_string();
+        if email.is_empty() || password.is_empty() || display_name.is_empty() {
+            w.set_auth_error("All fields are required".into());
+            return;
+        }
+        if password.len() < 6 {
+            w.set_auth_error("Password must be at least 6 characters".into());
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::CreateAccount {
+                    email,
+                    password,
+                    display_name,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_logout(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_logout(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net.send_signal(&shared_types::SignalMessage::Logout).await;
+        });
+    });
+}

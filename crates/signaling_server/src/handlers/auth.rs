@@ -1,6 +1,7 @@
 use crate::{send_error, send_to, Db, State};
 use rand::rngs::OsRng;
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 use shared_types::SignalMessage;
 
 use super::friends::send_friend_snapshot_to_peer;
@@ -199,6 +200,361 @@ pub async fn handle_authenticate(
     true
 }
 
+// ─── Account System ───
+
+/// Hash a password with a random 16-byte salt using SHA-256.
+/// Format: hex(salt):hex(sha256(salt + password))
+fn hash_password(password: &str) -> String {
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let salt_hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
+    let mut hasher = Sha256::new();
+    hasher.update(&salt);
+    hasher.update(password.as_bytes());
+    let hash = hasher.finalize();
+    let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{salt_hex}:{hash_hex}")
+}
+
+/// Verify a password against a stored salt:hash string.
+fn verify_password(password: &str, stored: &str) -> bool {
+    let Some((salt_hex, expected_hash)) = stored.split_once(':') else {
+        return false;
+    };
+    let Ok(salt) = (0..salt_hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&salt_hex[i..i + 2], 16))
+        .collect::<Result<Vec<u8>, _>>()
+    else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&salt);
+    hasher.update(password.as_bytes());
+    let hash = hasher.finalize();
+    let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    hash_hex == expected_hash
+}
+
+pub async fn handle_create_account(
+    state: &State,
+    peer_id: &str,
+    email: String,
+    password: String,
+    display_name: String,
+    db: &Db,
+) {
+    let email = email.trim().to_lowercase();
+    let display_name = display_name.trim().to_string();
+
+    // Validate inputs
+    if email.is_empty() || !email.contains('@') || email.len() > 254 {
+        send_auth_error(state, peer_id, "Invalid email address").await;
+        return;
+    }
+    if password.len() < 6 {
+        send_auth_error(state, peer_id, "Password must be at least 6 characters").await;
+        return;
+    }
+    if password.len() > 128 {
+        send_auth_error(state, peer_id, "Password too long").await;
+        return;
+    }
+    if display_name.is_empty() || display_name.len() > 32 {
+        send_auth_error(state, peer_id, "Display name must be 1-32 characters").await;
+        return;
+    }
+
+    let Some(ref db_ref) = db else {
+        send_auth_error(state, peer_id, "Account system unavailable (no database)").await;
+        return;
+    };
+
+    let password_hash = hash_password(&password);
+    let token = generate_token();
+    let user_id = generate_user_id();
+    let now = unix_now_secs();
+
+    let db_clone = db_ref.clone();
+    let uid = user_id.clone();
+    let tok = token.clone();
+    let name = display_name.clone();
+    let em = email.clone();
+    let ph = password_hash.clone();
+
+    let result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db_clone.create_account(&uid, &em, &ph, &name, &tok, now)
+        }),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(Ok(()))) => {
+            // Set peer identity
+            {
+                let s = state.read().await;
+                if let Some(peer) = s.peers.get(peer_id) {
+                    *peer.user_id.lock().await = Some(user_id.clone());
+                    *peer.name.lock().await = display_name;
+                }
+            }
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                send_to(
+                    &peer,
+                    &SignalMessage::AccountCreated {
+                        token,
+                        user_id,
+                    },
+                )
+                .await;
+            }
+            log::info!("Account created for peer {peer_id} (email: {email})");
+        }
+        Ok(Ok(Err(e))) => {
+            send_auth_error(state, peer_id, &e).await;
+        }
+        Ok(Err(e)) => {
+            log::error!("Account creation task failed: {e}");
+            send_auth_error(state, peer_id, "Account creation failed").await;
+        }
+        Err(_) => {
+            send_auth_error(state, peer_id, "Account creation timed out").await;
+        }
+    }
+}
+
+pub async fn handle_login(
+    state: &State,
+    peer_id: &str,
+    email: String,
+    password: String,
+    db: &Db,
+) {
+    let email = email.trim().to_lowercase();
+
+    if email.is_empty() || password.is_empty() {
+        send_auth_error(state, peer_id, "Email and password are required").await;
+        return;
+    }
+
+    let Some(ref db_ref) = db else {
+        send_auth_error(state, peer_id, "Account system unavailable (no database)").await;
+        return;
+    };
+
+    let db_clone = db_ref.clone();
+    let em = email.clone();
+
+    let result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.find_user_by_email(&em)),
+    )
+    .await;
+
+    let found = match result {
+        Ok(Ok(Ok(found))) => found,
+        Ok(Ok(Err(e))) => {
+            log::error!("Login DB error: {e}");
+            send_auth_error(state, peer_id, "Login failed").await;
+            return;
+        }
+        Ok(Err(e)) => {
+            log::error!("Login task error: {e}");
+            send_auth_error(state, peer_id, "Login failed").await;
+            return;
+        }
+        Err(_) => {
+            send_auth_error(state, peer_id, "Login timed out").await;
+            return;
+        }
+    };
+
+    let Some((user, password_hash)) = found else {
+        send_auth_error(state, peer_id, "Invalid email or password").await;
+        return;
+    };
+
+    if !verify_password(&password, &password_hash) {
+        send_auth_error(state, peer_id, "Invalid email or password").await;
+        return;
+    }
+
+    // Rotate token on login
+    let new_token = generate_token();
+    let now = unix_now_secs();
+    let db_clone = db_ref.clone();
+    let uid = user.user_id.clone();
+    let tok = new_token.clone();
+    let name = user.display_name.clone();
+    let _ = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db_clone.rotate_user_session(&uid, &tok, &name, now, now)
+        }),
+    )
+    .await;
+
+    // Set peer identity
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            *peer.user_id.lock().await = Some(user.user_id.clone());
+            *peer.name.lock().await = user.display_name.clone();
+        }
+    }
+
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id).cloned() {
+        drop(s);
+        send_to(
+            &peer,
+            &SignalMessage::LoginSuccess {
+                token: new_token,
+                user_id: user.user_id,
+                display_name: user.display_name,
+            },
+        )
+        .await;
+        send_friend_snapshot_to_peer(state, peer_id, db).await;
+    }
+    log::info!("Peer {peer_id} logged in via email ({email})");
+}
+
+pub async fn handle_logout(state: &State, peer_id: &str, db: &Db) {
+    let user_id = {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            peer.user_id.lock().await.clone()
+        } else {
+            None
+        }
+    };
+
+    if let (Some(uid), Some(ref db_ref)) = (&user_id, db) {
+        let db_clone = db_ref.clone();
+        let uid = uid.clone();
+        let _ = tokio::time::timeout(
+            crate::DB_TIMEOUT,
+            tokio::task::spawn_blocking(move || db_clone.invalidate_token(&uid)),
+        )
+        .await;
+    }
+
+    // Clear peer identity
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            *peer.user_id.lock().await = None;
+        }
+    }
+
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id).cloned() {
+        drop(s);
+        send_to(&peer, &SignalMessage::LoggedOut).await;
+    }
+    log::info!("Peer {peer_id} logged out");
+}
+
+pub async fn handle_change_password(
+    state: &State,
+    peer_id: &str,
+    current_password: String,
+    new_password: String,
+    db: &Db,
+) {
+    if new_password.len() < 6 {
+        send_auth_error(state, peer_id, "New password must be at least 6 characters").await;
+        return;
+    }
+    if new_password.len() > 128 {
+        send_auth_error(state, peer_id, "New password too long").await;
+        return;
+    }
+
+    let user_id = {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            peer.user_id.lock().await.clone()
+        } else {
+            None
+        }
+    };
+
+    let Some(uid) = user_id else {
+        send_auth_error(state, peer_id, "Not logged in").await;
+        return;
+    };
+
+    let Some(ref db_ref) = db else {
+        send_auth_error(state, peer_id, "Account system unavailable").await;
+        return;
+    };
+
+    // Verify current password
+    let db_clone = db_ref.clone();
+    let uid_clone = uid.clone();
+    let stored_hash = match tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.get_password_hash(&uid_clone)),
+    )
+    .await
+    {
+        Ok(Ok(Ok(Some(h)))) => h,
+        _ => {
+            send_auth_error(state, peer_id, "Password change failed").await;
+            return;
+        }
+    };
+
+    if !verify_password(&current_password, &stored_hash) {
+        send_auth_error(state, peer_id, "Current password is incorrect").await;
+        return;
+    }
+
+    // Update password
+    let new_hash = hash_password(&new_password);
+    let db_clone = db_ref.clone();
+    let uid_clone = uid.clone();
+    let result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.update_password_hash(&uid_clone, &new_hash)),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(Ok(()))) => {
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                send_to(&peer, &SignalMessage::PasswordChanged).await;
+            }
+            log::info!("Password changed for user {uid}");
+        }
+        _ => {
+            send_auth_error(state, peer_id, "Password change failed").await;
+        }
+    }
+}
+
+async fn send_auth_error(state: &State, peer_id: &str, message: &str) {
+    let s = state.read().await;
+    if let Some(peer) = s.peers.get(peer_id).cloned() {
+        drop(s);
+        send_to(
+            &peer,
+            &SignalMessage::AuthError {
+                message: message.to_string(),
+            },
+        )
+        .await;
+    }
+}
+
 fn generate_token() -> String {
     random_hex(32)
 }
@@ -218,4 +574,36 @@ fn unix_now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_and_verify_password() {
+        let password = "hunter2";
+        let hash = hash_password(password);
+        assert!(hash.contains(':'));
+        assert!(verify_password(password, &hash));
+        assert!(!verify_password("wrong", &hash));
+    }
+
+    #[test]
+    fn test_hash_different_salts() {
+        let hash1 = hash_password("same_password");
+        let hash2 = hash_password("same_password");
+        // Different salts → different hashes
+        assert_ne!(hash1, hash2);
+        // Both should verify
+        assert!(verify_password("same_password", &hash1));
+        assert!(verify_password("same_password", &hash2));
+    }
+
+    #[test]
+    fn test_verify_malformed_hash() {
+        assert!(!verify_password("test", "no_colon"));
+        assert!(!verify_password("test", "zzzz:abc"));
+        assert!(!verify_password("test", ""));
+    }
 }

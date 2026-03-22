@@ -133,9 +133,16 @@ pub fn setup(
     ui::setup_toggle_feedback_sound(window);
     ui::setup_toggle_notifications(window);
     ui::setup_toggle_minimize_to_tray(window);
+    ui::setup_toggle_join_leave_sounds(window);
+    ui::setup_toggle_show_spoilers(window);
+    ui::setup_toggle_compact_chat(window);
+    ui::setup_quick_switcher(window, state, network, rt_handle);
     ui::setup_toggle_neural_noise_suppression(window, audio, rt_handle);
     ui::setup_toggle_echo_cancellation(window, audio, rt_handle);
     ui::setup_noise_suppression(window, audio, rt_handle);
+    ui::setup_login(window, network, rt_handle);
+    ui::setup_create_account(window, network, rt_handle);
+    ui::setup_logout(window, network, rt_handle);
 
     // Chat
     chat::setup_open_direct_message(window, network, rt_handle);

@@ -85,6 +85,17 @@ pub fn auto_save_settings(
             peer_volumes: existing.peer_volumes,
             user_notes: existing.user_notes,
             saved_servers: existing.saved_servers,
+            join_leave_sounds: existing.join_leave_sounds,
+            show_spoilers: existing.show_spoilers,
+            compact_chat: existing.compact_chat,
+            blocked_users: existing.blocked_users,
+            status_preset: existing.status_preset,
+            idle_timeout_mins: existing.idle_timeout_mins,
+            channel_notification_overrides: existing.channel_notification_overrides,
+            ducking_amount: existing.ducking_amount,
+            ducking_threshold: existing.ducking_threshold,
+            soundboard_clips: existing.soundboard_clips,
+            account_email: existing.account_email,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
@@ -206,6 +217,25 @@ pub fn save_auth_token_async(token: String) {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.auth_token = Some(token);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn save_account_email_async(email: String) {
+    std::thread::spawn(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        cfg.account_email = Some(email);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn clear_auth_token_async() {
+    std::thread::spawn(|| {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        cfg.auth_token = None;
+        cfg.account_email = None;
         let _ = config_store::save_config(&cfg);
     });
 }
