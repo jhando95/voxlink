@@ -423,8 +423,11 @@ pub async fn handle_send_text_message(
         s.alloc_message_id()
     };
 
+    // Use stable identity so the sender can edit/delete after reconnecting
+    let stable_sender = super::space::stable_peer_id(state, peer_id).await;
+
     let msg_data = shared_types::TextMessageData {
-        sender_id: peer_id.to_string(),
+        sender_id: stable_sender,
         sender_name: sender_name.clone(),
         content: content.clone(),
         timestamp: std::time::SystemTime::now()
@@ -463,7 +466,7 @@ pub async fn handle_send_text_message(
         let db = db.clone();
         let mid = message_id.clone();
         let cid = channel_id.clone();
-        let sid = peer_id.to_string();
+        let sid = msg_data.sender_id.clone();
         let sname = sender_name;
         let ts = msg_data.timestamp;
         let cont = content;
@@ -657,13 +660,16 @@ pub async fn handle_edit_text_message(
     };
     let Some(space_id) = space_id else { return };
 
+    // Use stable identity for ownership check (survives reconnection)
+    let editor_identity = super::space::stable_peer_id(state, peer_id).await;
+
     // Verify ownership and update in-memory
     let ok = {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(msg) = msgs.iter_mut().find(|m| m.message_id == message_id) {
-                    if msg.sender_id == peer_id {
+                    if msg.sender_id == editor_identity {
                         msg.content = new_content.clone();
                         msg.edited = true;
                         true
@@ -806,11 +812,11 @@ pub async fn handle_pin_message(
     let ok = {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
-            let is_owner = space.owner_id == peer_id || space.owner_id == owner_identity;
+            let is_owner = space.owner_id == owner_identity;
             if let Some(messages) = space.text_messages.get_mut(&channel_id) {
                 if let Some(message) = messages.iter_mut().find(|msg| msg.message_id == message_id)
                 {
-                    if message.sender_id == peer_id || is_owner {
+                    if message.sender_id == owner_identity || is_owner {
                         message.pinned = pinned;
                         true
                     } else {
@@ -871,10 +877,10 @@ pub async fn handle_delete_text_message(
     let ok = {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
-            let is_owner = space.owner_id == peer_id || space.owner_id == owner_identity;
+            let is_owner = space.owner_id == owner_identity;
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(pos) = msgs.iter().position(|m| m.message_id == message_id) {
-                    if msgs[pos].sender_id == peer_id || is_owner {
+                    if msgs[pos].sender_id == owner_identity || is_owner {
                         msgs.remove(pos);
                         true
                     } else {

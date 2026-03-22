@@ -150,6 +150,7 @@ pub fn setup_leave_room(
         if w.get_current_view() == ui_shell::view_to_index(AppView::Room) {
             w.set_current_view(ui_shell::view_to_index(AppView::Home));
         }
+        ui_shell::set_participants(&w, &[]);
         w.set_room_code(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);

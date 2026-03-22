@@ -1700,7 +1700,7 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
             let mut s = state.write().await;
             if let Some(room) = s.rooms.get_mut(code) {
                 room.peer_ids.retain(|pid| pid != peer_id);
-                if room.peer_ids.is_empty() {
+                if room.peer_ids.is_empty() && !code.starts_with("sp:") {
                     s.rooms.remove(code);
                     log::info!("Room {code} removed (empty)");
                 }
@@ -1712,6 +1712,22 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
         };
         for peer in remaining {
             send_to(&peer, &notify).await;
+        }
+
+        // For space channels, broadcast MemberChannelChanged so space members
+        // see the peer left the voice channel (peer counts update correctly)
+        if code.starts_with("sp:") {
+            if let Some(peer) = state.read().await.peers.get(peer_id) {
+                peer.set_room_code(None).await;
+                if let Some(sid) = peer.space_id.lock().await.as_ref() {
+                    let notify = SignalMessage::MemberChannelChanged {
+                        member_id: peer_id.to_string(),
+                        channel_id: None,
+                        channel_name: None,
+                    };
+                    handlers::broadcast_to_space(state, sid, peer_id, &notify).await;
+                }
+            }
         }
     }
 

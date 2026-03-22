@@ -153,6 +153,12 @@ impl NetworkClient {
     }
 
     pub async fn try_reconnect(&mut self) -> Result<bool> {
+        // Clear stale UDP state before reconnecting — old token is invalid
+        self.udp_active
+            .store(false, std::sync::atomic::Ordering::Release);
+        *self.udp_socket.lock().await = None;
+        *self.udp_token.lock().await = None;
+
         let url = self.server_url.lock().await.clone();
         match url {
             Some(u) => {

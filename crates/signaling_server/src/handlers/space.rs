@@ -723,7 +723,7 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
         let is_owner = s
             .spaces
             .get(&space_id)
-            .map(|space| space.owner_id == peer_id || space.owner_id == owner_identity)
+            .map(|space| space.owner_id == owner_identity)
             .unwrap_or(false);
         if !is_owner {
             drop(s);

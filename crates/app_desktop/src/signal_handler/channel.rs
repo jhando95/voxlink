@@ -188,6 +188,7 @@ pub fn handle_channel_left(
     if w.get_current_view() == ui_shell::view_to_index(AppView::Room) {
         w.set_current_view(ui_shell::view_to_index(AppView::Space));
     }
+    ui_shell::set_participants(w, &[]);
     w.set_room_code(slint::SharedString::default());
     w.set_active_channel_id(slint::SharedString::default());
     w.set_is_muted(false);
