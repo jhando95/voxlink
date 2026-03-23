@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.8.0 — Social Features & Account System
+
+### New — 22 Features
+- **Email account system** — Create account, login, logout, change password with salted SHA-256 hashing. Token rotation on login, persistent email in config.
+- **Join/leave notification sounds** — Configurable rising/descending two-note chimes when peers enter or leave a room.
+- **Channel categories** — Organize channels under bold section headers with `SetChannelCategory` support.
+- **Unread indicators** — Badge counts on channels (mention count) and dot badges on space cards in home view.
+- **Status presets** — Online, Idle, DND, Invisible. Invisible hides from member/friend lists. DND suppresses notifications.
+- **Idle auto-status** — Automatically sets status to Idle after 5 minutes of keyboard inactivity, restores on input.
+- **@Mentions with notifications** — Extract `@username` from messages, send `MentionNotification` to mentioned users with sound.
+- **Block/unblock users** — Server-side `user_blocks` table, client-side message filtering, block/unblock SignalMessage variants.
+- **Ban management UI** — `ListBans`, `UnbanMember`, ban list view in space settings.
+- **Group DMs** — Multi-user direct message conversations with `group_conversations`, `group_members`, `group_messages` tables.
+- **Invite expiration & max uses** — `invite_expires_at`, `invite_max_uses`, `invite_uses` columns with server-side validation.
+- **Per-channel notification settings** — Override notifications per channel: all / mentions only / none.
+- **Quick switcher (Ctrl+K)** — Fuzzy search overlay for channels and DMs with keyboard navigation.
+- **User avatars** — Color-coded circles with initials, replacing inline rendering across all views.
+- **Message threads** — Reply chains via `GetThread` / `ThreadMessages`, leveraging existing `reply_to_message_id`.
+- **Volume ducking** — Auto-lower non-speaking peers when someone is talking. Configurable amount and threshold.
+- **File attachments** — `attachments` table with 1MB cap, attachment metadata on `TextMessageData`.
+- **Soundboard** — `SoundboardClip` with pre-decoded WAV samples, mixed into capture stream.
+- **Server nicknames** — `space_nicknames` table, `SetNickname` / `NicknameChanged` protocol.
+- **Message forwarding** — `ForwardMessage` copies messages between channels with "Forwarded from" header.
+- **Spoiler tags** — `||text||` syntax detected in `render_markdown()`.
+- **Compact chat density** — Toggle for reduced padding/font in chat messages.
+
+### Improved
+- **Performance** — Idle detection eliminated 40 heap allocs/sec; volume ducking uses single-pass atomic caching; ring buffer `peek_energy` uses contiguous fast path.
+- **Test coverage** — 338 tests across all crates (up from 316).
+- **Installer** — `build-portable.ps1` now reads version dynamically from Cargo.toml. `voxlink.iss` bumped to 0.8.0.
+
+### New DB Tables
+- `user_blocks`, `group_conversations`, `group_members`, `group_messages`, `attachments`, `space_nicknames`
+
+### New Config Fields
+- `join_leave_sounds`, `show_spoilers`, `compact_chat`, `blocked_users`, `status_preset`, `idle_timeout_mins`, `channel_notification_overrides`, `ducking_amount`, `ducking_threshold`, `soundboard_clips`, `account_email`
+
+### New Dependencies
+- `sha2 0.10` — Password hashing for account system
+
 ## v0.7.0 — Reliability & Quality
 
 ### New

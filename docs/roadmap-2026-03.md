@@ -1,286 +1,148 @@
-# Voxlink Roadmap - March 2026
+# Voxlink Roadmap — March 2026
 
-## Current posture
+## Current posture (v0.8.0)
 
-Voxlink already has a good small-group voice foundation:
+Voxlink has a strong feature set covering voice, text, social, and moderation:
 
-- Bounded client media queues keep audio and screen traffic from growing without limit.
-- The server already has connection and signaling rate limits.
-- There is a real integration and live stress test surface.
-- Spaces, channels, direct messages, screen share, moderation, and friend presence exist.
+**Done:**
+- Voice: rooms, spaces, channels, PTT, mute/deafen, per-peer volume, adaptive bitrate, UDP transport, neural noise suppression, volume ducking, soundboard, priority speaker, whisper
+- Social: friends, DMs, group DMs, @mentions, status presets (online/idle/DND/invisible), idle auto-status, block/unblock, server nicknames
+- Chat: send/edit/delete, reactions, pins, search, threads, forwarding, attachments (1MB), spoiler tags, compact mode, markdown
+- Account system: email/password registration, login, logout, change password (salted SHA-256)
+- Moderation: kick/ban/timeout/server-mute, roles (owner/admin/mod/member), ban management UI, audit log
+- Organization: channel categories, quick switcher (Ctrl+K), unread indicators, per-channel notification settings, invite expiration/max-uses
+- Desktop: screen share, global hotkeys, 7 theme presets, auto-update, system tray, perf panel
+- 338 tests, zero warnings, deployed on Oracle Cloud
 
-The main gaps are not "basic Discord parity" anymore. The biggest needs are:
+**The main gaps are now:**
+1. Security hardening (TLS, stronger auth, abuse resistance)
+2. Network architecture improvements (separate media lanes, protocol versioning)
+3. Quality-of-life polish and edge case handling
+4. Safe media sharing ("Listen Together")
 
-1. security hardening
-2. network and media isolation
-3. permissions and admin tooling
-4. richer collaboration features
-5. a safe media-sharing feature that does not depend on scraping or ad-skipping YouTube
-
-## What the code says now
-
-- Voice and screen media are still carried over the WebSocket client path, with bounded queues on the desktop side.
-- The server is still optimized for small rooms today: `MAX_ROOM_PEERS` is `10`.
-- TLS is optional instead of being required by default.
-- Auth is lightweight token restore, but token generation is not cryptographically strong enough for a public service.
-- There is already a live stress harness and multi-client integration coverage, so the next step is longer soak and chaos coverage, not starting from zero.
-
-## Phase 0 - Security and operational hardening
+## Phase 0 — Security & Operational Hardening
 
 Do this before major new user-facing scope.
 
 ### 0.1 Transport security
+- Make TLS the default for any non-localhost bind
+- Allow plain `ws://` only for explicit local development
+- Add a startup failure if the server binds publicly without certs
+- Certificate rotation and deployment docs for renewal
 
-- Make TLS the default for any non-localhost bind.
-- Allow plain `ws://` only for explicit local development.
-- Add a startup failure if the server binds publicly without certs.
-- Add certificate rotation and basic deployment docs for renewal.
-
-### 0.2 Identity and session security
-
-- Replace the current token generator with `rand::rngs::OsRng` or equivalent cryptographic randomness.
-- Add token rotation, revoke-on-logout, and revoke-all-sessions.
-- Store a session creation timestamp and last-seen timestamp.
-- Add a separate stable `user_id` allocator that is not derived from transient peer IDs.
+### 0.2 Auth hardening
+- ~~Replace token generator with cryptographic randomness~~ (DONE — uses OsRng)
+- ~~Token rotation on login~~ (DONE)
+- ~~Token revoke on logout~~ (DONE)
+- ~~Email/password accounts~~ (DONE)
+- Upgrade from SHA-256 to argon2 or bcrypt for password hashing (sha2 is fast but not ideal for passwords)
+- Add rate limiting specifically for login/registration attempts
+- Add "forgot password" flow (requires email sending capability)
+- Add revoke-all-sessions endpoint
 
 ### 0.3 Abuse resistance
+- Split rate limits by message type (auth, chat, DM, room control, audio)
+- Add caps for: watched friend count, outbound DM burst, channel create/delete churn
+- Add temporary bans/cooldowns for repeated abuse from same IP or token
+- Add message content length limits and spam detection
 
-- Split rate limits by message type:
-  - auth
-  - chat
-  - DM
-  - room control
-  - screen frames
-  - audio frames
-- Add caps for:
-  - watched friend count
-  - outbound DM burst
-  - channel create/delete churn
-  - room/space create churn
-- Add explicit temporary bans or cooldowns for repeated abuse from the same IP or token.
-
-### 0.4 Permissions and auditability
-
-- Add server-side roles:
-  - owner
-  - admin
-  - moderator
-  - member
-- Move destructive controls behind server-checked permissions, not UI-only visibility.
-- Add an audit log for:
-  - space delete
-  - channel create/delete
-  - kick
-  - ban
-  - role changes
-  - message pin/delete/edit moderation events
+### 0.4 Permissions hardening
+- ~~Server-side roles (owner/admin/mod/member)~~ (DONE)
+- ~~Audit log~~ (DONE)
+- Move ALL destructive controls behind server-checked permissions (some may still be UI-only)
+- Channel permission matrix (per-channel role overrides)
+- Locked voice/text channels
 
 ### 0.5 Ops and observability
+- ~~Prometheus-style metrics endpoint~~ (DONE)
+- Add structured logging (JSON format option)
+- Track: DB operation latency, rate-limit hits, auth failures by IP
+- Add panic/crash capture for the desktop app to local logs
 
-- Add structured logs.
-- Add Prometheus-style metrics or an internal metrics endpoint.
-- Track:
-  - active connections
-  - active rooms
-  - active spaces
-  - reconnect rate
-  - average ping
-  - dropped audio frames
-  - screen share active count
-  - DB operation latency
-  - rate-limit hits
-- Add panic/crash capture for the desktop app, at least to local logs.
+## Phase 1 — Quality of Life & Polish
 
-## Phase 1 - Product gaps that matter more than feature bloat
-
-### 1.1 Permissions and moderation UX
-
-- Role assignment UI.
-- Channel permission matrix.
-- Locked text channels.
-- Locked voice channels.
-- Ban list management.
-- Audit log viewer.
+### 1.1 Account UX
+- Password masking in login UI (requires VxInput input-type support or custom masked input)
+- "Remember me" / auto-login flow
+- Account settings page (change email, change display name, delete account)
+- Email verification (requires SMTP integration)
 
 ### 1.2 Chat completeness
+- File/image preview in chat (currently just download card)
+- Drag-and-drop file upload
+- Unread jump-to-first-new separator
+- Message search across all channels (currently per-channel)
+- Code block syntax highlighting in markdown
 
-- Message search.
-- File and image attachments.
-- Drag and drop paste.
-- Pinned messages panel.
-- Unread jump-to-first-new.
-- Mention notifications with user-level toggles.
+### 1.3 Voice quality UX
+- Call-side output meter per peer
+- Packet-loss and jitter trend graph in perf panel
+- Device fallback explanation when hardware disappears
+- Better screen-share viewer controls (zoom, fit, pop-out, pause when hidden)
 
-### 1.3 Social and session UX
+### 1.4 Desktop polish
+- System tray context menu (mute/deafen/disconnect)
+- Minimize to tray on close (currently just a setting flag)
+- Keyboard shortcuts help overlay
+- Onboarding diagnostics (mic blocked, wrong device, network unstable)
 
-- Group DMs or private multi-user calls.
-- Better invite deep links.
-- Presence privacy toggles.
-- Richer onboarding diagnostics:
-  - mic blocked
-  - wrong output device
-  - network unstable
-  - TLS/server trust issue
-
-### 1.4 Call quality UX
-
-- Optional call-side output meter.
-- Packet-loss and jitter trend view.
-- Device fallback explanation when hardware disappears.
-- Better screen-share viewer controls:
-  - zoom
-  - fit
-  - pop-out
-  - pause rendering when hidden
-
-## Phase 2 - Networking and media architecture
-
-This is the main technical step if Voxlink grows beyond small-group rooms.
+## Phase 2 — Network & Media Architecture
 
 ### 2.1 Separate media lanes
+- Move screen share off the WebSocket path
+- Keep voice isolated from screen-share spikes
+- Bounded latest-only queues for screen data
 
-- Move screen share off the current shared WebSocket media lane.
-- Keep voice isolated from screen-share spikes.
-- Keep bounded latest-only queues for screen data.
-
-### 2.2 Voice transport upgrade path
-
-- Keep the current WebSocket relay for simple self-hosting and small groups.
-- Add an optional higher-performance voice path for larger rooms:
-  - QUIC or UDP-based relay
-  - or a WebRTC path if NAT traversal and browser support ever matter
-- Gate this behind capabilities negotiation so old clients still work.
+### 2.2 Voice transport upgrade
+- Keep WebSocket relay for simple self-hosting
+- Add optional QUIC or WebRTC path for larger rooms
+- Gate behind capabilities negotiation so old clients still work
 
 ### 2.3 Protocol versioning
+- Add protocol version and feature-capability negotiation at connect time
+- Refuse incompatible clients cleanly
+- Make migrations explicit for screen share transport, attachment support, permission model
 
-- Add protocol version and feature-capability negotiation at connect/auth time.
-- Refuse incompatible clients cleanly.
-- Make migrations explicit for:
-  - screen share transport
-  - attachment support
-  - permission model
-  - future media features
+### 2.4 Scale testing
+- 30-minute and 2-hour soak suites
+- Chaos tests (packet drop, reconnect storms, DB locked, rapid join/leave)
+- Windows/macOS resource profiling for idle, active chat, voice call, screen share
 
-### 2.4 Reliability and scale testing
+## Phase 3 — Safe Media Sharing
 
-- Add 30-minute and 2-hour soak suites.
-- Add chaos tests:
-  - packet drop
-  - reconnect storms
-  - DB locked or slow
-  - screen-share start/stop churn
-  - rapid join/leave across several rooms
-- Add Windows resource profiling for:
-  - idle
-  - active chat
-  - voice call
-  - screen share
-  - widget open
+### Listen Together (recommended first)
+- User opens media locally on their machine
+- Voxlink captures local app/system audio with explicit consent
+- Audio streamed into room as a "media send" path
+- Separate media volume slider for listeners
+- No server-side scraping, downloading, or ad skipping
 
-## Phase 3 - Safe media and "music bot" direction
-
-### What not to build
-
-Do not build a server-side "YouTube without ads" bot.
-
-Reasons:
-
-- It creates legal and platform-policy risk.
-- It encourages a scraper/downloader design that will become a maintenance problem.
-- It adds abuse surface and likely increases compute, bandwidth, and moderation burden.
-
-### What to build instead
-
-Build one of these two features:
-
-#### Option A - Media queue bot
-
-A room-scoped media player that only accepts:
-
-- uploaded local audio files
-- explicitly supported direct audio stream URLs
-- licensed/public web radio or HLS audio sources
-
-MVP controls:
-
-- play
-- pause
-- skip
-- stop
-- queue
-- volume
-- now playing
-
-Guardrails:
-
-- one bot per room
-- bounded queue length
-- max media duration or file size
-- supported MIME types only
-- no arbitrary website extraction
-
-#### Option B - Listen Together
-
-This is the better fit for Voxlink.
-
-- A user opens media locally on their own machine.
-- Voxlink captures that local app/system audio with explicit consent.
-- The audio is streamed into the room as a dedicated "media send" path.
-- No server-side scraping, downloading, or ad skipping.
-
-This can later pair with:
-
-- browser-source sharing
-- local system audio share
-- a "listen along" mode with a separate media volume slider
-
-### Recommendation
-
-Do `Listen Together` before a bot.
-
-Why:
-
-- lower legal and operational risk
-- better fit with the current desktop-native architecture
-- no remote media ingestion pipeline required
-- avoids becoming a content-hosting or scraping service
-
-## Quality bar changes
-
-Before large new features land, raise the engineering floor:
-
-- Clippy clean on core crates.
-- Feature flags for experimental media features.
-- Every new protocol feature needs:
-  - shared type round-trip tests
-  - server integration coverage
-  - reconnect coverage
-  - persistence coverage if applicable
-- Add one repeatable Windows profiling script and one Linux soak script.
+### Media Queue (optional, after Listen Together)
+- Room-scoped player accepting uploaded local audio files
+- Licensed/public web radio or HLS audio sources only
+- play/pause/skip/stop/queue/volume/now-playing controls
+- One bot per room, bounded queue, max duration/file size
 
 ## Recommended implementation order
 
-1. TLS-by-default, cryptographic tokens, session revoke, metrics endpoint.
-2. Roles, permissions, audit log, and channel permission matrix.
-3. Attachments, search, and moderation UX polish.
-4. Separate screen-share transport from voice.
-5. Long soak and chaos testing.
-6. `Listen Together` local media sharing.
-7. Optional room media queue for local files and licensed streams.
+1. **Auth hardening** — argon2, login rate limits, revoke-all-sessions
+2. **TLS by default** — required for public binds
+3. **Permissions hardening** — channel permission matrix, locked channels
+4. **Account UX** — password masking, auto-login, account settings
+5. **Chat polish** — file preview, drag-drop, unread separator
+6. **Separate screen-share transport** from voice
+7. **Long soak and chaos testing**
+8. **Listen Together** local media sharing
 
 ## Concrete next milestone
 
-If work starts now, the best next milestone is:
-
-`Security hardening + permissions foundation`
+**v0.9.0 — Security & Auth Hardening**
 
 Scope:
-
-- TLS required for public binds
-- secure token generation and rotation
-- owner/admin/mod/member roles
-- server-side permission checks for all destructive actions
-- audit log persistence and UI
-- metrics endpoint
-
-That gives Voxlink a safer base for every feature that comes after it, including media features.
+- Upgrade password hashing to argon2
+- Login/registration rate limiting (per IP)
+- TLS required for public binds (plain WS only for localhost/dev)
+- Channel permission matrix
+- Password masking in login UI
+- Auto-login flow (skip login view if valid token exists)
+- Revoke-all-sessions endpoint

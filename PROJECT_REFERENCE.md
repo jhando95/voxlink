@@ -32,8 +32,9 @@ sudo systemctl stop voxlink        # Stop
 - **UI**: Slint 1.15 (native desktop)
 - **Audio**: cpal 0.15, audiopus (Opus codec), 48kHz mono, 20ms frames
 - **Networking**: tokio 1.50, tungstenite (WebSocket), tokio UDP
-- **Version**: 0.7.0
-- **Tests**: 243 (135 unit + 98 integration + 10 live stress)
+- **Auth**: sha2 (salted SHA-256 password hashing)
+- **Version**: 0.8.0
+- **Tests**: 338 (unit + integration + stress)
 - **Warnings**: 0
 
 ## Workspace Crates
@@ -42,41 +43,43 @@ sudo systemctl stop voxlink        # Stop
 |-------|---------|
 | `app_desktop` | Main binary — UI callbacks, signal handling, tick loop, screen share |
 | `ui_shell` | Slint UI components, data conversion, member widget |
-| `audio_core` | Capture/playback, Opus encode/decode, DSP chain, jitter buffer |
+| `audio_core` | Capture/playback, Opus encode/decode, DSP chain, jitter buffer, soundboard |
 | `voice_engine` | Mute/deafen/PTT state machine |
 | `net_control` | WebSocket + UDP client, reconnect logic |
 | `media_transport` | Audio frame routing between network and audio engine |
 | `perf_metrics` | CPU/memory/audio metrics collection |
-| `config_store` | JSON config persistence (devices, keybinds, volumes, notes) |
-| `shared_types` | SignalMessage protocol, AppState, all shared data types |
-| `signaling_server` | WebSocket + UDP relay server, SQLite persistence, room/space management |
-| `integration_tests` | 98 server tests + 10 live stress tests |
+| `config_store` | JSON config persistence (devices, keybinds, volumes, notes, account) |
+| `shared_types` | SignalMessage protocol (~70 variants), AppState, all shared data types |
+| `signaling_server` | WebSocket + UDP relay server, SQLite persistence, room/space/auth management |
+| `integration_tests` | Server integration tests + live stress tests |
 
 ## Architecture
 
-- **Audio path**: cpal capture → noise gate → AGC → HPF → Opus encode → UDP/WebSocket → Opus decode → per-peer AGC → SPSC ring buffer → cpal playback
+- **Audio path**: cpal capture → HPF → noise gate → AGC → de-esser → neural denoise → Opus encode (adaptive bitrate) → UDP/WebSocket → Opus decode (PLC/FEC) → jitter buffer → per-peer AGC → volume ducking → soft clip → cpal playback
 - **State**: `Rc<RefCell>` on UI thread, `Arc<TokioMutex>` for async, `AtomicBool/U32/U64` for cross-thread flags
 - **Networking**: WebSocket signaling, server-relayed UDP audio with 8-byte session tokens
 - **UI loop**: Slint timer at 40Hz (25ms tick) for polling events
 - **Async runtime**: Tokio (2 threads) for networking
+- **Auth**: Email/password accounts with salted SHA-256, token-based sessions (64-char hex, 90-day expiry, rotation on login)
+- **Persistence**: SQLite WAL mode — users, spaces, channels, messages, bans, blocks, nicknames, group DMs, attachments
 
 ## Key Files
 
 | File | What's in it |
 |------|-------------|
 | `crates/app_desktop/src/main.rs` | App entry, window setup, runtime init |
-| `crates/app_desktop/src/callbacks/` | All UI callback wiring (space, room, channel, chat, controls) |
+| `crates/app_desktop/src/callbacks/` | All UI callback wiring (space, room, channel, chat, controls, auth) |
 | `crates/app_desktop/src/signal_handler/mod.rs` | Signal dispatch from server messages |
 | `crates/signaling_server/src/main.rs` | Server entry, WebSocket handler, audio relay, signal routing |
-| `crates/signaling_server/src/handlers/` | Channel, room, space, chat, auth handlers |
-| `crates/signaling_server/src/persistence.rs` | SQLite schema and queries |
-| `crates/shared_types/src/lib.rs` | SignalMessage enum (50+ variants), all shared structs |
+| `crates/signaling_server/src/handlers/` | Auth, channel, room, space, chat, friends, moderation, presence handlers |
+| `crates/signaling_server/src/persistence.rs` | SQLite schema, migrations, and queries |
+| `crates/shared_types/src/lib.rs` | SignalMessage enum (~70 variants), all shared structs |
 | `crates/ui_shell/ui/main.slint` | Root UI component, all properties and callbacks |
 | `crates/ui_shell/ui/theme.slint` | Data structs, theme colors, design tokens |
 | `crates/ui_shell/ui/views/` | Home, Room, Space, Chat, Settings, System views |
-| `crates/audio_core/src/lib.rs` | AudioEngine — capture, playback, peer buffers |
+| `crates/audio_core/src/lib.rs` | AudioEngine — capture, playback, peer buffers, ducking |
 | `crates/audio_core/src/codec.rs` | DSP: noise gate, AGC, HPF, comfort noise, soft clip |
-| `crates/audio_core/src/buffers.rs` | SPSC ring buffers, jitter buffer, capture ring |
+| `crates/audio_core/src/buffers.rs` | SPSC ring buffers, jitter buffer, capture ring, peek_energy |
 
 ## Branding
 
@@ -90,9 +93,10 @@ sudo systemctl stop voxlink        # Stop
 
 | Platform | Script | Output |
 |----------|--------|--------|
-| Windows | `installer/voxlink.iss` (Inno Setup) | `Voxlink-Setup-0.7.0.exe` |
-| macOS | `installer/build-macos.sh` | `.dmg` |
-| Linux | `installer/build-linux.sh` | `.deb` + tarball |
+| Windows | `installer/voxlink.iss` (Inno Setup) | `Voxlink-Setup-0.8.0.exe` |
+| Windows | `installer/build-portable.ps1` | `Voxlink-0.8.0-portable.zip` |
+| macOS | `installer/build-macos.sh` | `Voxlink-0.8.0-macos.dmg` |
+| Linux | `installer/build-linux.sh` | `.deb` + `.tar.gz` |
 
 ## Build & Test
 
@@ -105,22 +109,66 @@ cargo build --release -p app_desktop           # Build client
 cargo build --release -p signaling_server      # Build server
 ```
 
-## Feature Summary (v0.7.0)
+## Feature Summary (v0.8.0)
 
-- Create/join rooms by code, spaces with invite codes
-- Open mic + push-to-talk, mute/deafen, per-peer volume
-- Voice channels + text channels in spaces
-- Friends, presence, DMs, friend requests
-- Chat: send/edit/delete/react/pin/search, typing indicators, markdown
-- Moderation: kick/ban/timeout/server-mute, role management (Owner/Admin/Mod/Member)
+**Voice & Audio**
+- Create/join rooms by code, open mic + push-to-talk, mute/deafen, per-peer volume
+- UDP audio transport with WebSocket fallback, adaptive bitrate
+- Volume ducking, soundboard, priority speaker, whisper/private voice
+- Neural noise suppression, auto-calibrating noise gate, AGC, de-esser
+- Join/leave notification sounds
+
+**Spaces & Channels**
+- Spaces with invite codes (expiration + max uses)
+- Voice channels + text channels, channel categories
+- Channel user limits, slow mode, status text
+- Per-channel notification settings
+- Quick switcher (Ctrl+K)
+
+**Social**
+- Email account system (create, login, logout, change password)
+- Friends, presence, DMs, group DMs, friend requests
+- Status presets (Online/Idle/DND/Invisible), idle auto-status
+- @Mentions with notifications, unread indicators
+- Block/unblock users, server nicknames
+
+**Chat**
+- Send/edit/delete/react/pin/search, typing indicators, markdown
+- Message threads (reply chains), message forwarding
+- Spoiler tags, compact chat density
+- File attachments (1MB cap)
+
+**Moderation**
+- Kick/ban/timeout/server-mute, role management (Owner/Admin/Mod/Member)
+- Ban management UI with unban
+- Audit log, user notes (local-only)
+
+**Desktop**
 - Screen share with adaptive quality
-- Priority speaker, whisper/private voice
-- Channel user limits, slow mode, categories, status text
-- User notes (local-only)
-- UDP audio transport with WebSocket fallback
-- Auto-reconnect, device hotplug recovery
-- Performance panel with audio metrics
 - Global hotkeys (PTT, mute, deafen)
 - Desktop notifications, system tray
-- Theme presets (Default, Party, Space, Retro, Amber, Noir, Arctic)
-- Auto-update check
+- 7 theme presets, dark/light mode
+- Auto-reconnect, device hotplug recovery
+- Performance panel with audio metrics
+- Auto-update checker
+
+## DB Tables
+
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts (id, token, display_name, email, password_hash, timestamps) |
+| `spaces` | Spaces (id, name, invite_code, owner, invite settings) |
+| `channels` | Channels within spaces (voice or text, categories, limits) |
+| `messages` | Chat messages (content, sender, reactions, pins, replies, forwarding) |
+| `bans` | Space bans |
+| `space_roles` | Role assignments (owner/admin/mod/member) |
+| `audit_log` | Moderation actions |
+| `friend_requests` | Pending friend requests |
+| `friendships` | Confirmed friendships |
+| `direct_messages` | 1:1 DM history |
+| `user_blocks` | Block relationships |
+| `group_conversations` | Group DM metadata |
+| `group_members` | Group DM membership |
+| `group_messages` | Group DM message history |
+| `attachments` | File attachment blobs (1MB cap) |
+| `space_nicknames` | Per-space display name overrides |
