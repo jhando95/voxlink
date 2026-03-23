@@ -84,6 +84,7 @@ pub async fn handle_create_channel(
             category: String::new(),
             status: String::new(),
             slow_mode_secs: 0,
+            min_role: shared_types::SpaceRole::Member,
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -352,10 +353,10 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
             .channels
             .iter()
             .find(|ch| ch.id == channel_id)
-            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type, ch.voice_quality))
+            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type, ch.voice_quality, ch.min_role))
     });
 
-    let Some((room_key, channel_name, ch_type, voice_quality)) = channel_data else {
+    let Some((room_key, channel_name, ch_type, voice_quality, min_role)) = channel_data else {
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
             send_to(
@@ -368,6 +369,38 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         }
         return;
     };
+
+    // Check channel permission (min_role)
+    if min_role != shared_types::SpaceRole::Member {
+        let user_role = {
+            let peer = s.peers.get(peer_id);
+            if let Some(peer) = peer {
+                let user_id = peer.user_id.lock().await.clone();
+                if let Some(uid) = &user_id {
+                    s.spaces.get(&space_id)
+                        .and_then(|sp| sp.member_roles.get(uid).copied())
+                        .unwrap_or(shared_types::SpaceRole::Member)
+                } else {
+                    shared_types::SpaceRole::Member
+                }
+            } else {
+                shared_types::SpaceRole::Member
+            }
+        };
+        if !user_role.has_at_least(min_role) {
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                send_to(
+                    &peer,
+                    &SignalMessage::Error {
+                        message: "You don't have permission to access this channel".into(),
+                    },
+                )
+                .await;
+            }
+            return;
+        }
+    }
 
     // Check user limit
     if ch_type == ChannelType::Voice {

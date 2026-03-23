@@ -419,6 +419,7 @@ async fn main() {
                         category: String::new(),
                         status: String::new(),
                         slow_mode_secs: 0,
+                        min_role: shared_types::SpaceRole::Member,
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -1227,6 +1228,15 @@ async fn handle_signal(
             handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
                 .await;
         }
+        SignalMessage::SetChannelPermissions { channel_id, min_role } => {
+            let role = match min_role.to_lowercase().as_str() {
+                "owner" => shared_types::SpaceRole::Owner,
+                "admin" => shared_types::SpaceRole::Admin,
+                "moderator" | "mod" => shared_types::SpaceRole::Moderator,
+                _ => shared_types::SpaceRole::Member,
+            };
+            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
+        }
         SignalMessage::SetPrioritySpeaker { peer_id: target_id, enabled } => {
             handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
         }
@@ -1298,6 +1308,9 @@ async fn handle_signal(
         }
         SignalMessage::ChangePassword { current_password, new_password } => {
             handlers::auth::handle_change_password(state, peer_id, current_password, new_password, db).await;
+        }
+        SignalMessage::RevokeAllSessions => {
+            handlers::auth::handle_revoke_all_sessions(state, peer_id, db).await;
         }
         _ => {}
     }
@@ -1996,6 +2009,7 @@ enum ChannelSetting {
     SlowMode(u32),
     Category(String),
     Status(String),
+    MinRole(shared_types::SpaceRole),
 }
 
 async fn handle_channel_setting(
@@ -2048,6 +2062,19 @@ async fn handle_channel_setting(
                 SignalMessage::ChannelStatusChanged {
                     channel_id: channel_id.clone(),
                     status: channel.status.clone(),
+                }
+            }
+            ChannelSetting::MinRole(role) => {
+                channel.min_role = role;
+                let role_str = match role {
+                    shared_types::SpaceRole::Owner => "owner",
+                    shared_types::SpaceRole::Admin => "admin",
+                    shared_types::SpaceRole::Moderator => "moderator",
+                    shared_types::SpaceRole::Member => "member",
+                };
+                SignalMessage::ChannelPermissionsChanged {
+                    channel_id: channel_id.clone(),
+                    min_role: role_str.to_string(),
                 }
             }
         }

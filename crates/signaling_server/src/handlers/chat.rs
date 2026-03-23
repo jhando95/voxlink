@@ -351,6 +351,43 @@ pub async fn handle_send_text_message(
 
     clear_typing_for_peer(state, peer_id).await;
 
+    // Check channel permissions (min_role)
+    {
+        let s = state.read().await;
+        let min_role = s
+            .spaces
+            .get(&space_id)
+            .and_then(|sp| sp.channels.iter().find(|ch| ch.id == channel_id))
+            .map(|ch| ch.min_role)
+            .unwrap_or(shared_types::SpaceRole::Member);
+        if min_role != shared_types::SpaceRole::Member {
+            let user_role = if let Some(peer) = s.peers.get(peer_id) {
+                if let Some(uid) = peer.user_id.lock().await.as_deref() {
+                    s.spaces.get(&space_id)
+                        .and_then(|sp| sp.member_roles.get(uid).copied())
+                        .unwrap_or(shared_types::SpaceRole::Member)
+                } else {
+                    shared_types::SpaceRole::Member
+                }
+            } else {
+                shared_types::SpaceRole::Member
+            };
+            if !user_role.has_at_least(min_role) {
+                if let Some(peer) = s.peers.get(peer_id).cloned() {
+                    drop(s);
+                    send_to(
+                        &peer,
+                        &SignalMessage::Error {
+                            message: "You don't have permission to use this channel".into(),
+                        },
+                    )
+                    .await;
+                }
+                return;
+            }
+        }
+    }
+
     // Get sender name and verify channel is text type
     let sender_name = {
         let s = state.read().await;

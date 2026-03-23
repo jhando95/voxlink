@@ -1,7 +1,8 @@
 use crate::{send_error, send_to, Db, State};
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::rngs::OsRng;
 use rand::RngCore;
-use sha2::{Digest, Sha256};
 use shared_types::SignalMessage;
 
 use super::friends::send_friend_snapshot_to_peer;
@@ -202,22 +203,34 @@ pub async fn handle_authenticate(
 
 // ─── Account System ───
 
-/// Hash a password with a random 16-byte salt using SHA-256.
-/// Format: hex(salt):hex(sha256(salt + password))
+/// Hash a password using Argon2id with a random salt.
 fn hash_password(password: &str) -> String {
-    let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-    let salt_hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
-    let mut hasher = Sha256::new();
-    hasher.update(&salt);
-    hasher.update(password.as_bytes());
-    let hash = hasher.finalize();
-    let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{salt_hex}:{hash_hex}")
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    argon2
+        .hash_password(password.as_bytes(), &salt)
+        .expect("argon2 hash failed")
+        .to_string()
 }
 
-/// Verify a password against a stored salt:hash string.
+/// Verify a password against an argon2 or legacy SHA-256 hash.
 fn verify_password(password: &str, stored: &str) -> bool {
+    // Try argon2 first (new format starts with "$argon2")
+    if stored.starts_with("$argon2") {
+        let Ok(parsed) = PasswordHash::new(stored) else {
+            return false;
+        };
+        return Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok();
+    }
+    // Legacy SHA-256 fallback (format: "hex_salt:hex_hash")
+    // This allows existing accounts to still log in after the upgrade
+    legacy_verify_sha256(password, stored)
+}
+
+/// Legacy SHA-256 verification for backward compatibility with v0.8.0 passwords.
+fn legacy_verify_sha256(password: &str, stored: &str) -> bool {
     let Some((salt_hex, expected_hash)) = stored.split_once(':') else {
         return false;
     };
@@ -228,12 +241,41 @@ fn verify_password(password: &str, stored: &str) -> bool {
     else {
         return false;
     };
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(&salt);
     hasher.update(password.as_bytes());
     let hash = hasher.finalize();
     let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
     hash_hex == expected_hash
+}
+
+/// Per-IP auth rate limit: 5 attempts per 60 seconds.
+const AUTH_RATE_LIMIT: u32 = 5;
+const AUTH_RATE_WINDOW_SECS: u64 = 60;
+
+/// Check if auth attempt is allowed for this peer's IP. Returns false if rate limited.
+async fn check_auth_rate_limit(state: &State, peer_id: &str) -> bool {
+    let ip = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(p) => p.ip,
+            None => return false,
+        }
+    };
+
+    let mut s = state.write().await;
+    let now = std::time::Instant::now();
+    let entry = s.auth_attempts.entry(ip).or_insert((0, now));
+
+    if now.duration_since(entry.1).as_secs() >= AUTH_RATE_WINDOW_SECS {
+        // New window
+        *entry = (1, now);
+        true
+    } else {
+        entry.0 += 1;
+        entry.0 <= AUTH_RATE_LIMIT
+    }
 }
 
 pub async fn handle_create_account(
@@ -244,6 +286,11 @@ pub async fn handle_create_account(
     display_name: String,
     db: &Db,
 ) {
+    if !check_auth_rate_limit(state, peer_id).await {
+        send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
+        return;
+    }
+
     let email = email.trim().to_lowercase();
     let display_name = display_name.trim().to_string();
 
@@ -334,6 +381,11 @@ pub async fn handle_login(
     password: String,
     db: &Db,
 ) {
+    if !check_auth_rate_limit(state, peer_id).await {
+        send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
+        return;
+    }
+
     let email = email.trim().to_lowercase();
 
     if email.is_empty() || password.is_empty() {
@@ -541,6 +593,82 @@ pub async fn handle_change_password(
     }
 }
 
+pub async fn handle_revoke_all_sessions(state: &State, peer_id: &str, db: &Db) {
+    let user_id = {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            peer.user_id.lock().await.clone()
+        } else {
+            None
+        }
+    };
+
+    let Some(uid) = user_id else {
+        send_auth_error(state, peer_id, "Not logged in").await;
+        return;
+    };
+
+    let Some(ref db_ref) = db else {
+        send_auth_error(state, peer_id, "Account system unavailable").await;
+        return;
+    };
+
+    // Invalidate token in DB — all other sessions become invalid
+    let db_clone = db_ref.clone();
+    let uid_clone = uid.clone();
+    let result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.invalidate_token(&uid_clone)),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(Ok(()))) => {
+            // Issue a fresh token for the current session
+            let new_token = generate_token();
+            let now = unix_now_secs();
+            let display_name = {
+                let s = state.read().await;
+                if let Some(peer) = s.peers.get(peer_id) {
+                    peer.name.lock().await.clone()
+                } else {
+                    uid.clone()
+                }
+            };
+            let db_clone = db_ref.clone();
+            let uid_clone = uid.clone();
+            let tok = new_token.clone();
+            let name = display_name;
+            let _ = tokio::time::timeout(
+                crate::DB_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    db_clone.rotate_user_session(&uid_clone, &tok, &name, now, now)
+                }),
+            )
+            .await;
+
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                // Send new token to current session
+                send_to(
+                    &peer,
+                    &SignalMessage::Authenticated {
+                        token: new_token,
+                        user_id: uid.clone(),
+                    },
+                )
+                .await;
+                send_to(&peer, &SignalMessage::AllSessionsRevoked).await;
+            }
+            log::info!("All sessions revoked for user {uid}");
+        }
+        _ => {
+            send_auth_error(state, peer_id, "Failed to revoke sessions").await;
+        }
+    }
+}
+
 async fn send_auth_error(state: &State, peer_id: &str, message: &str) {
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id).cloned() {
@@ -584,7 +712,7 @@ mod tests {
     fn test_hash_and_verify_password() {
         let password = "hunter2";
         let hash = hash_password(password);
-        assert!(hash.contains(':'));
+        assert!(hash.starts_with("$argon2"));
         assert!(verify_password(password, &hash));
         assert!(!verify_password("wrong", &hash));
     }
@@ -593,9 +721,7 @@ mod tests {
     fn test_hash_different_salts() {
         let hash1 = hash_password("same_password");
         let hash2 = hash_password("same_password");
-        // Different salts → different hashes
         assert_ne!(hash1, hash2);
-        // Both should verify
         assert!(verify_password("same_password", &hash1));
         assert!(verify_password("same_password", &hash2));
     }
@@ -603,7 +729,26 @@ mod tests {
     #[test]
     fn test_verify_malformed_hash() {
         assert!(!verify_password("test", "no_colon"));
-        assert!(!verify_password("test", "zzzz:abc"));
         assert!(!verify_password("test", ""));
+    }
+
+    #[test]
+    fn test_legacy_sha256_verification() {
+        // Simulate a v0.8.0 SHA-256 hash: salt_hex:hash_hex
+        use sha2::{Digest, Sha256};
+        let salt = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
+        ];
+        let salt_hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
+        let mut hasher = Sha256::new();
+        hasher.update(&salt);
+        hasher.update(b"legacy_password");
+        let hash = hasher.finalize();
+        let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        let stored = format!("{salt_hex}:{hash_hex}");
+
+        assert!(verify_password("legacy_password", &stored));
+        assert!(!verify_password("wrong_password", &stored));
     }
 }

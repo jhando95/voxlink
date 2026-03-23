@@ -118,6 +118,8 @@ pub(crate) struct ChannelMeta {
     pub category: String,
     pub status: String,
     pub slow_mode_secs: u32,
+    /// Minimum role required to access this channel (default: Member)
+    pub min_role: shared_types::SpaceRole,
 }
 
 pub(crate) struct ServerState {
@@ -136,6 +138,9 @@ pub(crate) struct ServerState {
     pub join_failures: HashMap<IpAddr, (u32, Instant)>,
     /// UDP session tokens: token_bytes -> peer_id. Tokens are 8 random bytes.
     pub udp_sessions: HashMap<[u8; 8], String>,
+    /// Per-IP auth rate limit: IP -> (attempt_count, window_start).
+    /// Limits login/register to 5 attempts per 60 seconds per IP.
+    pub auth_attempts: HashMap<IpAddr, (u32, Instant)>,
 }
 
 impl ServerState {
@@ -153,6 +158,7 @@ impl ServerState {
             connections_per_ip: HashMap::new(),
             join_failures: HashMap::new(),
             udp_sessions: HashMap::new(),
+            auth_attempts: HashMap::new(),
         }
     }
 

@@ -616,7 +616,9 @@ pub fn process_signals(
             }
             SignalMessage::PasswordChanged => {
                 log::info!("Password changed successfully");
-                // Could show a notification in the future
+            }
+            SignalMessage::AllSessionsRevoked => {
+                log::info!("All sessions revoked — current session re-authenticated");
             }
             other => {
                 log::trace!("Unhandled signal (client-to-server variant): {:?}",

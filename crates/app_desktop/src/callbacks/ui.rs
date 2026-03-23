@@ -923,3 +923,21 @@ pub fn setup_logout(
         });
     });
 }
+
+pub fn setup_revoke_all_sessions(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_revoke_all_sessions(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::RevokeAllSessions)
+                .await;
+        });
+    });
+}

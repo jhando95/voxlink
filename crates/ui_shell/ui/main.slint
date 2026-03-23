@@ -286,6 +286,7 @@ export component MainWindow inherits Window {
     callback create-account();
     callback logout();
     callback change-password(string, string);
+    callback revoke-all-sessions();
 
     // Quick switcher
     in-out property <bool> quick-switcher-visible: false;
@@ -500,6 +501,7 @@ export component MainWindow inherits Window {
                             account-email: root.account-email;
                             logout => { root.logout(); }
                             show-login => { root.show-login-view = true; root.login-mode = true; root.auth-error = ""; }
+                            revoke-all-sessions => { root.revoke-all-sessions(); }
                         }
 
                         if root.current-view == 4 : SpaceView {
@@ -715,6 +717,7 @@ export component MainWindow inherits Window {
                                 VxInput {
                                     placeholder: root.login-mode ? "Enter password" : "Min 6 characters";
                                     text <=> root.auth-password;
+                                    input-type: InputType.password;
                                 }
                             }
 

@@ -80,6 +80,23 @@ pub enum SpaceRole {
     Member,
 }
 
+impl SpaceRole {
+    /// Numeric privilege level (higher = more privilege).
+    pub fn level(self) -> u8 {
+        match self {
+            SpaceRole::Owner => 3,
+            SpaceRole::Admin => 2,
+            SpaceRole::Moderator => 1,
+            SpaceRole::Member => 0,
+        }
+    }
+
+    /// Returns true if this role has at least the privilege of `required`.
+    pub fn has_at_least(self, required: SpaceRole) -> bool {
+        self.level() >= required.level()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserStatus {
     #[default]
@@ -550,6 +567,10 @@ pub enum SignalMessage {
     },
     /// Password changed successfully.
     PasswordChanged,
+    /// Revoke all sessions — invalidates all tokens, forces re-login everywhere.
+    RevokeAllSessions,
+    /// Server confirms all sessions were revoked.
+    AllSessionsRevoked,
     FriendSnapshot {
         friends: Vec<FavoriteFriend>,
         incoming_requests: Vec<FriendRequest>,
@@ -721,6 +742,18 @@ pub enum SignalMessage {
     ChannelStatusChanged {
         channel_id: String,
         status: String,
+    },
+
+    // Channel permissions (v0.9.0)
+    /// Set minimum role required to access a channel.
+    /// `min_role`: "member" (default), "moderator", "admin", "owner"
+    SetChannelPermissions {
+        channel_id: String,
+        min_role: String,
+    },
+    ChannelPermissionsChanged {
+        channel_id: String,
+        min_role: String,
     },
 
     // Priority speaker

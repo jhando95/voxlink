@@ -129,6 +129,7 @@ export component VxCard inherits Rectangle {
 export component VxInput inherits Rectangle {
     in-out property <string> text <=> inner.text;
     in property <string> placeholder: "";
+    in property <InputType> input-type: InputType.text;
     callback accepted();
 
     height: 42px;
@@ -153,6 +154,7 @@ export component VxInput inherits Rectangle {
         width: parent.width - 24px;
         height: parent.height - 18px;
         placeholder-text: root.placeholder;
+        input-type: root.input-type;
         accepted => { root.accepted(); }
     }
 }

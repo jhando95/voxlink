@@ -143,6 +143,7 @@ pub fn setup(
     ui::setup_login(window, network, rt_handle);
     ui::setup_create_account(window, network, rt_handle);
     ui::setup_logout(window, network, rt_handle);
+    ui::setup_revoke_all_sessions(window, network, rt_handle);
 
     // Chat
     chat::setup_open_direct_message(window, network, rt_handle);

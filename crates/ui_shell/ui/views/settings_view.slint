@@ -133,6 +133,7 @@ export component SettingsView inherits Rectangle {
     in property <string> account-email: "";
     callback logout();
     callback show-login();
+    callback revoke-all-sessions();
 
     background: transparent;
 
@@ -1176,11 +1177,20 @@ export component SettingsView inherits Rectangle {
                                 }
                             }
                         }
-                        VxButton {
-                            label: "Sign out";
-                            soft: true;
-                            horizontal-stretch: 1;
-                            clicked => { root.logout(); }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxButton {
+                                label: "Sign out";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.logout(); }
+                            }
+                            VxButton {
+                                label: "Revoke all sessions";
+                                soft: true;
+                                horizontal-stretch: 1;
+                                clicked => { root.revoke-all-sessions(); }
+                            }
                         }
                     }
 

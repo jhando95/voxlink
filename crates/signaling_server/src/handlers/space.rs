@@ -280,6 +280,7 @@ pub async fn handle_create_space(
         category: String::new(),
         status: String::new(),
         slow_mode_secs: 0,
+        min_role: shared_types::SpaceRole::Member,
     };
 
     let space = Space {
