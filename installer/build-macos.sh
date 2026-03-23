@@ -23,7 +23,7 @@ echo "Building $APP_NAME v$VERSION for macOS..."
 
 # Build the release binary
 cd "$ROOT_DIR"
-cargo build --release --bin "$BINARY_NAME"
+"${CARGO:-cargo}" build --release --bin "$BINARY_NAME"
 BINARY="$ROOT_DIR/target/release/$BINARY_NAME"
 
 if [ ! -f "$BINARY" ]; then
