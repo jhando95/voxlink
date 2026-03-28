@@ -36,12 +36,14 @@ pub(crate) struct Peer {
     pub watched_friend_ids: Mutex<HashSet<String>>,
     /// Peer's remote IP address (for brute-force rate limiting)
     pub ip: IpAddr,
-    /// UDP address for audio relay (set when client completes UDP handshake)
-    pub udp_addr: Mutex<Option<SocketAddr>>,
+    /// UDP address for audio relay (set when client completes UDP handshake).
+    /// Uses std::sync::RwLock (not tokio Mutex) for lock-free reads in the audio hot path.
+    pub udp_addr: std::sync::RwLock<Option<SocketAddr>>,
     /// Priority speaker flag — when active, other peers are ducked
     pub is_priority_speaker: AtomicBool,
-    /// Whisper target peer IDs (empty = normal broadcast)
-    pub whisper_targets: Mutex<Vec<String>>,
+    /// Whisper target peer IDs (empty = normal broadcast).
+    /// Uses std::sync::RwLock for lock-free reads in the audio relay hot path.
+    pub whisper_targets: std::sync::RwLock<Vec<String>>,
     /// Timeout expiry (unix epoch seconds, 0 = no timeout)
     pub timeout_until: AtomicU64,
     // Rate limiting — atomic timestamps avoid lock contention on audio hot path

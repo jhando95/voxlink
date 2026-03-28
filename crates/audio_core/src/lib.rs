@@ -1130,54 +1130,6 @@ impl AudioEngine {
             .unwrap_or_default()
     }
 
-    /// Adaptive bitrate: adjust Opus bitrate based on packet loss ratio.
-    ///
-    /// Call periodically (e.g. every 2-5 seconds) with the current dropped/decoded
-    /// frame counts. Reduces bitrate when loss is high, restores toward target when stable.
-    ///
-    /// - `loss_ratio`: 0.0 (no loss) to 1.0 (total loss)
-    /// - Returns the new bitrate in bps
-    pub fn adapt_bitrate(&self, loss_ratio: f32) -> i32 {
-        let target = self.target_bitrate.load(Ordering::Relaxed);
-        let current = self.opus_bitrate.load(Ordering::Relaxed);
-
-        let new_bitrate = if loss_ratio > 0.15 {
-            // Heavy loss: drop to 60% of target (aggressive reduction)
-            (target as f32 * 0.6) as i32
-        } else if loss_ratio > 0.05 {
-            // Moderate loss: drop to 80% of target
-            (target as f32 * 0.8) as i32
-        } else if loss_ratio > 0.01 {
-            // Light loss: drop to 90% of target
-            (target as f32 * 0.9) as i32
-        } else {
-            // No loss: ramp back toward target (slow recovery, 10% per call)
-            let gap = target - current;
-            if gap <= 0 {
-                target
-            } else {
-                let step = ((gap as f32 * 0.1) as i32).max(1000).min(gap);
-                current + step
-            }
-        };
-
-        // Clamp to reasonable range: 16kbps minimum, target maximum
-        let clamped = new_bitrate.clamp(16000, target);
-
-        if clamped != current {
-            self.opus_bitrate.store(clamped, Ordering::Relaxed);
-            self.metrics
-                .encode_bitrate_kbps
-                .store((clamped / 1000) as u32, Ordering::Relaxed);
-            log::debug!(
-                "Adaptive bitrate: {current}bps → {clamped}bps (loss={:.1}%, target={target}bps)",
-                loss_ratio * 100.0
-            );
-        }
-
-        clamped
-    }
-
     /// Get the current packet loss ratio from audio metrics (dropped / (decoded + dropped)).
     pub fn packet_loss_ratio(&self) -> f32 {
         let decoded = self.metrics.frames_decoded.load(Ordering::Relaxed);

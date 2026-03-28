@@ -3317,7 +3317,9 @@ dependencies = [
 name = "integration_tests"
 version = "0.9.0"
 dependencies = [
+ "audiopus",
  "futures-util",
+ "hound",
  "log",
  "serde_json",
  "shared_types",

@@ -702,6 +702,7 @@ export component HomeView inherits Rectangle {
                                     VxInput {
                                         text <=> root.room-password;
                                         placeholder: "Password (optional)";
+                                        input-type: InputType.password;
                                         horizontal-stretch: 1;
                                     }
                                 }
@@ -951,6 +952,7 @@ export component HomeView inherits Rectangle {
                                 VxInput {
                                     text <=> root.room-password;
                                     placeholder: "Password";
+                                    input-type: InputType.password;
                                     horizontal-stretch: 1;
                                 }
                             }

@@ -773,9 +773,9 @@ async fn handle_connection(
                 typing_dm_user_id: Mutex::new(None),
                 watched_friend_ids: Mutex::new(HashSet::new()),
                 ip: addr.ip(),
-                udp_addr: Mutex::new(None),
+                udp_addr: std::sync::RwLock::new(None),
                 is_priority_speaker: AtomicBool::new(false),
-                whisper_targets: Mutex::new(Vec::new()),
+                whisper_targets: std::sync::RwLock::new(Vec::new()),
                 timeout_until: AtomicU64::new(0),
                 msg_count: AtomicU32::new(0),
                 rate_window_ms: AtomicU64::new(instant_to_ms()),
@@ -1375,24 +1375,37 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
+    // Collect room peers + apply whisper filtering in a single state read
     let others = {
-        let all = handlers::collect_room_others(state, &room_code, sender_id).await;
-        // Whisper filtering: if sender has whisper targets, only send to those peers
-        let whisper_targets: Vec<String> = {
-            let s = state.read().await;
-            if let Some(sender) = s.peers.get(sender_id) {
-                sender.whisper_targets.lock().await.clone()
-            } else {
-                Vec::new()
-            }
-        };
-        if whisper_targets.is_empty() {
-            all
-        } else {
-            let target_set: HashSet<String> = whisper_targets.into_iter().collect();
-            all.into_iter()
-                .filter(|p| target_set.contains(&p.id))
-                .collect()
+        let s = state.read().await;
+        let room_peers: Vec<Arc<Peer>> = s
+            .rooms
+            .get(&room_code)
+            .map(|r| {
+                r.peer_ids
+                    .iter()
+                    .filter(|pid| pid.as_str() != sender_id)
+                    .filter_map(|pid| s.peers.get(pid).cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Whisper filtering: read lock-free, no allocation when empty
+        let whisper = s
+            .peers
+            .get(sender_id)
+            .and_then(|p| {
+                p.whisper_targets
+                    .read()
+                    .ok()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.clone())
+            });
+        match whisper {
+            Some(targets) => room_peers
+                .into_iter()
+                .filter(|p| targets.iter().any(|t| t == &p.id))
+                .collect(),
+            None => room_peers,
         }
     };
     metrics
@@ -1635,10 +1648,12 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
         {
             let s = state.read().await;
             if let Some(peer) = s.peers.get(&peer_id) {
-                let mut addr = peer.udp_addr.lock().await;
-                if *addr != Some(src_addr) {
+                let current = peer.udp_addr.read().map(|a| *a).unwrap_or(None);
+                if current != Some(src_addr) {
                     log::info!("UDP peer {peer_id} registered at {src_addr}");
-                    *addr = Some(src_addr);
+                    if let Ok(mut addr) = peer.udp_addr.write() {
+                        *addr = Some(src_addr);
+                    }
                 }
             }
         }
@@ -1705,24 +1720,36 @@ async fn relay_audio_udp(
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
+    // Collect room peers + apply whisper filtering in a single state read
     let others = {
-        let all = handlers::collect_room_others(state, &room_code, sender_id).await;
-        // Whisper filtering: if sender has whisper targets, only send to those peers
-        let whisper_targets: Vec<String> = {
-            let s = state.read().await;
-            if let Some(sender) = s.peers.get(sender_id) {
-                sender.whisper_targets.lock().await.clone()
-            } else {
-                Vec::new()
-            }
-        };
-        if whisper_targets.is_empty() {
-            all
-        } else {
-            let target_set: HashSet<String> = whisper_targets.into_iter().collect();
-            all.into_iter()
-                .filter(|p| target_set.contains(&p.id))
-                .collect()
+        let s = state.read().await;
+        let room_peers: Vec<Arc<Peer>> = s
+            .rooms
+            .get(&room_code)
+            .map(|r| {
+                r.peer_ids
+                    .iter()
+                    .filter(|pid| pid.as_str() != sender_id)
+                    .filter_map(|pid| s.peers.get(pid).cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let whisper = s
+            .peers
+            .get(sender_id)
+            .and_then(|p| {
+                p.whisper_targets
+                    .read()
+                    .ok()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.clone())
+            });
+        match whisper {
+            Some(targets) => room_peers
+                .into_iter()
+                .filter(|p| targets.iter().any(|t| t == &p.id))
+                .collect(),
+            None => room_peers,
         }
     };
     metrics
@@ -1733,7 +1760,7 @@ async fn relay_audio_udp(
         .fetch_add(others.len() as u64, Ordering::Relaxed);
 
     for peer in &others {
-        let udp_addr = peer.udp_addr.lock().await.clone();
+        let udp_addr = peer.udp_addr.read().ok().and_then(|a| *a);
         if let Some(addr) = udp_addr {
             // Send via UDP — fire-and-forget (UDP is unreliable by design)
             let _ = udp_socket.send_to(&frame, addr).await;
@@ -1835,7 +1862,9 @@ async fn handle_disconnect(state: &State, peer_id: &str) {
     if let Some(peer) = state.read().await.peers.get(peer_id) {
         peer.set_room_code(None).await;
         // Clear whisper targets so stale whispers don't persist
-        peer.whisper_targets.lock().await.clear();
+        if let Ok(mut wt) = peer.whisper_targets.write() {
+            wt.clear();
+        }
     }
 }
 
@@ -2147,14 +2176,18 @@ async fn handle_set_priority_speaker(
 async fn handle_whisper_to(state: &State, peer_id: &str, target_peer_ids: Vec<String>) {
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id) {
-        *peer.whisper_targets.lock().await = target_peer_ids;
+        if let Ok(mut wt) = peer.whisper_targets.write() {
+            *wt = target_peer_ids;
+        }
     }
 }
 
 async fn handle_whisper_stopped(state: &State, peer_id: &str) {
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id) {
-        peer.whisper_targets.lock().await.clear();
+        if let Ok(mut wt) = peer.whisper_targets.write() {
+            wt.clear();
+        }
     }
 }
 
