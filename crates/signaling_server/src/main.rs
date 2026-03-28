@@ -315,7 +315,7 @@ async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: boo
 
 // ─── Main ───
 
-#[tokio::main(worker_threads = 2)]
+#[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
@@ -566,7 +566,7 @@ async fn main() {
         }
     }
 
-    // Periodic cleanup of stale empty rooms (every 60s)
+    // Periodic cleanup of stale resources (every 60s)
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -574,8 +574,9 @@ async fn main() {
             loop {
                 interval.tick().await;
                 let mut s = state.write().await;
-                let before = s.rooms.len();
+
                 // Remove empty rooms older than 5 minutes
+                let before = s.rooms.len();
                 s.rooms.retain(|code, room| {
                     if room.peer_ids.is_empty()
                         && room.created_at.elapsed() > std::time::Duration::from_secs(300)
@@ -591,14 +592,13 @@ async fn main() {
                     log::info!("Cleaned up {removed} stale room(s)");
                 }
 
-                // Also clean stale member_ids that reference disconnected peers
-                let connected_ids: std::collections::HashSet<String> =
-                    s.peers.keys().cloned().collect();
+                // Clean stale member_ids that reference disconnected peers
+                let connected: HashSet<String> = s.peers.keys().cloned().collect();
                 for space in s.spaces.values_mut() {
                     let before_members = space.member_ids.len();
                     space
                         .member_ids
-                        .retain(|mid| connected_ids.contains(mid.as_str()));
+                        .retain(|mid| connected.contains(mid.as_str()));
                     let removed_members = before_members - space.member_ids.len();
                     if removed_members > 0 {
                         log::info!(
@@ -606,6 +606,45 @@ async fn main() {
                             space.name
                         );
                     }
+                }
+
+                // Expire stale auth rate-limit entries (older than 10 minutes)
+                let auth_before = s.auth_attempts.len();
+                s.auth_attempts
+                    .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
+                let auth_removed = auth_before - s.auth_attempts.len();
+                if auth_removed > 0 {
+                    log::debug!("Cleaned up {auth_removed} stale auth rate-limit entries");
+                }
+
+                // Expire stale join-failure rate-limit entries (older than 10 minutes)
+                let join_before = s.join_failures.len();
+                s.join_failures
+                    .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
+                let join_removed = join_before - s.join_failures.len();
+                if join_removed > 0 {
+                    log::debug!("Cleaned up {join_removed} stale join-failure entries");
+                }
+
+                // Expire stale slow-mode timestamps (older than 5 minutes)
+                let now_epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                for space in s.spaces.values_mut() {
+                    space
+                        .slow_mode_timestamps
+                        .retain(|_, &mut ts| now_epoch.saturating_sub(ts) < 300);
+                }
+
+                // Expire stale UDP session tokens (peers disconnected but tokens remain)
+                let udp_before = s.udp_sessions.len();
+                // Reuse connected set from above for UDP cleanup
+                s.udp_sessions
+                    .retain(|_, peer_id| connected.contains(peer_id.as_str()));
+                let udp_removed = udp_before - s.udp_sessions.len();
+                if udp_removed > 0 {
+                    log::debug!("Cleaned up {udp_removed} orphaned UDP session tokens");
                 }
             }
         });

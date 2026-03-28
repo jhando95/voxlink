@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.0 — Performance & Robustness
+
+### New
+- **Voice pipeline integration tests** — Full-duplex audio tests simulating two clients exchanging Opus-encoded audio over WebSocket and UDP, with WAV recording for manual verification.
+- **Password masking** — Room password inputs now use `InputType.password` for proper bullet masking.
+
+### Improved
+- **Server audio relay optimization** — Merged whisper filtering into a single state read lock (eliminated redundant lock acquisition per audio frame). Replaced tokio Mutex with `std::sync::RwLock` for `udp_addr` and `whisper_targets` fields, enabling lock-free reads on the 50fps hot path.
+- **Tokio runtime** — Removed hardcoded 2-thread limit; server now uses all available CPU cores.
+- **Resource cleanup** — Periodic cleanup task now expires stale `auth_attempts`, `join_failures`, `slow_mode_timestamps`, and orphaned UDP session tokens. Prevents unbounded memory growth on long-running servers.
+- **Config thread safety** — Added `CONFIG_LOCK` mutex to serialize all config load-modify-save cycles, preventing data races across background save threads.
+- **Whisper cleanup** — Server clears whisper targets on peer disconnect.
+- **Auto-update URL** — Fixed GitHub releases API URL for update checks.
+- **Dead code removal** — Removed unused `AudioEngine::adapt_bitrate()` (already implemented in tick loop).
+
+### Stats
+- 351 tests passing, zero warnings
+- 11 workspace crates
+
 ## v0.8.0 — Social Features & Account System
 
 ### New — 22 Features
