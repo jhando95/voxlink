@@ -123,6 +123,7 @@ impl SpscRingBuf {
     /// Called from the playback/consumer side only.
     /// Returns how many samples were consumed.
     #[inline]
+    #[allow(clippy::needless_range_loop)] // Indexed access is clearer for ring buffer arithmetic
     pub fn mix_into(&self, dest: &mut [f32], volume: f32) -> usize {
         let w = self.write.load(Ordering::Acquire);
         let r = self.read.load(Ordering::Relaxed);

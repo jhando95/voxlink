@@ -457,11 +457,11 @@ pub fn process_signals(
             // v0.8.0: Block/Unblock acknowledgments
             SignalMessage::UserBlocked { user_id } => {
                 log::info!("Blocked user: {user_id}");
-                w.set_status_text(format!("Blocked user").into());
+                w.set_status_text("Blocked user".to_string().into());
             }
             SignalMessage::UserUnblocked { user_id } => {
                 log::info!("Unblocked user: {user_id}");
-                w.set_status_text(format!("Unblocked user").into());
+                w.set_status_text("Unblocked user".to_string().into());
             }
             // v0.8.0: Ban list
             SignalMessage::BanList { bans } => {
@@ -482,7 +482,7 @@ pub fn process_signals(
                 if w.get_notifications_enabled() {
                     crate::helpers::send_notification(
                         &format!("{sender_name} in #{channel_name}"),
-                        &preview,
+                        preview,
                     );
                 }
             }
@@ -505,7 +505,7 @@ pub fn process_signals(
                 w.set_chat_channel_name(name.into());
                 w.set_chat_is_direct_message(true);
                 w.set_chat_context_subtitle("Group message".into());
-                ui_shell::set_chat_messages(w, &history, &my_name);
+                ui_shell::set_chat_messages(w, history, &my_name);
                 w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
             }
             SignalMessage::GroupMessage {

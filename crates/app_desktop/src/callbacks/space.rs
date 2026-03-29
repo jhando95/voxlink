@@ -637,8 +637,8 @@ pub fn setup_whisper(
         let network = network.clone();
         let rt_handle = rt_handle.clone();
         window.on_whisper_to(move |target_ids_csv| {
-            let target_peer_ids: Vec<String> = target_ids_csv
-                .to_string()
+            let csv: &str = target_ids_csv.as_str();
+            let target_peer_ids: Vec<String> = csv
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())

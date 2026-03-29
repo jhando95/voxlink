@@ -138,6 +138,7 @@ fn now_secs() -> i64 {
         .as_secs() as i64
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn append_audit_entry(
     state: &State,
     db: &Db,

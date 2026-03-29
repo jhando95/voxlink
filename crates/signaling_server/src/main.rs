@@ -532,7 +532,7 @@ async fn main() {
     {
         let ws_port: u16 = addr
             .split(':')
-            .last()
+            .next_back()
             .and_then(|p| p.parse().ok())
             .unwrap_or(9090);
         let udp_port: u16 = env_or("PV_UDP_PORT", ws_port + 1);

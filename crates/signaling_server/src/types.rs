@@ -1,6 +1,5 @@
 use rand::rngs::OsRng;
 use rand::RngCore;
-use shared_types;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};

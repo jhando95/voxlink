@@ -417,6 +417,36 @@ fn hex_decode_8(hex: &str) -> Option<[u8; 8]> {
     Some(out)
 }
 
+/// Discover a Voxlink server on the local network via UDP broadcast.
+/// Returns the server URL (e.g., "ws://192.168.1.5:9090") or None if not found.
+pub async fn discover_lan_server() -> Option<String> {
+    use tokio::net::UdpSocket;
+
+    let socket = UdpSocket::bind("0.0.0.0:0").await.ok()?;
+    socket.set_broadcast(true).ok()?;
+
+    // Send discovery request
+    socket
+        .send_to(b"VOXLINK_DISCOVER", "255.255.255.255:9091")
+        .await
+        .ok()?;
+
+    // Wait up to 2 seconds for response
+    let mut buf = [0u8; 256];
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        socket.recv_from(&mut buf),
+    )
+    .await
+    {
+        Ok(Ok((len, _src))) => {
+            let msg = std::str::from_utf8(&buf[..len]).ok()?;
+            msg.strip_prefix("VOXLINK_SERVER:").map(|s| s.to_string())
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,7 +567,7 @@ mod tests {
         // No prior connect means no stored URL
         let result = client.try_reconnect().await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false, "Should return false when no URL stored");
+        assert!(!result.unwrap(), "Should return false when no URL stored");
     }
 
     #[tokio::test]
@@ -629,35 +659,5 @@ mod tests {
     fn hex_decode_8_mixed_case() {
         let result = hex_decode_8("aAbBcCdDeEfF0011");
         assert_eq!(result, Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]));
-    }
-}
-
-/// Discover a Voxlink server on the local network via UDP broadcast.
-/// Returns the server URL (e.g., "ws://192.168.1.5:9090") or None if not found.
-pub async fn discover_lan_server() -> Option<String> {
-    use tokio::net::UdpSocket;
-
-    let socket = UdpSocket::bind("0.0.0.0:0").await.ok()?;
-    socket.set_broadcast(true).ok()?;
-
-    // Send discovery request
-    socket
-        .send_to(b"VOXLINK_DISCOVER", "255.255.255.255:9091")
-        .await
-        .ok()?;
-
-    // Wait up to 2 seconds for response
-    let mut buf = [0u8; 256];
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        socket.recv_from(&mut buf),
-    )
-    .await
-    {
-        Ok(Ok((len, _src))) => {
-            let msg = std::str::from_utf8(&buf[..len]).ok()?;
-            msg.strip_prefix("VOXLINK_SERVER:").map(|s| s.to_string())
-        }
-        _ => None,
     }
 }

@@ -839,11 +839,11 @@ fn render_markdown(content: &str) -> (String, bool) {
             result.push('\n');
         }
         // Blockquote
-        if line.starts_with("> ") {
+        if let Some(quoted) = line.strip_prefix("> ") {
             result.push_str("\u{2502} ");
-            result.push_str(&render_inline(&line[2..]));
+            result.push_str(&render_inline(quoted));
         } else if line == ">" {
-            result.push_str("\u{2502}");
+            result.push('\u{2502}');
         } else {
             result.push_str(&render_inline(line));
         }
@@ -914,12 +914,7 @@ fn find_closing(chars: &[char], start: usize, marker: &[char; 2]) -> Option<usiz
 }
 
 fn find_closing_single(chars: &[char], start: usize, marker: char) -> Option<usize> {
-    for i in start..chars.len() {
-        if chars[i] == marker {
-            return Some(i);
-        }
-    }
-    None
+    chars[start..].iter().position(|&c| c == marker).map(|pos| start + pos)
 }
 
 fn message_mentions_user(content: &str, user_name: &str) -> bool {

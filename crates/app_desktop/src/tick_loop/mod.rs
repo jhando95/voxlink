@@ -158,12 +158,11 @@ pub fn start(
                 handle_escape(&keys, current_view, &w, &prev_esc_held);
 
                 // Ctrl+K quick switcher toggle
-                if keys.contains(&Keycode::LControl) && keys.contains(&Keycode::K) ||
-                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::K) {
-                    if !w.get_quick_switcher_visible() {
+                if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::K) ||
+                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::K))
+                    && !w.get_quick_switcher_visible() {
                         w.set_quick_switcher_visible(true);
                     }
-                }
 
                 if !in_call {
                     *ptt_was_held.borrow_mut() = false;
@@ -685,7 +684,7 @@ fn auto_hide_notification(
 ) {
     let should_clear = notification_at_tick
         .borrow()
-        .map_or(false, |t| tick.saturating_sub(t) >= 120);
+        .is_some_and(|t| tick.saturating_sub(t) >= 120);
     if should_clear {
         w.set_room_status(slint::SharedString::default());
         *notification_at_tick.borrow_mut() = None;

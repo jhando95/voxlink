@@ -601,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn v08_fields_round_trip() {
         let mut config = AppConfig::default();
         config.join_leave_sounds = false;

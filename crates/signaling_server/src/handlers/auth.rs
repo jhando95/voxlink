@@ -742,7 +742,7 @@ mod tests {
         ];
         let salt_hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
         let mut hasher = Sha256::new();
-        hasher.update(&salt);
+        hasher.update(salt);
         hasher.update(b"legacy_password");
         let hash = hasher.finalize();
         let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();

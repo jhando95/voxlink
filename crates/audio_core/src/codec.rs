@@ -593,6 +593,7 @@ pub(crate) struct EchoCanceller {
     ref_buf: Vec<f32>,
 }
 
+#[allow(clippy::needless_range_loop)] // Indexed access clearer for correlation math
 impl EchoCanceller {
     pub fn new(frame_size: usize) -> Self {
         Self {
@@ -1214,7 +1215,8 @@ mod tests {
         // Process some frames to prime
         let mut samples = [0.1f32; FRAME_SIZE];
         ns.process(&mut samples);
-        assert!(ns.primed || !ns.primed); // just exercise the path
+        // After processing a frame, primed state depends on frame energy — just verify it ran
+        let _ = ns.primed;
         // Disable and re-enable should reset
         ns.set_enabled(false);
         ns.set_enabled(true);

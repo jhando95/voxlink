@@ -13,6 +13,7 @@ const DEFAULT_MESSAGE_COUNT: usize = 24;
 const DEFAULT_SCREEN_FRAME_COUNT: usize = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // Space prefix is intentional domain naming
 enum AutomationScenario {
     SpaceChannelSoak,
     SpaceTextChatSoak,
