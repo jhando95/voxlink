@@ -558,13 +558,22 @@ export component ChatView inherits Rectangle {
                                         }
                                     }
 
-                                    if msg.reactions != "" : HorizontalLayout {
-                                        spacing: 6px;
-                                        // Reaction pills rendered as a row of emoji+count badges
-                                        VxStatusPill {
-                                            label: msg.reactions;
-                                            tone: VxTheme.text-secondary;
-                                            fill: VxTheme.bg-soft;
+                                    if msg.reactions != "" : Rectangle {
+                                        height: 22px;
+                                        border-radius: VxTheme.radius-control;
+                                        background: VxTheme.bg-raised;
+                                        border-color: VxTheme.border-subtle;
+                                        border-width: 1px;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+                                            Text {
+                                                text: msg.reactions;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                     }
                                 }

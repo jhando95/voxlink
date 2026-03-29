@@ -837,8 +837,14 @@ export component SettingsView inherits Rectangle {
                             padding: 18px;
                             spacing: 12px;
                             SectionLabel { text: "KEYBINDS"; }
-                            Text {
-                                text: "Hold modifiers and a key to capture combinations.";
+                            if root.listening-keybind != "" : Text {
+                                text: "Press a key combination now, or click Cancel to abort.";
+                                color: VxTheme.accent;
+                                font-size: 10px;
+                                font-weight: 600;
+                            }
+                            if root.listening-keybind == "" : Text {
+                                text: "Click Set to assign a keybind, then press your key combo.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                             }
@@ -1315,11 +1321,20 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
-            Text {
-                text: "Settings save automatically.";
-                color: VxTheme.text-muted;
-                font-size: 10px;
-                horizontal-alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Rectangle {
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: VxTheme.success;
+                }
+                Text {
+                    text: "Settings save automatically";
+                    color: VxTheme.text-muted;
+                    font-size: 10px;
+                }
             }
         }
     }

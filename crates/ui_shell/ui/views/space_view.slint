@@ -23,6 +23,7 @@ export component SpaceView inherits Rectangle {
     in-out property <bool> new-channel-is-voice: true;
     in-out property <int> new-channel-voice-quality: 2;
     in-out property <bool> confirm-delete-visible: false;
+    in-out property <bool> invite-copied: false;
     in-out property <string> confirm-delete-channel-id: "";
     changed search-query => { root.search-changed(root.search-query); }
     callback navigate(int);
@@ -153,9 +154,12 @@ export component SpaceView inherits Rectangle {
                         clicked => { root.navigate(0); }
                     }
                     VxButton {
-                        label: "Copy invite";
+                        label: root.invite-copied ? "Copied!" : "Copy invite";
                         accent: true;
-                        clicked => { root.copy-invite-code(); }
+                        clicked => {
+                            root.copy-invite-code();
+                            root.invite-copied = true;
+                        }
                     }
                 }
             }
