@@ -395,7 +395,7 @@ pub fn setup_clear_keybind(
         w.set_listening_keybind("".into());
 
         let s = slot.to_string();
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             match s.as_str() {
                 "ptt" => cfg.push_to_talk_key = Some(String::new()),
@@ -418,7 +418,7 @@ pub fn setup_toggle_dark_mode(window: &MainWindow) {
         w.set_dark_mode(new_mode);
         ui_shell::sync_member_widget_theme(new_mode, w.get_theme_preset());
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.dark_mode = Some(new_mode);
             let _ = config_store::save_config(&cfg);
@@ -439,7 +439,7 @@ pub fn setup_select_theme_preset(window: &MainWindow) {
         w.set_theme_preset(preset);
         ui_shell::sync_member_widget_theme(w.get_dark_mode(), preset);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.theme_preset = helpers::theme_preset_key(preset).into();
             let _ = config_store::save_config(&cfg);
@@ -608,7 +608,7 @@ pub fn setup_toggle_feedback_sound(window: &MainWindow) {
         let new_val = !w.get_feedback_sound();
         w.set_feedback_sound(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.feedback_sound = new_val;
             let _ = config_store::save_config(&cfg);
@@ -625,7 +625,7 @@ pub fn setup_toggle_notifications(window: &MainWindow) {
         let new_val = !w.get_notifications_enabled();
         w.set_notifications_enabled(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.notifications_enabled = new_val;
             let _ = config_store::save_config(&cfg);
@@ -654,7 +654,7 @@ pub fn setup_toggle_neural_noise_suppression(
             aud.set_noise_suppression(new_val);
         });
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.neural_noise_suppression = new_val;
             let _ = config_store::save_config(&cfg);
@@ -683,7 +683,7 @@ pub fn setup_toggle_echo_cancellation(
             aud.set_echo_cancellation(new_val);
         });
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.echo_cancellation = new_val;
             let _ = config_store::save_config(&cfg);
@@ -700,7 +700,7 @@ pub fn setup_toggle_minimize_to_tray(window: &MainWindow) {
         let new_val = !w.get_minimize_to_tray();
         w.set_minimize_to_tray(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.minimize_to_tray = new_val;
             let _ = config_store::save_config(&cfg);
@@ -722,7 +722,7 @@ pub fn setup_noise_suppression(
         rt_handle2.spawn(async move {
             audio.lock().await.set_input_gain(val);
         });
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.input_volume = val;
             let _ = config_store::save_config(&cfg);
@@ -736,7 +736,7 @@ pub fn setup_noise_suppression(
         rt_handle3.spawn(async move {
             audio.lock().await.set_output_volume(val);
         });
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.output_volume = val;
             let _ = config_store::save_config(&cfg);
@@ -753,7 +753,7 @@ pub fn setup_noise_suppression(
             audio.lock().await.set_sensitivity(sensitivity);
         });
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.noise_suppression = val;
             cfg.open_mic_sensitivity = sensitivity;
@@ -801,7 +801,7 @@ pub fn setup_toggle_join_leave_sounds(window: &MainWindow) {
         let new_val = !w.get_join_leave_sounds();
         w.set_join_leave_sounds(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.join_leave_sounds = new_val;
             let _ = config_store::save_config(&cfg);
@@ -818,7 +818,7 @@ pub fn setup_toggle_show_spoilers(window: &MainWindow) {
         let new_val = !w.get_show_spoilers();
         w.set_show_spoilers(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.show_spoilers = new_val;
             let _ = config_store::save_config(&cfg);
@@ -835,7 +835,7 @@ pub fn setup_toggle_compact_chat(window: &MainWindow) {
         let new_val = !w.get_compact_chat();
         w.set_compact_chat(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.compact_chat = new_val;
             let _ = config_store::save_config(&cfg);
@@ -852,7 +852,7 @@ pub fn setup_toggle_streamer_mode(window: &MainWindow) {
         let new_val = !w.get_streamer_mode();
         w.set_streamer_mode(new_val);
 
-        std::thread::spawn(move || {
+        crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.streamer_mode = new_val;
             let _ = config_store::save_config(&cfg);

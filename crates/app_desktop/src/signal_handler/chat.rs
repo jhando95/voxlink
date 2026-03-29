@@ -477,6 +477,17 @@ pub fn expire_stale_typing(
     tick: u64,
 ) {
     const TYPING_TIMEOUT_TICKS: u64 = 200; // 5 seconds at 40Hz
+
+    // Early exit: skip work when no typing indicators are active
+    {
+        let s = state.borrow();
+        let has_channel = s.space.as_ref().is_some_and(|sp| !sp.typing_ticks.is_empty());
+        let has_dm = !s.direct_typing_ticks.is_empty();
+        if !has_channel && !has_dm {
+            return;
+        }
+    }
+
     let mut changed_channels: Vec<String> = Vec::new();
     let mut changed_dm = false;
 

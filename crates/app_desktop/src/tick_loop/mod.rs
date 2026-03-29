@@ -445,7 +445,7 @@ fn handle_keybind_listening(
     *ls = None;
 
     let slot = listening.to_string();
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let mut cfg = config_store::load_config();
         match slot.as_str() {
             "ptt" => cfg.push_to_talk_key = Some(config_str),

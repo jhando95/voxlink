@@ -12,6 +12,27 @@ pub const THEME_PRESET_COUNT: i32 = 7;
 /// Global lock for config load-modify-save operations to prevent data races.
 pub(crate) static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
+/// Send a config-save closure to a single dedicated background thread.
+/// This avoids spawning a new OS thread per save (up to 32+/session).
+/// The worker thread processes saves sequentially, coalescing rapid writes.
+pub(crate) fn spawn_config_save<F: FnOnce() + Send + 'static>(f: F) {
+    use std::sync::{mpsc, OnceLock};
+    static TX: OnceLock<mpsc::Sender<Box<dyn FnOnce() + Send>>> = OnceLock::new();
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        std::thread::Builder::new()
+            .name("config-save".into())
+            .spawn(move || {
+                for task in rx {
+                    task();
+                }
+            })
+            .expect("Failed to spawn config-save thread");
+        tx
+    });
+    let _ = tx.send(Box::new(f));
+}
+
 /// Auto-save all settings to config file with device hot-swap.
 pub fn auto_save_settings(
     w: &MainWindow,
@@ -135,7 +156,7 @@ pub fn theme_preset_index(key: &str) -> i32 {
 
 /// Save room code to config in background (non-blocking).
 pub fn save_room_code_async(code: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_room_code = Some(code);
@@ -145,7 +166,7 @@ pub fn save_room_code_async(code: String) {
 
 /// Clear saved room code so we don't auto-rejoin on next launch.
 pub fn clear_room_code_async() {
-    std::thread::spawn(|| {
+    crate::helpers::spawn_config_save(|| {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_room_code = None;
@@ -214,7 +235,7 @@ pub fn send_notification(title: &str, body: &str) {
 
 /// Save auth token to config in background.
 pub fn save_auth_token_async(token: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.auth_token = Some(token);
@@ -223,7 +244,7 @@ pub fn save_auth_token_async(token: String) {
 }
 
 pub fn save_account_email_async(email: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.account_email = Some(email);
@@ -232,7 +253,7 @@ pub fn save_account_email_async(email: String) {
 }
 
 pub fn clear_auth_token_async() {
-    std::thread::spawn(|| {
+    crate::helpers::spawn_config_save(|| {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.auth_token = None;
@@ -242,7 +263,7 @@ pub fn clear_auth_token_async() {
 }
 
 pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.last_space_id = Some(space_id);
@@ -294,7 +315,7 @@ pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo
 }
 
 pub fn remove_saved_space_async(space_id: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.saved_spaces.retain(|space| space.id != space_id);
@@ -307,7 +328,7 @@ pub fn remove_saved_space_async(space_id: String) {
 }
 
 pub fn clear_deleted_channel_async(space_id: String, channel_id: String) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         if cfg.last_space_id.as_deref() == Some(space_id.as_str())
@@ -341,7 +362,7 @@ pub fn sync_saved_spaces_ui(window: &MainWindow, exclude_space_id: Option<&str>)
 }
 
 pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)>) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.member_widget_visible = visible;
@@ -354,7 +375,7 @@ pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)
 }
 
 pub fn save_favorite_friends_async(favorites: Vec<shared_types::FavoriteFriend>) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.favorite_friends = favorites;
@@ -363,7 +384,7 @@ pub fn save_favorite_friends_async(favorites: Vec<shared_types::FavoriteFriend>)
 }
 
 pub fn save_recent_direct_messages_async(threads: Vec<shared_types::DirectMessageThread>) {
-    std::thread::spawn(move || {
+    crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.recent_direct_messages = threads;
