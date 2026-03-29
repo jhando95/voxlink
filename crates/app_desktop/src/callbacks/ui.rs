@@ -843,6 +843,23 @@ pub fn setup_toggle_compact_chat(window: &MainWindow) {
     });
 }
 
+pub fn setup_toggle_streamer_mode(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_streamer_mode(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_streamer_mode();
+        w.set_streamer_mode(new_val);
+
+        std::thread::spawn(move || {
+            let mut cfg = config_store::load_config();
+            cfg.streamer_mode = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
 pub fn setup_login(
     window: &MainWindow,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,

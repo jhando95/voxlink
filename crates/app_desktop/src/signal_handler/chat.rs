@@ -401,6 +401,7 @@ pub fn handle_typing_state(
     channel_id: &str,
     user_name: &str,
     is_typing: bool,
+    tick: u64,
 ) {
     {
         let mut s = state.borrow_mut();
@@ -409,13 +410,16 @@ pub fn handle_typing_state(
                 .typing_users
                 .entry(channel_id.to_string())
                 .or_default();
+            let key = (channel_id.to_string(), user_name.to_string());
             if is_typing {
                 if !users.iter().any(|name| name == user_name) {
                     users.push(user_name.to_string());
                     users.sort_by_key(|name| name.to_lowercase());
                 }
+                space.typing_ticks.insert(key, tick);
             } else {
                 users.retain(|name| name != user_name);
+                space.typing_ticks.remove(&key);
             }
 
             if users.is_empty() {
@@ -435,29 +439,97 @@ pub fn handle_direct_typing_state(
     user_id: &str,
     user_name: &str,
     is_typing: bool,
+    tick: u64,
 ) {
     {
         let mut s = state.borrow_mut();
-        let users = s
-            .direct_typing_users
-            .entry(user_id.to_string())
-            .or_default();
         if is_typing {
+            let users = s
+                .direct_typing_users
+                .entry(user_id.to_string())
+                .or_default();
             if !users.iter().any(|name| name == user_name) {
                 users.push(user_name.to_string());
                 users.sort_by_key(|name| name.to_lowercase());
             }
+            s.direct_typing_ticks.insert(user_id.to_string(), tick);
         } else {
-            users.retain(|name| name != user_name);
-        }
-
-        if users.is_empty() {
-            s.direct_typing_users.remove(user_id);
+            if let Some(users) = s.direct_typing_users.get_mut(user_id) {
+                users.retain(|name| name != user_name);
+                if users.is_empty() {
+                    s.direct_typing_users.remove(user_id);
+                }
+            }
+            s.direct_typing_ticks.remove(user_id);
         }
     }
 
     if w.get_chat_is_direct_message() && w.get_chat_channel_id() == user_id {
         sync_direct_typing_text(w, state, user_id);
+    }
+}
+
+/// Expire typing indicators older than 5 seconds (200 ticks at 40Hz).
+/// Call from the tick loop periodically (e.g. every 40 ticks / 1 second).
+pub fn expire_stale_typing(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    tick: u64,
+) {
+    const TYPING_TIMEOUT_TICKS: u64 = 200; // 5 seconds at 40Hz
+    let mut changed_channels: Vec<String> = Vec::new();
+    let mut changed_dm = false;
+
+    {
+        let mut s = state.borrow_mut();
+
+        // Expire channel typing
+        if let Some(ref mut space) = s.space {
+            let expired: Vec<(String, String)> = space
+                .typing_ticks
+                .iter()
+                .filter(|(_, &t)| tick.saturating_sub(t) >= TYPING_TIMEOUT_TICKS)
+                .map(|(k, _)| k.clone())
+                .collect();
+
+            for (channel_id, user_name) in &expired {
+                space.typing_ticks.remove(&(channel_id.clone(), user_name.clone()));
+                if let Some(users) = space.typing_users.get_mut(channel_id) {
+                    users.retain(|name| name != user_name);
+                    if users.is_empty() {
+                        space.typing_users.remove(channel_id);
+                    }
+                    if !changed_channels.contains(channel_id) {
+                        changed_channels.push(channel_id.clone());
+                    }
+                }
+            }
+        }
+
+        // Expire DM typing
+        let expired_dm: Vec<String> = s
+            .direct_typing_ticks
+            .iter()
+            .filter(|(_, &t)| tick.saturating_sub(t) >= TYPING_TIMEOUT_TICKS)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for user_id in &expired_dm {
+            s.direct_typing_ticks.remove(user_id);
+            s.direct_typing_users.remove(user_id);
+            changed_dm = true;
+        }
+    }
+
+    // Update UI for affected channels
+    let current_channel = w.get_chat_channel_id().to_string();
+    for ch in &changed_channels {
+        if *ch == current_channel {
+            sync_typing_text(w, state, ch);
+        }
+    }
+    if changed_dm && w.get_chat_is_direct_message() {
+        sync_direct_typing_text(w, state, &current_channel);
     }
 }
 

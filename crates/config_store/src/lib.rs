@@ -80,6 +80,9 @@ pub struct AppConfig {
     /// Use compact chat message layout (less padding, smaller font).
     #[serde(default)]
     pub compact_chat: bool,
+    /// Streamer mode: hide IPs, invite codes, room codes, and email from the UI.
+    #[serde(default)]
+    pub streamer_mode: bool,
     /// List of blocked user IDs. Messages from these users are filtered client-side.
     #[serde(default)]
     pub blocked_users: Vec<String>,
@@ -222,6 +225,7 @@ impl Default for AppConfig {
             join_leave_sounds: default_true(),
             show_spoilers: false,
             compact_chat: false,
+            streamer_mode: false,
             blocked_users: Vec::new(),
             status_preset: default_status_preset(),
             idle_timeout_mins: default_idle_timeout(),
@@ -377,6 +381,7 @@ mod tests {
             join_leave_sounds: true,
             show_spoilers: false,
             compact_chat: false,
+            streamer_mode: false,
             blocked_users: Vec::new(),
             status_preset: "online".into(),
             idle_timeout_mins: 5,

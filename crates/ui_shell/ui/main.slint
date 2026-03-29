@@ -149,6 +149,7 @@ export component MainWindow inherits Window {
     in-out property <bool> join-leave-sounds: true;
     in-out property <bool> show-spoilers: false;
     in-out property <bool> compact-chat: false;
+    in-out property <bool> streamer-mode: false;
     callback toggle-notifications();
     callback toggle-minimize-to-tray();
     callback toggle-neural-noise-suppression();
@@ -156,6 +157,7 @@ export component MainWindow inherits Window {
     callback toggle-join-leave-sounds();
     callback toggle-show-spoilers();
     callback toggle-compact-chat();
+    callback toggle-streamer-mode();
     callback toggle-member-widget();
     // Soundboard
     in property <[SoundboardClipData]> soundboard-clips: [];
@@ -500,6 +502,8 @@ export component MainWindow inherits Window {
                             toggle-join-leave-sounds => { root.toggle-join-leave-sounds(); }
                             toggle-show-spoilers => { root.toggle-show-spoilers(); }
                             toggle-compact-chat => { root.toggle-compact-chat(); }
+                            streamer-mode: root.streamer-mode;
+                            toggle-streamer-mode => { root.toggle-streamer-mode(); }
                             clear-keybind(binding) => { root.clear-keybind(binding); }
                             is-logged-in: root.is-logged-in;
                             account-email: root.account-email;

@@ -319,6 +319,11 @@ pub fn start(
                 }
             }
 
+            // --- Expire stale typing indicators every ~1s ---
+            if tick.is_multiple_of(40) {
+                signal_handler::chat::expire_stale_typing(&w, &state, tick);
+            }
+
             // --- Retry pending messages every ~2s ---
             if tick.is_multiple_of(80) {
                 retry_pending_messages(&state, &network, &rt_handle, &w);
@@ -505,7 +510,7 @@ fn process_signals(
             _ => {}
         }
     }
-    signal_handler::process_signals(&signals, w, state, audio_ctx);
+    signal_handler::process_signals(&signals, w, state, audio_ctx, tick);
 }
 
 // ─── Keyboard Handling ───

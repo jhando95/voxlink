@@ -95,6 +95,7 @@ pub fn auto_save_settings(
             ducking_amount: existing.ducking_amount,
             ducking_threshold: existing.ducking_threshold,
             soundboard_clips: existing.soundboard_clips,
+            streamer_mode: existing.streamer_mode,
             account_email: existing.account_email,
         };
         match config_store::save_config(&cfg) {

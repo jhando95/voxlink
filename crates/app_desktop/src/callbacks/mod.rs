@@ -137,6 +137,7 @@ pub fn setup(
     ui::setup_toggle_join_leave_sounds(window);
     ui::setup_toggle_show_spoilers(window);
     ui::setup_toggle_compact_chat(window);
+    ui::setup_toggle_streamer_mode(window);
     ui::setup_quick_switcher(window, state, network, rt_handle);
     ui::setup_toggle_neural_noise_suppression(window, audio, rt_handle);
     ui::setup_toggle_echo_cancellation(window, audio, rt_handle);

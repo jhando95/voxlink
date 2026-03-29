@@ -105,6 +105,8 @@ export component SettingsView inherits Rectangle {
     in property <bool> join-leave-sounds: true;
     in property <bool> show-spoilers: false;
     in property <bool> compact-chat: false;
+    in property <bool> streamer-mode: false;
+    callback toggle-streamer-mode();
     in-out property <string> listening-keybind: "";
     in property <string> ptt-key-display: "";
     in property <string> mute-key-display: "";
@@ -797,6 +799,35 @@ export component SettingsView inherits Rectangle {
                                     checked: root.show-spoilers;
                                     toggled => { root.toggle-show-spoilers(); }
                                 }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            SectionLabel { text: "PRIVACY"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "Streamer mode";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.streamer-mode;
+                                    toggled => { root.toggle-streamer-mode(); }
+                                }
+                            }
+                            Text {
+                                text: "Hides server IPs, invite codes, room codes, and email from the UI.";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                wrap: word-wrap;
                             }
                         }
                     }

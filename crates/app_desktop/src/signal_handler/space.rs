@@ -26,6 +26,7 @@ pub fn handle_space_created(
         self_role: space.self_role,
         unread_text_channels: Default::default(),
         typing_users: Default::default(),
+        typing_ticks: Default::default(),
     };
 
     {
@@ -96,6 +97,7 @@ pub fn handle_space_joined(
         self_role: space.self_role,
         unread_text_channels: Default::default(),
         typing_users: Default::default(),
+        typing_ticks: Default::default(),
     };
 
     {

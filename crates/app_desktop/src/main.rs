@@ -188,6 +188,7 @@ fn main() {
     window.set_join_leave_sounds(config.join_leave_sounds);
     window.set_show_spoilers(config.show_spoilers);
     window.set_compact_chat(config.compact_chat);
+    window.set_streamer_mode(config.streamer_mode);
     window.set_first_run(config.auth_token.is_none());
     if let Some(ref email) = config.account_email {
         window.set_is_logged_in(true);

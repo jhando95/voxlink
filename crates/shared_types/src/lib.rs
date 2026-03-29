@@ -285,6 +285,9 @@ pub struct SpaceState {
     pub self_role: SpaceRole,
     pub unread_text_channels: HashMap<String, u32>,
     pub typing_users: HashMap<String, Vec<String>>,
+    /// Typing timestamps: (channel_id, user_name) → tick when typing started.
+    /// Used for client-side 5-second timeout of stale typing indicators.
+    pub typing_ticks: HashMap<(String, String), u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +310,8 @@ pub struct AppState {
     pub outgoing_friend_requests: Vec<FriendRequest>,
     pub active_direct_message_user_id: Option<String>,
     pub direct_typing_users: HashMap<String, Vec<String>>,
+    /// DM typing timestamps: user_id → tick when typing started.
+    pub direct_typing_ticks: HashMap<String, u64>,
     pub direct_message_threads: Vec<DirectMessageThread>,
     pub pending_messages: Vec<PendingMessage>,
 }

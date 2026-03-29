@@ -1,5 +1,5 @@
 mod channel;
-mod chat;
+pub(crate) mod chat;
 pub mod connection;
 mod member;
 mod room;
@@ -36,6 +36,7 @@ pub fn process_signals(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
     ctx: &AudioContext,
+    tick: u64,
 ) {
     for signal in signals.iter() {
         match signal {
@@ -215,14 +216,14 @@ pub fn process_signals(
                 user_name,
                 is_typing,
             } => {
-                chat::handle_typing_state(w, state, channel_id, user_name, *is_typing);
+                chat::handle_typing_state(w, state, channel_id, user_name, *is_typing, tick);
             }
             SignalMessage::DirectTypingState {
                 user_id,
                 user_name,
                 is_typing,
             } => {
-                chat::handle_direct_typing_state(w, state, user_id, user_name, *is_typing);
+                chat::handle_direct_typing_state(w, state, user_id, user_name, *is_typing, tick);
             }
             // Auth (Milestone 4)
             SignalMessage::Authenticated { token, user_id } => {
