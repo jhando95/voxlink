@@ -1,19 +1,26 @@
 # Changelog
 
-## v0.9.0 — Performance & Robustness
+## v0.9.0 — Performance, Soundboard & UI Polish
 
 ### New
-- **Voice pipeline integration tests** — Full-duplex audio tests simulating two clients exchanging Opus-encoded audio over WebSocket and UDP, with WAV recording for manual verification.
-- **Password masking** — Room password inputs now use `InputType.password` for proper bullet masking.
+- **Soundboard** — Load WAV clips, play into voice chat from Settings panel. Auto-resample to 48kHz mono, lock-free mixing into capture stream. Max 16 clips, configurable keybinds.
+- **Streamer mode** — Privacy toggle hides server IPs, invite codes, room codes, and email.
+- **Channel reordering** — `ReorderChannels` protocol with admin+ permission, position field on channels.
+- **Typing indicator timeout** — Client-side 5-second auto-clear prevents stale "X is typing..." indicators.
+- **Voice pipeline integration tests** — Full-duplex audio tests (WS + UDP) with WAV recording.
+- **Password masking** — Room password inputs use `InputType.password`.
 
 ### Improved
-- **Server audio relay optimization** — Merged whisper filtering into a single state read lock (eliminated redundant lock acquisition per audio frame). Replaced tokio Mutex with `std::sync::RwLock` for `udp_addr` and `whisper_targets` fields, enabling lock-free reads on the 50fps hot path.
-- **Tokio runtime** — Removed hardcoded 2-thread limit; server now uses all available CPU cores.
-- **Resource cleanup** — Periodic cleanup task now expires stale `auth_attempts`, `join_failures`, `slow_mode_timestamps`, and orphaned UDP session tokens. Prevents unbounded memory growth on long-running servers.
-- **Config thread safety** — Added `CONFIG_LOCK` mutex to serialize all config load-modify-save cycles, preventing data races across background save threads.
-- **Whisper cleanup** — Server clears whisper targets on peer disconnect.
-- **Auto-update URL** — Fixed GitHub releases API URL for update checks.
-- **Dead code removal** — Removed unused `AudioEngine::adapt_bitrate()` (already implemented in tick loop).
+- **UI compaction** — 4px spacing scale, tighter buttons (40→36px), inputs (42→36px), TopBar (72→52px), Rail (272→240px), BottomNav (62→48px). ~15-20% more content visible.
+- **Server relay optimization** — Merged whisper filtering into single state read lock. `udp_addr` and `whisper_targets` now use `std::sync::RwLock` for lock-free reads on 50fps hot path.
+- **Config save worker** — Single dedicated background thread replaces 30+ `std::thread::spawn` calls for config writes.
+- **Resource cleanup** — Periodic cleanup for `auth_attempts`, `join_failures`, `slow_mode_timestamps`, orphaned UDP sessions.
+- **Tokio runtime** — Removed hardcoded 2-thread limit; server uses all CPU cores.
+- **Clippy clean** — Zero production clippy warnings across entire workspace.
+- **Flaky test fix** — Integration tests now reserve both TCP and UDP ports explicitly.
+- **Accessibility** — `accessible-role` and `accessible-label` on all navigation buttons.
+- **UX polish** — Improved reaction pills, "(edited)" italic badge, keybind help text, "Copied!" feedback, audio device error guidance, unified navigation labels.
+- **Dead code removal** — Removed unused `AudioEngine::adapt_bitrate()`.
 
 ### Stats
 - 351 tests passing, zero warnings
