@@ -823,6 +823,7 @@ async fn handle_connection(
                 audio_rate_window_ms: AtomicU64::new(instant_to_ms()),
                 screen_frame_count: AtomicU32::new(0),
                 screen_rate_window_ms: AtomicU64::new(instant_to_ms()),
+                blocked_by: std::sync::RwLock::new(HashSet::new()),
             }),
         );
         id
@@ -871,6 +872,7 @@ async fn handle_connection(
                     metrics
                         .malformed_signaling_messages_total
                         .fetch_add(1, Ordering::Relaxed);
+                    log::debug!("Malformed signal from {peer_id}: {}", &text[..text.len().min(200)]);
                 }
             }
             Ok(Message::Binary(data)) => {
@@ -1355,7 +1357,9 @@ async fn handle_signal(
         SignalMessage::RevokeAllSessions => {
             handlers::auth::handle_revoke_all_sessions(state, peer_id, db).await;
         }
-        _ => {}
+        other => {
+            log::debug!("Unhandled signal from {peer_id}: {:?}", std::mem::discriminant(&other));
+        }
     }
 }
 
@@ -1418,9 +1422,15 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
-    // Collect room peers + apply whisper filtering in a single state read
+    // Collect room peers + apply whisper + block filtering in a single state read
     let others = {
         let s = state.read().await;
+        // Get sender's persistent user_id for block checks (lock-free read)
+        let sender_user_id: Option<String> = s
+            .peers
+            .get(sender_id)
+            .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
+
         let room_peers: Vec<Arc<Peer>> = s
             .rooms
             .get(&room_code)
@@ -1429,6 +1439,14 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
                     .iter()
                     .filter(|pid| pid.as_str() != sender_id)
                     .filter_map(|pid| s.peers.get(pid).cloned())
+                    // Block filtering: skip recipients who have blocked the sender
+                    .filter(|peer| {
+                        if let Some(ref uid) = sender_user_id {
+                            !peer.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false)
+                        } else {
+                            true // No user_id = guest, can't be blocked
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -1556,7 +1574,22 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
-    let others = handlers::collect_room_others(state, &room_code, sender_id).await;
+    let others = {
+        let all = handlers::collect_room_others(state, &room_code, sender_id).await;
+        // Block filtering for screen share
+        let sender_user_id: Option<String> = {
+            let s = state.read().await;
+            s.peers.get(sender_id)
+                .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()))
+        };
+        if let Some(ref uid) = sender_user_id {
+            all.into_iter()
+                .filter(|p| !p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false))
+                .collect()
+        } else {
+            all
+        }
+    };
     if others.is_empty() {
         metrics
             .screen_frames_in_total
@@ -1763,9 +1796,14 @@ async fn relay_audio_udp(
     frame.extend_from_slice(sender_id.as_bytes());
     frame.extend_from_slice(data);
 
-    // Collect room peers + apply whisper filtering in a single state read
+    // Collect room peers + apply whisper + block filtering in a single state read
     let others = {
         let s = state.read().await;
+        let sender_user_id: Option<String> = s
+            .peers
+            .get(sender_id)
+            .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
+
         let room_peers: Vec<Arc<Peer>> = s
             .rooms
             .get(&room_code)
@@ -1774,6 +1812,13 @@ async fn relay_audio_udp(
                     .iter()
                     .filter(|pid| pid.as_str() != sender_id)
                     .filter_map(|pid| s.peers.get(pid).cloned())
+                    .filter(|peer| {
+                        if let Some(ref uid) = sender_user_id {
+                            !peer.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false)
+                        } else {
+                            true
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();

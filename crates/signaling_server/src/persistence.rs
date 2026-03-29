@@ -1345,6 +1345,21 @@ impl Database {
         Ok(count > 0)
     }
 
+    /// Get all user_ids that have blocked the given user.
+    /// Used to populate the blocked_by cache on authentication.
+    pub fn get_users_who_blocked(&self, blocked_id: &str) -> Result<Vec<String>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare("SELECT blocker_id FROM user_blocks WHERE blocked_id = ?1")
+            .map_err(|e| format!("Failed to query blocks: {e}"))?;
+        let ids = stmt
+            .query_map(params![blocked_id], |row| row.get(0))
+            .map_err(|e| format!("Failed to fetch blocks: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
+    }
+
     pub fn create_group_conversation(
         &self,
         group_id: &str,

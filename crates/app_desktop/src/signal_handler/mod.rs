@@ -621,6 +621,31 @@ pub fn process_signals(
             SignalMessage::AllSessionsRevoked => {
                 log::info!("All sessions revoked — current session re-authenticated");
             }
+            SignalMessage::ChannelsReordered { channel_ids } => {
+                let mut s = state.borrow_mut();
+                if let Some(ref mut space) = s.space {
+                    // Reorder channels to match server's new order
+                    let mut reordered = Vec::with_capacity(space.channels.len());
+                    for cid in channel_ids {
+                        if let Some(pos) = space.channels.iter().position(|c| c.id == *cid) {
+                            reordered.push(space.channels[pos].clone());
+                        }
+                    }
+                    // Append any channels not in the reorder list (shouldn't happen, but safe)
+                    for ch in &space.channels {
+                        if !reordered.iter().any(|r| r.id == ch.id) {
+                            reordered.push(ch.clone());
+                        }
+                    }
+                    space.channels = reordered;
+                    drop(s);
+                    // Refresh UI
+                    let s = state.borrow();
+                    if let Some(ref space) = s.space {
+                        ui_shell::set_channels(w, &space.channels);
+                    }
+                }
+            }
             other => {
                 log::trace!("Unhandled signal (client-to-server variant): {:?}",
                     std::mem::discriminant(other));

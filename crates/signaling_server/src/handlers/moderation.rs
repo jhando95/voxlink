@@ -411,6 +411,20 @@ pub async fn handle_block_user(state: &State, peer_id: &str, user_id: String, db
 
     match result {
         Ok(()) => {
+            // Update blocked_by cache on the target peer (if they're online)
+            {
+                let s = state.read().await;
+                for peer in s.peers.values() {
+                    if let Ok(uid) = peer.user_id.try_lock() {
+                        if uid.as_deref() == Some(&user_id) {
+                            if let Ok(mut cache) = peer.blocked_by.write() {
+                                cache.insert(current_user_id.clone());
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
             let peer = {
                 let s = state.read().await;
                 s.peers.get(peer_id).cloned()
@@ -437,7 +451,7 @@ pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, 
     };
 
     let db_clone = db.clone();
-    let blocker = current_user_id;
+    let blocker = current_user_id.clone();
     let blocked = user_id.clone();
     let result =
         tokio::task::spawn_blocking(move || db_clone.delete_user_block(&blocker, &blocked))
@@ -446,6 +460,20 @@ pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, 
 
     match result {
         Ok(()) => {
+            // Update blocked_by cache on the target peer (if online)
+            {
+                let s = state.read().await;
+                for peer in s.peers.values() {
+                    if let Ok(uid) = peer.user_id.try_lock() {
+                        if uid.as_deref() == Some(&user_id) {
+                            if let Ok(mut cache) = peer.blocked_by.write() {
+                                cache.remove(&current_user_id);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
             let peer = {
                 let s = state.read().await;
                 s.peers.get(peer_id).cloned()

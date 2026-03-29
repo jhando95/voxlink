@@ -107,6 +107,16 @@ pub async fn handle_authenticate(
                 let s = state.read().await;
                 if let Some(peer) = s.peers.get(peer_id) {
                     *peer.user_id.lock().await = Some(user_id.clone());
+                    // Load block cache: which user_ids have blocked this user
+                    let uid = user_id.clone();
+                    let db_c = db_ref.clone();
+                    if let Ok(blocked_by) = tokio::task::spawn_blocking(move || {
+                        db_c.get_users_who_blocked(&uid).unwrap_or_default()
+                    }).await {
+                        if let Ok(mut cache) = peer.blocked_by.write() {
+                            *cache = blocked_by.into_iter().collect();
+                        }
+                    }
                 }
                 if let Some(peer) = s.peers.get(peer_id).cloned() {
                     drop(s);
