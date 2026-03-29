@@ -10,6 +10,7 @@ log = { workspace = true }
 anyhow = { workspace = true }
 audiopus = { workspace = true }
 nnnoiseless = "0.5"
+hound = "3.5"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -248,6 +248,8 @@ pub struct AudioEngine {
     ducking_amount: Arc<AtomicU32>,
     /// Volume ducking: energy threshold to consider a peer "speaking" (stored 0-1000)
     ducking_threshold: Arc<AtomicU32>,
+    /// Soundboard: load and play WAV clips mixed into the capture stream
+    soundboard: feedback::Soundboard,
 }
 
 unsafe impl Send for AudioEngine {}
@@ -283,6 +285,7 @@ impl AudioEngine {
             metrics: AudioMetrics::new(),
             ducking_amount: Arc::new(AtomicU32::new(0)),
             ducking_threshold: Arc::new(AtomicU32::new(100)), // 0.1 default
+            soundboard: feedback::Soundboard::new(),
         })
     }
 
@@ -540,6 +543,7 @@ impl AudioEngine {
         let input_gain = self.input_gain.clone();
         let opus_bitrate = self.opus_bitrate.clone();
         let opus_fec_loss_pct = self.opus_fec_loss_pct.clone();
+        let soundboard_playback = self.soundboard.capture_state();
 
         // All buffers pre-allocated once — zero allocation in the audio callback
         let mut capture_ring = CaptureRing::new(FRAME_SIZE * 4);
@@ -618,6 +622,9 @@ impl AudioEngine {
                         // De-ess sibilant frequencies before encoding
                         deesser.process(&mut frame_buf);
                     }
+
+                    // Mix soundboard clip samples into the outgoing frame (if playing)
+                    soundboard_playback.mix_into(&mut frame_buf);
 
                     for (out, &s) in pcm_i16.iter_mut().zip(frame_buf.iter()) {
                         *out = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -709,6 +716,28 @@ impl AudioEngine {
     /// Get the current runtime bitrate.
     pub fn current_bitrate(&self) -> i32 {
         self.opus_bitrate.load(Ordering::Relaxed)
+    }
+
+    // ─── Soundboard ───
+
+    /// Load a WAV file as a soundboard clip. Returns the clip index.
+    pub fn load_soundboard_clip(&self, path: &str) -> Result<usize, String> {
+        self.soundboard.load_clip(path)
+    }
+
+    /// Play a loaded soundboard clip by index (mixed into outgoing audio).
+    pub fn play_soundboard_clip(&self, index: usize) {
+        self.soundboard.play(index);
+    }
+
+    /// Clear all loaded soundboard clips.
+    pub fn clear_soundboard(&self) {
+        self.soundboard.clear();
+    }
+
+    /// Number of loaded soundboard clips.
+    pub fn soundboard_clip_count(&self) -> usize {
+        self.soundboard.clip_count()
     }
 
     pub fn restart_capture(&mut self, device_name: Option<&str>) -> Result<()> {

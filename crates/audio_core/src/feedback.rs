@@ -191,6 +191,175 @@ impl FeedbackPlayback {
     }
 }
 
+// ─── Soundboard ───
+
+/// Maximum number of loaded clips to prevent excessive memory use.
+const MAX_SOUNDBOARD_CLIPS: usize = 16;
+/// Volume multiplier for soundboard clips (0.0–1.0).
+const CLIP_VOLUME: f32 = 0.35;
+
+/// A loaded, decoded soundboard clip ready for playback.
+struct SoundboardClip {
+    samples: Arc<[f32]>,
+}
+
+/// Soundboard: load WAV clips and play them into the capture stream.
+/// Lock-free playback via atomics (same pattern as FeedbackTone).
+pub(crate) struct Soundboard {
+    clips: std::sync::Mutex<Vec<SoundboardClip>>,
+    /// Active clip index (u32::MAX = idle)
+    active_clip: Arc<AtomicU32>,
+    /// Playback cursor position (0 = idle)
+    cursor: Arc<AtomicU32>,
+}
+
+impl Soundboard {
+    pub fn new() -> Self {
+        Self {
+            clips: std::sync::Mutex::new(Vec::new()),
+            active_clip: Arc::new(AtomicU32::new(u32::MAX)),
+            cursor: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Load a WAV file and add it as a soundboard clip. Returns the clip index.
+    /// Resamples to 48kHz mono if needed. Caps at MAX_SOUNDBOARD_CLIPS.
+    pub fn load_clip(&self, path: &str) -> Result<usize, String> {
+        let reader = hound::WavReader::open(path)
+            .map_err(|e| format!("Failed to open WAV {path}: {e}"))?;
+        let spec = reader.spec();
+        let raw_samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader
+                .into_samples::<f32>()
+                .filter_map(|s| s.ok())
+                .collect(),
+            hound::SampleFormat::Int => {
+                let bits = spec.bits_per_sample;
+                let max_val = (1u32 << (bits - 1)) as f32;
+                reader
+                    .into_samples::<i32>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| s as f32 / max_val)
+                    .collect()
+            }
+        };
+
+        // Mix to mono if stereo
+        let mono = if spec.channels > 1 {
+            let ch = spec.channels as usize;
+            raw_samples
+                .chunks(ch)
+                .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+                .collect()
+        } else {
+            raw_samples
+        };
+
+        // Simple resample if not 48kHz (nearest-neighbor, good enough for soundboard)
+        let resampled = if spec.sample_rate != SAMPLE_RATE {
+            let ratio = spec.sample_rate as f64 / SAMPLE_RATE as f64;
+            let out_len = (mono.len() as f64 / ratio) as usize;
+            (0..out_len)
+                .map(|i| {
+                    let src_idx = ((i as f64 * ratio) as usize).min(mono.len() - 1);
+                    mono[src_idx] * CLIP_VOLUME
+                })
+                .collect::<Vec<f32>>()
+        } else {
+            mono.iter().map(|&s| s * CLIP_VOLUME).collect()
+        };
+
+        let mut clips = self.clips.lock().map_err(|_| "Lock poisoned".to_string())?;
+        if clips.len() >= MAX_SOUNDBOARD_CLIPS {
+            return Err(format!("Maximum {MAX_SOUNDBOARD_CLIPS} clips allowed"));
+        }
+        let idx = clips.len();
+        clips.push(SoundboardClip {
+            samples: Arc::from(resampled),
+        });
+        Ok(idx)
+    }
+
+    /// Clear all loaded clips.
+    pub fn clear(&self) {
+        if let Ok(mut clips) = self.clips.lock() {
+            clips.drain(..);
+        }
+        self.active_clip.store(u32::MAX, Ordering::Relaxed);
+        self.cursor.store(0, Ordering::Relaxed);
+    }
+
+    /// Trigger playback of clip at the given index.
+    pub fn play(&self, index: usize) {
+        let count = self.clip_count();
+        if index < count {
+            self.active_clip.store(index as u32, Ordering::Relaxed);
+            self.cursor.store(1, Ordering::Relaxed); // 1-indexed, 0 = idle
+        }
+    }
+
+    /// Get the number of loaded clips.
+    pub fn clip_count(&self) -> usize {
+        match self.clips.lock() {
+            Ok(clips) => clips.len(),
+            Err(_) => 0,
+        }
+    }
+
+    /// Get cloneable state for the capture callback to mix clips into outgoing audio.
+    pub fn capture_state(&self) -> SoundboardPlayback {
+        let clip_samples: Vec<Arc<[f32]>> = match self.clips.lock() {
+            Ok(clips) => clips.iter().map(|clip| clip.samples.clone()).collect(),
+            Err(_) => Vec::new(),
+        };
+        SoundboardPlayback {
+            clips: clip_samples,
+            active_clip: self.active_clip.clone(),
+            cursor: self.cursor.clone(),
+        }
+    }
+}
+
+/// Lock-free playback state for the capture callback.
+pub(crate) struct SoundboardPlayback {
+    clips: Vec<Arc<[f32]>>,
+    active_clip: Arc<AtomicU32>,
+    cursor: Arc<AtomicU32>,
+}
+
+impl SoundboardPlayback {
+    /// Mix the active soundboard clip into the capture buffer (sent to other peers).
+    #[inline]
+    pub fn mix_into(&self, dest: &mut [f32]) {
+        let pos = self.cursor.load(Ordering::Relaxed) as usize;
+        if pos == 0 {
+            return;
+        }
+        let clip_idx = self.active_clip.load(Ordering::Relaxed) as usize;
+        if clip_idx >= self.clips.len() {
+            self.cursor.store(0, Ordering::Relaxed);
+            return;
+        }
+        let samples = &self.clips[clip_idx];
+        let start = pos - 1;
+        if start >= samples.len() {
+            self.cursor.store(0, Ordering::Relaxed);
+            return;
+        }
+        let remaining = samples.len() - start;
+        let count = dest.len().min(remaining);
+        for i in 0..count {
+            dest[i] += samples[start + i];
+        }
+        let new_pos = start + count + 1;
+        if new_pos > samples.len() {
+            self.cursor.store(0, Ordering::Relaxed);
+        } else {
+            self.cursor.store(new_pos as u32, Ordering::Relaxed);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

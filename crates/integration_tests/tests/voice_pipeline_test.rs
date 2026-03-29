@@ -41,9 +41,13 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        // Reserve both WS and UDP ports to prevent collisions in parallel tests
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = ws_listener.local_addr().unwrap().port();
+        let udp_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_port = udp_socket.local_addr().unwrap().port();
+        drop(ws_listener);
+        drop(udp_socket);
 
         let server_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -59,6 +63,7 @@ impl TestServer {
 
         let child = Command::new(&server_bin)
             .env("PV_ADDR", format!("127.0.0.1:{port}"))
+            .env("PV_UDP_PORT", udp_port.to_string())
             .env("PV_DB_PATH", &db_path)
             .env("RUST_LOG", "warn")
             .kill_on_drop(true)
