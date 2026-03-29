@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.9.0 — Performance, Soundboard & UI Polish
+## v0.9.1 — Security, Soundboard & UI Polish
 
 ### New
 - **Soundboard** — Load WAV clips, play into voice chat from Settings panel. Auto-resample to 48kHz mono, lock-free mixing into capture stream. Max 16 clips, configurable keybinds.
