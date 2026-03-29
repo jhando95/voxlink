@@ -44,6 +44,9 @@ export component TopBar inherits Rectangle {
                 border-color: VxTheme.border-subtle;
                 border-width: 1px;
 
+                accessible-role: button;
+                accessible-label: "Toggle sidebar navigation";
+
                 nav-button-touch := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.nav-toggle(); }
@@ -343,13 +346,7 @@ export component WorkspaceRail inherits Rectangle {
                 VerticalLayout {
                     spacing: 6px;
                     SectionLabel {
-                        text: VxTheme.is-party ? "BLADES" :
-                              VxTheme.is-space ? "HELM" :
-                              VxTheme.is-retro ? "MENU//" :
-                              VxTheme.is-amber ? "NAV>>" :
-                              VxTheme.is-noir ? "CHAPTERS" :
-                              VxTheme.is-arctic ? "WAYPOINTS" :
-                              "NAVIGATION";
+                        text: "NAVIGATION";
                     }
 
                     Rectangle {
@@ -359,6 +356,9 @@ export component WorkspaceRail inherits Rectangle {
                                     home-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
                         border-color: root.current-view == 0 ? VxTheme.accent-border : transparent;
                         border-width: 1px;
+
+                        accessible-role: button;
+                        accessible-label: "Home — Dashboard and spaces";
 
                         home-rail-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -429,6 +429,9 @@ export component WorkspaceRail inherits Rectangle {
                         border-color: root.current-view == 2 ? VxTheme.accent-border : transparent;
                         border-width: 1px;
 
+                        accessible-role: button;
+                        accessible-label: "Settings — Audio, devices, keybinds";
+
                         settings-rail-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.navigate(2); }
@@ -497,6 +500,9 @@ export component WorkspaceRail inherits Rectangle {
                                     system-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
                         border-color: root.current-view == 3 ? VxTheme.accent-border : transparent;
                         border-width: 1px;
+
+                        accessible-role: button;
+                        accessible-label: "System — Performance, friends, session";
 
                         system-rail-touch := TouchArea {
                             mouse-cursor: pointer;

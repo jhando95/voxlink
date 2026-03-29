@@ -367,10 +367,18 @@ export component SettingsView inherits Rectangle {
                                         clicked => { root.selected-input = idx; }
                                     }
                                 }
-                                if root.input-devices.length == 0 : Text {
-                                    text: "No microphones found";
-                                    color: VxTheme.danger;
-                                    font-size: 10px;
+                                if root.input-devices.length == 0 : VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "No microphones found";
+                                        color: VxTheme.danger;
+                                        font-size: 10px;
+                                    }
+                                    Text {
+                                        text: "Check connections, update drivers, or click Refresh.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
                                 }
                             }
 
@@ -386,10 +394,18 @@ export component SettingsView inherits Rectangle {
                                         clicked => { root.selected-output = idx; }
                                     }
                                 }
-                                if root.output-devices.length == 0 : Text {
-                                    text: "No speakers found";
-                                    color: VxTheme.danger;
-                                    font-size: 10px;
+                                if root.output-devices.length == 0 : VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "No speakers found";
+                                        color: VxTheme.danger;
+                                        font-size: 10px;
+                                    }
+                                    Text {
+                                        text: "Check connections, update drivers, or click Refresh.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                    }
                                 }
                             }
                         }
