@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { VxTheme } from "../theme.slint";
+import { SoundboardClipData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
 component ThemePresetCard inherits Rectangle {
@@ -134,6 +134,10 @@ export component SettingsView inherits Rectangle {
     callback logout();
     callback show-login();
     callback revoke-all-sessions();
+    // Soundboard
+    in property <[SoundboardClipData]> soundboard-clips: [];
+    callback play-soundboard-clip(int);
+    callback remove-soundboard-clip(int);
 
     background: transparent;
 
@@ -1208,6 +1212,74 @@ export component SettingsView inherits Rectangle {
                             horizontal-stretch: 1;
                             clicked => { root.show-login(); }
                         }
+                    }
+                }
+            }
+
+            // ─── Soundboard ───
+            VxCard {
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    SectionLabel { text: "SOUNDBOARD"; }
+
+                    if root.soundboard-clips.length == 0 : Text {
+                        text: "No clips loaded. Add WAV files to play into voice chat.";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+
+                    for clip[idx] in root.soundboard-clips : Rectangle {
+                        height: 36px;
+                        border-radius: VxTheme.radius-control;
+                        background: clip-row-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                        border-color: VxTheme.border-subtle;
+                        border-width: 1px;
+
+                        clip-row-touch := TouchArea {}
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: clip.name;
+                                color: VxTheme.text-primary;
+                                font-size: 11px;
+                                font-weight: 600;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+
+                            if clip.keybind != "" : KeyPill {
+                                key-text: clip.keybind;
+                            }
+
+                            VxButton {
+                                label: "Play";
+                                small: true;
+                                soft: true;
+                                clicked => { root.play-soundboard-clip(idx); }
+                            }
+
+                            VxButton {
+                                label: "X";
+                                small: true;
+                                danger: true;
+                                clicked => { root.remove-soundboard-clip(idx); }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Add WAV files via config. Max 16 clips.";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
                     }
                 }
             }

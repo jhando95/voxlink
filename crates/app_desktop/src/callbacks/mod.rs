@@ -3,6 +3,7 @@ mod chat;
 mod connection;
 mod controls;
 mod room;
+mod soundboard;
 mod space;
 mod ui;
 
@@ -166,4 +167,8 @@ pub fn setup(
     space::setup_set_priority_speaker(window, network, rt_handle);
     space::setup_whisper(window, network, rt_handle);
     space::setup_save_user_note(window);
+
+    // Soundboard
+    soundboard::setup_play_clip(window, audio, rt_handle);
+    soundboard::setup_remove_clip(window, audio, rt_handle);
 }

@@ -10,7 +10,7 @@ use ui_shell::MainWindow;
 pub const THEME_PRESET_COUNT: i32 = 7;
 
 /// Global lock for config load-modify-save operations to prevent data races.
-static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Auto-save all settings to config file with device hot-swap.
 pub fn auto_save_settings(

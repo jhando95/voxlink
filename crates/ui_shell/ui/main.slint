@@ -1,4 +1,4 @@
-import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, SavedServerData, ShareSourceData, SpaceData, VxTheme } from "theme.slint";
+import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, SavedServerData, ShareSourceData, SoundboardClipData, SpaceData, VxTheme } from "theme.slint";
 import { VxCard, VxInput } from "components.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
@@ -157,6 +157,10 @@ export component MainWindow inherits Window {
     callback toggle-show-spoilers();
     callback toggle-compact-chat();
     callback toggle-member-widget();
+    // Soundboard
+    in property <[SoundboardClipData]> soundboard-clips: [];
+    callback play-soundboard-clip(int);
+    callback remove-soundboard-clip(int);
     callback send-friend-request(string);
     callback accept-friend-request(string);
     callback decline-friend-request(string);
@@ -502,6 +506,9 @@ export component MainWindow inherits Window {
                             logout => { root.logout(); }
                             show-login => { root.show-login-view = true; root.login-mode = true; root.auth-error = ""; }
                             revoke-all-sessions => { root.revoke-all-sessions(); }
+                            soundboard-clips: root.soundboard-clips;
+                            play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
+                            remove-soundboard-clip(idx) => { root.remove-soundboard-clip(idx); }
                         }
 
                         if root.current-view == 4 : SpaceView {

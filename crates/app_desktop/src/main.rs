@@ -94,6 +94,14 @@ fn main() {
         p.current_jitter_ms = aud.metrics.current_jitter_ms.clone();
         p.active_peers = aud.metrics.active_peers.clone();
         p.encode_bitrate = aud.metrics.encode_bitrate_kbps.clone();
+
+        // Load soundboard clips from config
+        for clip in &config.soundboard_clips {
+            match aud.load_soundboard_clip(&clip.path) {
+                Ok(idx) => log::info!("Loaded soundboard clip '{}' (index {idx})", clip.name),
+                Err(e) => log::warn!("Failed to load soundboard clip '{}': {e}", clip.name),
+            }
+        }
     });
 
     let media = Arc::new(TokioMutex::new(media_transport::MediaSession::new(
@@ -513,6 +521,16 @@ fn apply_config(
             })
             .collect();
         ui_shell::set_spaces(window, &space_infos);
+    }
+
+    // Populate soundboard clips
+    if !config.soundboard_clips.is_empty() {
+        let clip_tuples: Vec<(String, String, String)> = config
+            .soundboard_clips
+            .iter()
+            .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
+            .collect();
+        ui_shell::set_soundboard_clips(window, &clip_tuples);
     }
 }
 

@@ -955,3 +955,16 @@ pub fn set_device_lists(window: &MainWindow, inputs: &[String], outputs: &[Strin
     window.set_input_devices(std::rc::Rc::new(slint::VecModel::from(input_model)).into());
     window.set_output_devices(std::rc::Rc::new(slint::VecModel::from(output_model)).into());
 }
+
+/// Set soundboard clips in the UI. Each tuple is (name, path, keybind).
+pub fn set_soundboard_clips(window: &MainWindow, clips: &[(String, String, String)]) {
+    let model: Vec<SoundboardClipData> = clips
+        .iter()
+        .map(|(name, path, keybind)| SoundboardClipData {
+            name: name.into(),
+            path: path.into(),
+            keybind: keybind.into(),
+        })
+        .collect();
+    window.set_soundboard_clips(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
