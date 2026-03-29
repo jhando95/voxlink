@@ -43,8 +43,8 @@ export component ChatView inherits Rectangle {
     background: transparent;
 
     VerticalLayout {
-        spacing: 18px;
-        padding: root.wide ? 22px : 14px;
+        spacing: 12px;
+        padding: root.wide ? 16px : 12px;
 
         HorizontalLayout {
             alignment: space-between;
@@ -321,7 +321,7 @@ export component ChatView inherits Rectangle {
 
                     VerticalLayout {
                         padding: root.wide ? 20px : (root.compact-mode ? 8px : 16px);
-                        spacing: root.compact-mode ? 4px : 10px;
+                        spacing: root.compact-mode ? 3px : 6px;
 
                         if root.chat-messages.length == 0 : Rectangle {
                             border-radius: VxTheme.radius-card;
@@ -380,11 +380,11 @@ export component ChatView inherits Rectangle {
                             msg-hover := TouchArea {}
 
                             HorizontalLayout {
-                                padding-left: root.compact-mode ? 8px : 14px;
-                                padding-right: root.compact-mode ? 8px : 14px;
-                                padding-top: root.compact-mode ? 6px : 14px;
-                                padding-bottom: root.compact-mode ? 6px : 14px;
-                                spacing: root.compact-mode ? 8px : 12px;
+                                padding-left: root.compact-mode ? 6px : 10px;
+                                padding-right: root.compact-mode ? 6px : 10px;
+                                padding-top: root.compact-mode ? 4px : 8px;
+                                padding-bottom: root.compact-mode ? 4px : 8px;
+                                spacing: root.compact-mode ? 6px : 10px;
 
                                 if !root.compact-mode : VxAvatar {
                                     avatar-size: 30px;

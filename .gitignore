@@ -9,3 +9,4 @@ installer/redist/
 *.db
 *.db-shm
 *.db-wal
+installer/dist/

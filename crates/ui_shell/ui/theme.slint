@@ -461,25 +461,33 @@ export global VxTheme {
     out property <float> s: ui-scale;
 
     // ── Theme-specific layout tokens ──
+    // ── Spacing scale (4px grid) ──
+    out property <length> space-xs:  4px;
+    out property <length> space-sm:  8px;
+    out property <length> space-md:  12px;
+    out property <length> space-lg:  16px;
+    out property <length> space-xl:  20px;
+    out property <length> space-2xl: 24px;
+
     out property <length> radius-card:
-        is-party ? 6px :   // 360: boxy angular panels
-        is-retro ? 4px :   // Retro-tech: sharp CRT corners
-        is-amber ? 3px :   // Amber CRT: hard rectangles
-        is-noir  ? 8px :   // Noir: subtle rounding
-        is-space ? 20px :  // Space: bubble-round
-        is-arctic ? 18px : // Arctic: soft frosted
-        16px;              // Voxlink default
+        is-party ? 6px :
+        is-retro ? 4px :
+        is-amber ? 3px :
+        is-noir  ? 8px :
+        is-space ? 16px :
+        is-arctic ? 14px :
+        12px;              // Voxlink default (tighter)
     out property <length> radius-control:
         is-party ? 4px :
         is-retro ? 2px :
         is-amber ? 2px :
         is-noir  ? 6px :
-        is-space ? 14px :
-        is-arctic ? 14px :
-        12px;
+        is-space ? 10px :
+        is-arctic ? 10px :
+        8px;               // Tighter controls
     out property <length> radius-pill:    999px;
     out property <length> gutter:
-        18px * ui-scale;
+        16px * ui-scale;
 
     // ── Theme-specific component styling ──
     // Button border width — heavier for boxy themes

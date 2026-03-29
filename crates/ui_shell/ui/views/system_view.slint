@@ -35,8 +35,8 @@ export component SystemView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: root.wide ? 22px : 14px;
-            spacing: 18px;
+            padding: root.wide ? 16px : 12px;
+            spacing: 12px;
 
             VxCard {
                 HorizontalLayout {
@@ -80,11 +80,11 @@ export component SystemView inherits Rectangle {
             }
 
             if root.wide : HorizontalLayout {
-                spacing: 18px;
+                spacing: 12px;
 
                 VerticalLayout {
                     horizontal-stretch: 1;
-                    spacing: 18px;
+                    spacing: 12px;
 
                     VxCard {
                         VerticalLayout {
@@ -319,7 +319,7 @@ export component SystemView inherits Rectangle {
 
                 VerticalLayout {
                     width: 304px;
-                    spacing: 18px;
+                    spacing: 12px;
 
                     VxCard {
                         VerticalLayout {
@@ -633,7 +633,7 @@ export component SystemView inherits Rectangle {
             }
 
             if !root.wide : VerticalLayout {
-                spacing: 18px;
+                spacing: 12px;
 
                 VxCard {
                     VerticalLayout {

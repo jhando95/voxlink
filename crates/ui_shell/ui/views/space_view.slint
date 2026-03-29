@@ -65,8 +65,8 @@ export component SpaceView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
-            padding: (root.wide ? 22px : 14px) * VxTheme.s;
-            spacing: 18px * VxTheme.s;
+            padding: (root.wide ? 16px : 12px) * VxTheme.s;
+            spacing: 12px * VxTheme.s;
 
             HorizontalLayout {
                 alignment: space-between;
@@ -203,11 +203,11 @@ export component SpaceView inherits Rectangle {
             }
 
             if root.wide : HorizontalLayout {
-                spacing: 18px;
+                spacing: 12px;
 
                 VerticalLayout {
                     horizontal-stretch: 1;
-                    spacing: 18px;
+                    spacing: 12px;
 
                     VxCard {
                         VerticalLayout {
@@ -662,7 +662,7 @@ export component SpaceView inherits Rectangle {
 
                 VerticalLayout {
                     width: 304px;
-                    spacing: 18px;
+                    spacing: 12px;
 
                     VxCard {
                         VerticalLayout {
@@ -996,7 +996,7 @@ export component SpaceView inherits Rectangle {
             }
 
             if !root.wide : VerticalLayout {
-                spacing: 18px;
+                spacing: 12px;
 
                 VxCard {
                     VerticalLayout {

@@ -18,7 +18,7 @@ export component TopBar inherits Rectangle {
     in property <string> update-version: "";
     callback nav-toggle();
 
-    height: (root.compact ? 64px : 72px) * VxTheme.s;
+    height: (root.compact ? 48px : 52px) * VxTheme.s;
     background: VxTheme.bg-panel;
 
     AccentBar {
@@ -27,18 +27,18 @@ export component TopBar inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 18px;
-        padding-right: 18px;
+        padding-left: 12px;
+        padding-right: 12px;
         alignment: space-between;
-        spacing: root.compact ? 10px : 14px;
+        spacing: root.compact ? 8px : 12px;
 
         HorizontalLayout {
-            spacing: root.compact ? 10px : 12px;
+            spacing: root.compact ? 8px : 10px;
             alignment: center;
 
             if root.show-nav-button : Rectangle {
-                width: root.compact ? 38px : 42px;
-                height: root.compact ? 38px : 42px;
+                width: root.compact ? 34px : 36px;
+                height: root.compact ? 34px : 36px;
                 border-radius: VxTheme.radius-control;
                 background: nav-button-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
                 border-color: VxTheme.border-subtle;
@@ -174,7 +174,7 @@ export component WorkspaceRail inherits Rectangle {
     callback navigate(int);
     callback select-space(string);
 
-    width: root.compact ? 236px : 272px;
+    width: root.compact ? 220px : 240px;
     background: VxTheme.bg-rail;
 
     Rectangle {
@@ -188,7 +188,7 @@ export component WorkspaceRail inherits Rectangle {
         spacing: 0px;
 
         Rectangle {
-            height: root.compact ? 72px : 82px;
+            height: root.compact ? 56px : 64px;
             background: transparent;
 
             HorizontalLayout {
@@ -353,7 +353,7 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        height: 46px;
+                        height: 40px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 0 ? VxTheme.tab-active-bg :
                                     home-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
@@ -422,7 +422,7 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        height: 46px;
+                        height: 40px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 2 ? VxTheme.tab-active-bg :
                                     settings-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
@@ -491,7 +491,7 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        height: 46px;
+                        height: 40px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 3 ? VxTheme.tab-active-bg :
                                     system-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
@@ -717,17 +717,17 @@ export component BottomNav inherits Rectangle {
     in property <int> unread-direct-messages-count: 0;
     callback navigate(int);
 
-    height: 62px;
+    height: 48px;
     background: VxTheme.bg-panel;
 
     AccentBar { y: 0px; opacity: 0.3; }
 
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        padding-top: 8px;
-        padding-bottom: 8px;
-        spacing: 8px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
 
         Rectangle {
             horizontal-stretch: 1;

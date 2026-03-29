@@ -11,8 +11,8 @@ export component VxButton inherits Rectangle {
     in property <bool> soft: false;
     callback clicked();
 
-    height: (root.small ? 34px : 40px) * VxTheme.s;
-    min-width: (root.small ? 56px : 88px) * VxTheme.s;
+    height: (root.small ? 30px : 36px) * VxTheme.s;
+    min-width: (root.small ? 48px : 80px) * VxTheme.s;
     border-radius: root.small ? (10px * VxTheme.s) : VxTheme.radius-control;
     clip: true;
     background: root.ghost ? transparent :
@@ -54,8 +54,8 @@ export component VxButton inherits Rectangle {
     HorizontalLayout {
         alignment: center;
         spacing: 6px;
-        padding-left: root.small ? 10px : 14px;
-        padding-right: root.small ? 10px : 14px;
+        padding-left: root.small ? 8px : 12px;
+        padding-right: root.small ? 8px : 12px;
 
         Text {
             text: root.label;
@@ -132,7 +132,7 @@ export component VxInput inherits Rectangle {
     in property <InputType> input-type: InputType.text;
     callback accepted();
 
-    height: 42px;
+    height: 36px;
     border-radius: VxTheme.radius-control;
     background: VxTheme.bg-input;
     border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
@@ -149,10 +149,10 @@ export component VxInput inherits Rectangle {
     }
 
     inner := LineEdit {
-        x: 12px;
-        y: 9px;
-        width: parent.width - 24px;
-        height: parent.height - 18px;
+        x: 10px;
+        y: 7px;
+        width: parent.width - 20px;
+        height: parent.height - 14px;
         placeholder-text: root.placeholder;
         input-type: root.input-type;
         accepted => { root.accepted(); }
@@ -277,8 +277,8 @@ export component VxStatBlock inherits Rectangle {
     border-width: 1px;
 
     VerticalLayout {
-        padding: 14px * VxTheme.s;
-        spacing: 3px;
+        padding: 12px * VxTheme.s;
+        spacing: 2px;
         Text {
             text: root.label;
             color: VxTheme.text-muted;
@@ -377,11 +377,11 @@ export component VxOptionRow inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-top: 10px;
-        padding-bottom: 10px;
-        spacing: 10px;
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 8px;
         alignment: center;
 
         Rectangle {
@@ -425,15 +425,15 @@ export component MetricRow inherits Rectangle {
     in property <string> metric-value: "";
     in property <color> indicator-color: VxTheme.success;
 
-    height: 40px;
+    height: 34px;
     background: VxTheme.bg-soft;
     border-radius: VxTheme.radius-control;
     border-color: VxTheme.border-subtle;
     border-width: 1px;
 
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 12px;
+        padding-right: 12px;
         alignment: space-between;
 
         HorizontalLayout {
@@ -467,7 +467,7 @@ export component VxSlider inherits Rectangle {
     in-out property <float> value: 1.0;
     callback changed(float);
 
-    height: 32px;
+    height: 28px;
     min-width: 80px;
     background: transparent;
 
@@ -967,9 +967,9 @@ export component VxToggle inherits Rectangle {
     in-out property <bool> checked: false;
     callback toggled();
 
-    width: 48px;
-    height: 26px;
-    border-radius: 13px;
+    width: 42px;
+    height: 24px;
+    border-radius: 12px;
     background: root.checked ? VxTheme.accent : VxTheme.bg-raised;
     border-color: root.checked ? VxTheme.accent-border : VxTheme.border-subtle;
     border-width: 1px;
@@ -985,9 +985,9 @@ export component VxToggle inherits Rectangle {
     Rectangle {
         x: root.checked ? parent.width - self.width - 3px : 3px;
         y: 3px;
-        width: 20px;
-        height: 20px;
-        border-radius: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
         background: #f7fcff;
         animate x { duration: 120ms; easing: ease-out; }
     }

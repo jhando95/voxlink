@@ -21,9 +21,9 @@ export component MainWindow inherits Window {
     default-font-family: "Inter";
     default-font-size: 13px * VxTheme.s;
     min-width: 440px;
-    min-height: 560px;
-    preferred-width: 1180px;
-    preferred-height: 760px;
+    min-height: 520px;
+    preferred-width: 1080px;
+    preferred-height: 720px;
     background: VxTheme.bg-canvas;
 
     // State
@@ -186,7 +186,7 @@ export component MainWindow inherits Window {
         }
         // Continuous UI scaling: 1.0 at 1180px (preferred), shrinks proportionally
         // Clamp between 0.65 (very small) and 1.0 (full size)
-        VxTheme.ui-scale = clamp(self.width / 1180px, 0.65, 1.0);
+        VxTheme.ui-scale = clamp(self.width / 1080px, 0.65, 1.0);
     }
     property <string> context-title:
         current-view == 0 ? "Home base" :
