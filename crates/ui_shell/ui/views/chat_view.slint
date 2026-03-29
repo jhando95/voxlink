@@ -420,10 +420,11 @@ export component ChatView inherits Rectangle {
                                             fill: VxTheme.accent-subtle;
                                         }
                                         if msg.edited : Text {
-                                            text: "edited";
+                                            text: "(edited)";
                                             color: VxTheme.text-muted;
-                                            font-size: 8px;
-                                            font-weight: 700;
+                                            font-size: 9px;
+                                            font-weight: 500;
+                                            font-italic: true;
                                         }
                                         Rectangle { horizontal-stretch: 1; }
 

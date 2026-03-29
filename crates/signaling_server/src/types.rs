@@ -121,6 +121,7 @@ pub(crate) struct ChannelMeta {
     pub slow_mode_secs: u32,
     /// Minimum role required to access this channel (default: Member)
     pub min_role: shared_types::SpaceRole,
+    pub position: u32,
 }
 
 pub(crate) struct ServerState {

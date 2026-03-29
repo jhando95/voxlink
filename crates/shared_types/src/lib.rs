@@ -137,6 +137,9 @@ pub struct ChannelInfo {
     /// Slow mode cooldown in seconds (0 = disabled)
     #[serde(default)]
     pub slow_mode_secs: u32,
+    /// Channel display position (lower = higher in list). Default 0 = insertion order.
+    #[serde(default)]
+    pub position: u32,
 }
 
 fn default_voice_quality() -> u8 {
@@ -761,6 +764,16 @@ pub enum SignalMessage {
         min_role: String,
     },
 
+    // Channel ordering (v0.9.0)
+    /// Reorder channels in a space. `channel_ids` is the new order from top to bottom.
+    ReorderChannels {
+        channel_ids: Vec<String>,
+    },
+    /// Server broadcasts updated channel positions after reorder.
+    ChannelsReordered {
+        channel_ids: Vec<String>,
+    },
+
     // Priority speaker
     SetPrioritySpeaker {
         peer_id: String,
@@ -1280,7 +1293,7 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0,
+                slow_mode_secs: 0, position: 0,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1319,7 +1332,7 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0,
+                slow_mode_secs: 0, position: 0,
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),

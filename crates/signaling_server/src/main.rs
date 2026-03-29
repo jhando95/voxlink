@@ -420,6 +420,7 @@ async fn main() {
                         status: String::new(),
                         slow_mode_secs: 0,
                         min_role: shared_types::SpaceRole::Member,
+            position: 0,
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -1275,6 +1276,9 @@ async fn handle_signal(
                 _ => shared_types::SpaceRole::Member,
             };
             handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
+        }
+        SignalMessage::ReorderChannels { channel_ids } => {
+            handlers::channel::handle_reorder_channels(state, peer_id, channel_ids).await;
         }
         SignalMessage::SetPrioritySpeaker { peer_id: target_id, enabled } => {
             handle_set_priority_speaker(state, peer_id, target_id, enabled).await;

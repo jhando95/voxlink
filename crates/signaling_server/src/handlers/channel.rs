@@ -85,6 +85,7 @@ pub async fn handle_create_channel(
             status: String::new(),
             slow_mode_secs: 0,
             min_role: shared_types::SpaceRole::Member,
+            position: 0,
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -102,6 +103,7 @@ pub async fn handle_create_channel(
             category: String::new(),
             status: String::new(),
             slow_mode_secs: 0,
+            position: 0,
         }
     };
 
@@ -609,4 +611,54 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
     }
 
     log::info!("Peer {peer_id} left channel");
+}
+
+/// Reorder channels in a space. Only admins+ can reorder.
+pub async fn handle_reorder_channels(
+    state: &State,
+    peer_id: &str,
+    channel_ids: Vec<String>,
+) {
+    let space_id = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else { return };
+        let sid = peer.space_id.lock().await.clone();
+        drop(s);
+        sid
+    };
+    let Some(space_id) = space_id else { return };
+
+    // Check permission first (read lock)
+    {
+        let s = state.read().await;
+        let Some(space) = s.spaces.get(&space_id) else { return };
+        let role = space
+            .member_roles
+            .get(peer_id)
+            .copied()
+            .unwrap_or(shared_types::SpaceRole::Member);
+        if crate::handlers::space::role_rank(role) < crate::handlers::space::role_rank(shared_types::SpaceRole::Admin) {
+            drop(s);
+            crate::send_error(state, peer_id, "Only admins can reorder channels").await;
+            return;
+        }
+    }
+
+    // Apply new order (write lock)
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            for (pos, cid) in channel_ids.iter().enumerate() {
+                if let Some(ch) = space.channels.iter_mut().find(|c| c.id == *cid) {
+                    ch.position = pos as u32;
+                }
+            }
+            space.channels.sort_by_key(|c| c.position);
+        }
+    }
+
+    // Broadcast to all in space
+    let notify = shared_types::SignalMessage::ChannelsReordered { channel_ids };
+    crate::handlers::broadcast_to_space(state, &space_id, "", &notify).await;
+    log::info!("Channels reordered in space {space_id} by {peer_id}");
 }

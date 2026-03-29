@@ -282,6 +282,7 @@ pub async fn handle_create_space(
         status: String::new(),
         slow_mode_secs: 0,
         min_role: shared_types::SpaceRole::Member,
+            position: 0,
     };
 
     let space = Space {
@@ -322,6 +323,7 @@ pub async fn handle_create_space(
         category: String::new(),
         status: String::new(),
         slow_mode_secs: 0,
+        position: 0,
     }];
 
     log::info!("Space {} created by {peer_id}", space_id);
@@ -556,6 +558,7 @@ pub async fn handle_join_space(
                     category: ch.category.clone(),
                     status: ch.status.clone(),
                     slow_mode_secs: ch.slow_mode_secs,
+                    position: ch.position,
                 }
             })
             .collect();
