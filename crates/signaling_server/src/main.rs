@@ -419,8 +419,13 @@ async fn main() {
                         category: String::new(),
                         status: String::new(),
                         slow_mode_secs: 0,
-                        min_role: shared_types::SpaceRole::Member,
-            position: 0,
+                        min_role: match cr.min_role.as_deref() {
+                            Some("owner") => shared_types::SpaceRole::Owner,
+                            Some("admin") => shared_types::SpaceRole::Admin,
+                            Some("moderator") => shared_types::SpaceRole::Moderator,
+                            _ => shared_types::SpaceRole::Member,
+                        },
+                        position: cr.position.unwrap_or(0),
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -1231,6 +1236,9 @@ async fn handle_signal(
             handlers::chat::handle_search_messages(state, peer_id, channel_id, query, limit, db)
                 .await;
         }
+        SignalMessage::SearchSpaceMessages { query, limit } => {
+            handlers::chat::handle_search_space_messages(state, peer_id, query, limit, db).await;
+        }
         SignalMessage::SetProfile { bio } => {
             handle_set_profile(state, peer_id, bio, db).await;
         }
@@ -1277,7 +1285,21 @@ async fn handle_signal(
                 "moderator" | "mod" => shared_types::SpaceRole::Moderator,
                 _ => shared_types::SpaceRole::Member,
             };
+            let role_str = min_role.to_lowercase();
+            let cid = channel_id.clone();
             handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
+            // Persist min_role to DB
+            if let Some(ref db) = db {
+                let db = db.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Ok(conn) = db.lock_conn() {
+                        let _ = conn.execute(
+                            "UPDATE channels SET min_role = ?1 WHERE id = ?2",
+                            rusqlite::params![role_str, cid],
+                        );
+                    }
+                });
+            }
         }
         SignalMessage::ReorderChannels { channel_ids } => {
             handlers::channel::handle_reorder_channels(state, peer_id, channel_ids).await;

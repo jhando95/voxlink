@@ -814,6 +814,16 @@ pub enum SignalMessage {
         channel_id: String,
         messages: Vec<TextMessageData>,
     },
+    /// Search all text channels in the current space.
+    SearchSpaceMessages {
+        query: String,
+        #[serde(default = "default_search_limit")]
+        limit: u32,
+    },
+    /// Results from a space-wide search — includes channel_name for context.
+    SpaceSearchResults {
+        results: Vec<SpaceSearchResult>,
+    },
 
     // M11: User Profiles
     SetProfile {
@@ -987,6 +997,14 @@ pub struct TextMessageData {
 pub struct ReactionData {
     pub emoji: String,
     pub users: Vec<String>,
+}
+
+/// A search result from space-wide search, including the originating channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceSearchResult {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub message: TextMessageData,
 }
 
 pub const SAMPLE_RATE: u32 = 48000;

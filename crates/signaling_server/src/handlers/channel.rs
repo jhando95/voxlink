@@ -142,6 +142,8 @@ pub async fn handle_create_channel(
                 channel_type: ct.into(),
                 topic: None,
                 voice_quality: Some(vq),
+                min_role: None,
+                position: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }

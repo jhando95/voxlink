@@ -29,6 +29,8 @@ pub struct ChannelRow {
     pub channel_type: String, // "voice" or "text"
     pub topic: Option<String>,
     pub voice_quality: Option<u8>, // 0=Low, 1=Standard, 2=High, 3=Ultra
+    pub min_role: Option<String>,  // "member", "moderator", "admin", "owner"
+    pub position: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +132,7 @@ pub struct GroupMessageRow {
 impl Database {
     /// Lock the DB connection, recovering from poisoned mutex (a prior panic in a
     /// spawn_blocking task). This prevents a single DB error from crashing all future ops.
-    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+    pub fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
         match self.conn.lock() {
             Ok(guard) => Ok(guard),
             Err(poisoned) => Ok(poisoned.into_inner()),
@@ -308,6 +310,8 @@ impl Database {
         self.ensure_column("users", "issued_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("channels", "voice_quality", "INTEGER NOT NULL DEFAULT 2")?;
+        self.ensure_column("channels", "min_role", "TEXT NOT NULL DEFAULT 'member'")?;
+        self.ensure_column("channels", "position", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("users", "bio", "TEXT NOT NULL DEFAULT ''")?;
         // v0.8.0 migration columns
         self.ensure_column("spaces", "invite_expires_at", "INTEGER")?;
@@ -417,7 +421,7 @@ impl Database {
     pub fn load_channels_for_space(&self, space_id: &str) -> Result<Vec<ChannelRow>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, space_id, name, room_key, channel_type, topic, voice_quality FROM channels WHERE space_id = ?1")
+            .prepare("SELECT id, space_id, name, room_key, channel_type, topic, voice_quality, min_role, position FROM channels WHERE space_id = ?1 ORDER BY position ASC")
             .map_err(|e| format!("Query error: {e}"))?;
         let rows = stmt
             .query_map(params![space_id], |row| {
@@ -429,6 +433,8 @@ impl Database {
                     channel_type: row.get(4)?,
                     topic: row.get(5)?,
                     voice_quality: row.get::<_, Option<u8>>(6).ok().flatten(),
+                    min_role: row.get(7)?,
+                    position: row.get::<_, Option<u32>>(8).ok().flatten(),
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?;
@@ -439,8 +445,18 @@ impl Database {
     pub fn save_channel(&self, ch: &ChannelRow) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
-            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type, topic, voice_quality) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![ch.id, ch.space_id, ch.name, ch.room_key, ch.channel_type, ch.topic.as_deref().unwrap_or(""), ch.voice_quality.unwrap_or(2)],
+            "INSERT OR REPLACE INTO channels (id, space_id, name, room_key, channel_type, topic, voice_quality, min_role, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                ch.id,
+                ch.space_id,
+                ch.name,
+                ch.room_key,
+                ch.channel_type,
+                ch.topic.as_deref().unwrap_or(""),
+                ch.voice_quality.unwrap_or(2),
+                ch.min_role.as_deref().unwrap_or("member"),
+                ch.position.unwrap_or(0)
+            ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
@@ -617,6 +633,62 @@ impl Database {
             .map_err(|e| format!("Query error: {e}"))?;
         let rows = stmt
             .query_map(params![channel_id, pattern, limit as i64], |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    sender_id: row.get(2)?,
+                    sender_name: row.get(3)?,
+                    content: row.get(4)?,
+                    timestamp: row.get(5)?,
+                    edited: row.get::<_, i64>(6)? != 0,
+                    reply_to_message_id: row.get(7)?,
+                    reply_to_sender_name: row.get(8)?,
+                    reply_preview: row.get(9)?,
+                    pinned: row.get::<_, i64>(10)? != 0,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?;
+        let mut msgs: Vec<_> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))?;
+        msgs.reverse();
+        Ok(msgs)
+    }
+
+    /// Search messages across multiple channels (space-wide search).
+    pub fn search_messages_multi(
+        &self,
+        channel_ids: &[String],
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageRow>, String> {
+        if query.len() > 256 || channel_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock_conn()?;
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        // Build IN clause with positional params
+        let placeholders: Vec<String> = (0..channel_ids.len())
+            .map(|i| format!("?{}", i + 3))
+            .collect();
+        let sql = format!(
+            "SELECT id, channel_id, sender_id, sender_name, content, timestamp, edited,
+                    reply_to_message_id, reply_to_sender_name, reply_preview, pinned
+             FROM messages WHERE channel_id IN ({}) AND content LIKE ?1 ESCAPE '\\'
+             ORDER BY timestamp DESC LIMIT ?2",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("Query error: {e}"))?;
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        params_vec.push(Box::new(pattern));
+        params_vec.push(Box::new(limit as i64));
+        for cid in channel_ids {
+            params_vec.push(Box::new(cid.clone()));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
                 Ok(MessageRow {
                     id: row.get(0)?,
                     channel_id: row.get(1)?,
@@ -1593,6 +1665,8 @@ mod tests {
             channel_type: "text".into(),
             topic: None,
             voice_quality: None,
+            min_role: None,
+            position: None,
         })
         .unwrap();
         db.save_channel(&ChannelRow {
@@ -1603,6 +1677,8 @@ mod tests {
             channel_type: "text".into(),
             topic: None,
             voice_quality: None,
+            min_role: None,
+            position: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -1680,6 +1756,8 @@ mod tests {
             channel_type: "voice".into(),
             topic: None,
             voice_quality: None,
+            min_role: None,
+            position: None,
         })
         .unwrap();
         let channels = db.load_channels_for_space("s1").unwrap();
@@ -1708,6 +1786,8 @@ mod tests {
                 channel_type: "text".into(),
                 topic: None,
                 voice_quality: None,
+                min_role: None,
+                position: None,
             })
             .unwrap();
         }
@@ -1761,6 +1841,8 @@ mod tests {
             channel_type: "text".into(),
             topic: None,
             voice_quality: None,
+            min_role: None,
+            position: None,
         })
         .unwrap();
         db.save_message(&MessageRow {

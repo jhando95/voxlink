@@ -370,6 +370,8 @@ pub async fn handle_create_space(
                 channel_type: "voice".into(),
                 topic: None,
                 voice_quality: Some(2),
+                min_role: None,
+                position: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }

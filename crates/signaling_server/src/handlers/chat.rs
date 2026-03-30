@@ -1328,6 +1328,118 @@ pub async fn handle_search_messages(
     }
 }
 
+pub async fn handle_search_space_messages(
+    state: &State,
+    peer_id: &str,
+    query: String,
+    limit: u32,
+    db: &Db,
+) {
+    let query = query.trim().to_string();
+    if query.is_empty() || query.len() > 200 {
+        send_error(state, peer_id, "Invalid search query").await;
+        return;
+    }
+    let limit = limit.min(100);
+
+    let Some(db) = db else {
+        send_error(state, peer_id, "Search unavailable").await;
+        return;
+    };
+
+    // Get all text channel IDs and names in the peer's space
+    let channel_map: Vec<(String, String)> = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        let Some(space_id) = peer.space_id.lock().await.clone() else {
+            send_error(state, peer_id, "Not in a space").await;
+            return;
+        };
+        match s.spaces.get(&space_id) {
+            Some(space) => space
+                .channels
+                .iter()
+                .filter(|ch| ch.channel_type == shared_types::ChannelType::Text)
+                .map(|ch| (ch.id.clone(), ch.name.clone()))
+                .collect(),
+            None => return,
+        }
+    };
+
+    if channel_map.is_empty() {
+        let peer = {
+            let s = state.read().await;
+            s.peers.get(peer_id).cloned()
+        };
+        if let Some(peer) = peer {
+            send_to(
+                &peer,
+                &SignalMessage::SpaceSearchResults {
+                    results: Vec::new(),
+                },
+            )
+            .await;
+        }
+        return;
+    }
+
+    let channel_ids: Vec<String> = channel_map.iter().map(|(id, _)| id.clone()).collect();
+    let name_map: std::collections::HashMap<String, String> =
+        channel_map.into_iter().collect();
+
+    let db = db.clone();
+    let query_for_db = query.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        db.search_messages_multi(&channel_ids, &query_for_db, limit)
+    })
+    .await;
+
+    let peer = {
+        let s = state.read().await;
+        s.peers.get(peer_id).cloned()
+    };
+    let Some(peer) = peer else { return };
+
+    match result {
+        Ok(Ok(rows)) => {
+            let results: Vec<shared_types::SpaceSearchResult> = rows
+                .into_iter()
+                .map(|m| shared_types::SpaceSearchResult {
+                    channel_name: name_map
+                        .get(&m.channel_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    channel_id: m.channel_id,
+                    message: shared_types::TextMessageData {
+                        sender_id: m.sender_id,
+                        sender_name: m.sender_name,
+                        content: m.content,
+                        timestamp: m.timestamp as u64,
+                        message_id: m.id,
+                        edited: m.edited,
+                        reactions: Vec::new(),
+                        reply_to_message_id: m.reply_to_message_id,
+                        reply_to_sender_name: m.reply_to_sender_name,
+                        reply_preview: m.reply_preview,
+                        pinned: m.pinned,
+                        forwarded_from: None,
+                    },
+                })
+                .collect();
+            send_to(
+                &peer,
+                &SignalMessage::SpaceSearchResults { results },
+            )
+            .await;
+        }
+        _ => {
+            send_error(state, peer_id, "Search failed").await;
+        }
+    }
+}
+
 fn ordered_user_pair(user_a: &str, user_b: &str) -> (String, String) {
     if user_a <= user_b {
         (user_a.to_string(), user_b.to_string())
