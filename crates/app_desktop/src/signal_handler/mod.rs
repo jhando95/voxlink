@@ -298,6 +298,16 @@ pub fn process_signals(
             } => {
                 chat::handle_message_reaction(w, state, channel_id, message_id, emoji, user_name);
             }
+            SignalMessage::DirectMessageReaction {
+                user_id,
+                message_id,
+                emoji,
+                user_name,
+            } => {
+                chat::handle_direct_message_reaction(
+                    w, state, user_id, message_id, emoji, user_name,
+                );
+            }
             SignalMessage::MessagePinned {
                 channel_id,
                 message_id,

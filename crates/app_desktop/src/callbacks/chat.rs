@@ -310,26 +310,42 @@ pub fn setup_react_to_message(
         let Some(w) = window_weak.upgrade() else {
             return;
         };
-        if w.get_chat_is_direct_message() {
-            return;
-        }
-        let channel_id = w.get_chat_channel_id().to_string();
+        let is_dm = w.get_chat_is_direct_message();
         let message_id = message_id.to_string();
         let emoji = emoji.to_string();
-        if channel_id.is_empty() {
-            return;
-        }
         let network = network.clone();
-        rt_handle.spawn(async move {
-            let net = network.lock().await;
-            let _ = net
-                .send_signal(&SignalMessage::ReactToMessage {
-                    channel_id,
-                    message_id,
-                    emoji,
-                })
-                .await;
-        });
+        if is_dm {
+            // For DMs, chat_channel_id holds the target user_id
+            let user_id = w.get_chat_channel_id().to_string();
+            if user_id.is_empty() {
+                return;
+            }
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::ReactToDirectMessage {
+                        user_id,
+                        message_id,
+                        emoji,
+                    })
+                    .await;
+            });
+        } else {
+            let channel_id = w.get_chat_channel_id().to_string();
+            if channel_id.is_empty() {
+                return;
+            }
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::ReactToMessage {
+                        channel_id,
+                        message_id,
+                        emoji,
+                    })
+                    .await;
+            });
+        }
     });
 }
 

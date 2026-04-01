@@ -477,6 +477,11 @@ pub enum SignalMessage {
         user_id: String,
         message_id: String,
     },
+    ReactToDirectMessage {
+        user_id: String,
+        message_id: String,
+        emoji: String,
+    },
 
     // Server -> Client (Space)
     SpaceCreated {
@@ -640,6 +645,12 @@ pub enum SignalMessage {
     },
     MessageReaction {
         channel_id: String,
+        message_id: String,
+        emoji: String,
+        user_name: String,
+    },
+    DirectMessageReaction {
+        user_id: String,
         message_id: String,
         emoji: String,
         user_name: String,

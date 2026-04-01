@@ -366,6 +366,62 @@ pub fn handle_message_reaction(
     sync_pinned_messages(w);
 }
 
+pub fn handle_direct_message_reaction(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    user_id: &str,
+    message_id: &str,
+    emoji: &str,
+    user_name: &str,
+) {
+    if !w.get_chat_is_direct_message() {
+        return;
+    }
+    // For DMs, chat_channel_id holds the other user's ID
+    let current_dm_user = w.get_chat_channel_id().to_string();
+    if current_dm_user != user_id {
+        return;
+    }
+
+    let _ = state;
+
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages
+        .as_any()
+        .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+    {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if msg.message_id.as_str() == message_id {
+                    let mut updated = msg;
+                    let mut reaction_map: Vec<(String, Vec<String>)> =
+                        parse_reaction_pills(&updated.reactions);
+
+                    if let Some(entry) = reaction_map.iter_mut().find(|(e, _)| e == emoji) {
+                        if let Some(pos) = entry.1.iter().position(|u| u == user_name) {
+                            entry.1.remove(pos);
+                        } else {
+                            entry.1.push(user_name.to_string());
+                        }
+                    } else {
+                        reaction_map.push((emoji.to_string(), vec![user_name.to_string()]));
+                    }
+                    reaction_map.retain(|(_, users)| !users.is_empty());
+
+                    let display = reaction_map
+                        .iter()
+                        .map(|(e, users)| format!("{} {}", e, users.len()))
+                        .collect::<Vec<_>>()
+                        .join("  ");
+                    updated.reactions = display.into();
+                    model.set_row_data(i, updated);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Parse reaction display string "👍 2  ❤ 1" back into structured data.
 /// Since we don't store user lists in the UI, we create placeholder user entries
 /// matching the count. This is only used for toggle logic within a session —

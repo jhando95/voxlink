@@ -220,9 +220,20 @@ pub fn set_friend_counts(window: &MainWindow, friends: &[shared_types::FavoriteF
 }
 
 pub fn set_friend_list(window: &MainWindow, friends: &[shared_types::FavoriteFriend]) {
-    let model = friends
+    // Sort: online first, then in-voice, then alphabetical
+    let mut sorted: Vec<&shared_types::FavoriteFriend> = friends.iter().collect();
+    sorted.sort_by(|a, b| {
+        b.is_online
+            .cmp(&a.is_online)
+            .then_with(|| {
+                (b.is_in_voice || b.in_private_call)
+                    .cmp(&(a.is_in_voice || a.in_private_call))
+            })
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    let model = sorted
         .iter()
-        .map(friend_data_from_favorite)
+        .map(|f| friend_data_from_favorite(f))
         .collect::<Vec<_>>();
     window.set_favorite_friends(std::rc::Rc::new(slint::VecModel::from(model)).into());
 }
@@ -531,12 +542,77 @@ pub fn set_chat_messages(
     messages: &[shared_types::TextMessageData],
     self_name: &str,
 ) {
-    let model: Vec<ChatMessage> = messages
-        .iter()
-        .map(|m| text_msg_to_chat_msg(m, self_name))
-        .collect();
+    let mut model: Vec<ChatMessage> = Vec::with_capacity(messages.len());
+    let mut prev_sender: Option<&str> = None;
+    let mut prev_timestamp: u64 = 0;
+    let mut prev_day: u64 = 0;
+
+    for m in messages {
+        let day = m.timestamp / 86400;
+        // Insert date separator at day boundaries
+        if day != prev_day && m.timestamp > 0 {
+            if prev_day > 0 {
+                let sep_text = format_day_separator(m.timestamp);
+                let mut sep = ChatMessage::default();
+                sep.date_separator = sep_text.into();
+                model.push(sep);
+            }
+            prev_day = day;
+        }
+
+        let mut msg = text_msg_to_chat_msg(m, self_name);
+
+        // Group consecutive messages from same sender within 5 minutes
+        let same_sender = prev_sender == Some(m.sender_name.as_str());
+        let within_window = m.timestamp.saturating_sub(prev_timestamp) < 300;
+        msg.show_header = !same_sender || !within_window;
+
+        prev_sender = Some(m.sender_name.as_str());
+        prev_timestamp = m.timestamp;
+        model.push(msg);
+    }
+
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_chat_messages(rc.into());
+}
+
+fn format_day_separator(timestamp: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let today = now / 86400;
+    let msg_day = timestamp / 86400;
+    let diff = today.saturating_sub(msg_day);
+
+    if diff == 0 {
+        "Today".into()
+    } else if diff == 1 {
+        "Yesterday".into()
+    } else if diff < 7 {
+        format!("{diff} days ago")
+    } else {
+        // Simple month/day from unix timestamp
+        let days_since_epoch = msg_day;
+        // Approximate: good enough for display
+        let year = 1970 + (days_since_epoch * 4 / 1461) as u32; // ~365.25 days/year
+        let day_of_year = (days_since_epoch - ((year as u64 - 1970) * 1461 / 4)) as u32;
+        let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut month = 0;
+        let mut remaining = day_of_year;
+        for (i, &m) in months.iter().enumerate() {
+            if remaining < m {
+                month = i;
+                break;
+            }
+            remaining -= m;
+        }
+        let month_names = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        format!("{} {}", month_names[month], remaining + 1)
+    }
 }
 
 fn with_member_widget<T>(f: impl FnOnce(MemberWidgetWindow) -> T) -> Option<T> {
@@ -844,6 +920,8 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         attachment_name: m.attachment_name.clone().unwrap_or_default().into(),
         attachment_size: m.attachment_size.map(format_file_size).unwrap_or_default().into(),
         channel_name: Default::default(),
+        show_header: true,
+        date_separator: Default::default(),
     }
 }
 

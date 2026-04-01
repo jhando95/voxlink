@@ -181,6 +181,9 @@ export component MainWindow inherits Window {
     callback remove-friend(string);
     callback open-direct-message(string);
 
+    // Keyboard shortcuts overlay
+    in-out property <bool> shortcuts-visible: false;
+
     // Update banner
     in-out property <bool> update-available: false;
     in-out property <string> update-version: "";
@@ -953,6 +956,140 @@ export component MainWindow inherits Window {
                                 color: VxTheme.text-muted;
                                 font-size: 9px;
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Keyboard Shortcuts Overlay (Ctrl+/) ───
+        if root.shortcuts-visible : Rectangle {
+            background: #00000080;
+            TouchArea {
+                clicked => { root.shortcuts-visible = false; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height * 0.12;
+                width: min(420px, parent.width - 40px);
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.bg-raised;
+                border-color: VxTheme.accent-border;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "Keyboard Shortcuts";
+                            color: VxTheme.text-primary;
+                            font-size: 14px;
+                            font-weight: 700;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "Esc to close";
+                            color: VxTheme.text-muted;
+                            font-size: 9px;
+                        }
+                    }
+
+                    // Navigation
+                    Text { text: "NAVIGATION"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    for shortcut in [
+                        { key: "Ctrl+K", desc: "Quick switcher" },
+                        { key: "Ctrl+/", desc: "Keyboard shortcuts" },
+                        { key: "Alt+Up/Down", desc: "Switch text channels" },
+                        { key: "Escape", desc: "Back / close overlay" },
+                    ] : HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 100px;
+                            height: 22px;
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.bg-panel;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            Text {
+                                text: shortcut.key;
+                                color: VxTheme.accent;
+                                font-size: 10px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: shortcut.desc;
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Voice
+                    Text { text: "VOICE"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    for shortcut in [
+                        { key: root.mute-key-display, desc: "Toggle mute" },
+                        { key: root.deafen-key-display, desc: "Toggle deafen" },
+                        { key: root.ptt-key-display, desc: "Push to talk (hold)" },
+                    ] : HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 100px;
+                            height: 22px;
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.bg-panel;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            Text {
+                                text: shortcut.key;
+                                color: VxTheme.accent;
+                                font-size: 10px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: shortcut.desc;
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Chat
+                    Text { text: "CHAT"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    for shortcut in [
+                        { key: "Enter", desc: "Send message" },
+                        { key: "Shift+Enter", desc: "New line" },
+                    ] : HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 100px;
+                            height: 22px;
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.bg-panel;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            Text {
+                                text: shortcut.key;
+                                color: VxTheme.accent;
+                                font-size: 10px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: shortcut.desc;
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            vertical-alignment: center;
                         }
                     }
                 }

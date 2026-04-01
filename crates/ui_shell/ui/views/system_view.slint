@@ -401,7 +401,6 @@ export component SystemView inherits Rectangle {
                             }
                             if root.favorite-friends.length > 0 : VerticalLayout {
                                 spacing: 8px;
-                                SectionLabel { text: "FRIENDS"; }
                                 for friend in root.favorite-friends : Rectangle {
                                     border-radius: VxTheme.radius-card;
                                     background: VxTheme.bg-soft;
@@ -731,37 +730,76 @@ export component SystemView inherits Rectangle {
                         }
                         for thread in root.direct-message-threads : Rectangle {
                             border-radius: VxTheme.radius-card;
-                            background: VxTheme.bg-soft;
-                            border-color: thread.unread-count > 0 ? VxTheme.accent-border : VxTheme.border-subtle;
+                            background: dm-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: thread.unread-count > 0 ? VxTheme.accent-border :
+                                          thread.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
                             border-width: 1px;
-                            VerticalLayout {
-                                padding: 12px;
-                                spacing: 8px;
-                                Text {
-                                    text: thread.name;
-                                    color: VxTheme.text-primary;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                }
-                                Text {
-                                    text: thread.preview;
-                                    color: VxTheme.text-secondary;
-                                    font-size: 9px;
-                                    wrap: word-wrap;
-                                }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    if thread.unread-count > 0 : VxStatusPill {
-                                        label: thread.unread-count + " unread";
-                                        tone: VxTheme.accent;
-                                        fill: VxTheme.accent-subtle;
+
+                            dm-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.open-direct-message(thread.user-id); }
+                            }
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 10px;
+
+                                // Avatar with status dot
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+
+                                    VxAvatar {
+                                        avatar-size: 32px;
+                                        initial: thread.initial;
+                                        color-index: thread.color-index;
                                     }
-                                    VxButton {
-                                        label: "Open";
-                                        small: true;
-                                        accent: true;
-                                        horizontal-stretch: 1;
-                                        clicked => { root.open-direct-message(thread.user-id); }
+
+                                    Rectangle {
+                                        x: 22px;
+                                        y: 22px;
+                                        width: 10px;
+                                        height: 10px;
+                                        border-radius: 5px;
+                                        background: thread.is-in-voice ? VxTheme.speaking-border :
+                                                    thread.is-online ? VxTheme.success : VxTheme.text-muted;
+                                        border-color: VxTheme.bg-panel;
+                                        border-width: 2px;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text {
+                                            text: thread.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: thread.unread-count > 0 ? 800 : 700;
+                                        }
+                                        if thread.unread-count > 0 : Rectangle {
+                                            width: 16px;
+                                            height: 16px;
+                                            border-radius: 8px;
+                                            background: VxTheme.accent;
+                                            Text {
+                                                text: thread.unread-count;
+                                                color: #ffffff;
+                                                font-size: 8px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: thread.preview;
+                                        color: VxTheme.text-secondary;
+                                        font-size: 9px;
+                                        overflow: elide;
                                     }
                                 }
                             }
@@ -782,47 +820,92 @@ export component SystemView inherits Rectangle {
                                 fill: VxTheme.accent-subtle;
                             }
                             VxStatusPill {
+                                label: root.online-friends-count + " online";
+                                tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                            }
+                            VxStatusPill {
+                                label: root.live-friends-count + " in voice";
+                                tone: root.live-friends-count > 0 ? VxTheme.speaking-border : VxTheme.text-muted;
+                                fill: root.live-friends-count > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
+                            }
+                            VxStatusPill {
                                 label: root.incoming-friend-requests.length + " incoming";
                                 tone: root.incoming-friend-requests.length > 0 ? VxTheme.warning : VxTheme.text-muted;
                                 fill: root.incoming-friend-requests.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
                             }
                         }
                         if root.favorite-friends.length > 0 : VerticalLayout {
-                            spacing: 8px;
+                            spacing: 6px;
                             for friend in root.favorite-friends : Rectangle {
                                 border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-soft;
+                                background: friend-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
                                 border-color: friend.is-in-voice ? VxTheme.speaking-border :
                                               friend.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
                                 border-width: 1px;
-                                VerticalLayout {
-                                    padding: 12px;
-                                    spacing: 8px;
-                                    Text {
-                                        text: friend.name;
-                                        color: VxTheme.text-primary;
-                                        font-size: 11px;
-                                        font-weight: 700;
+
+                                friend-touch := TouchArea {}
+
+                                HorizontalLayout {
+                                    padding: 10px;
+                                    spacing: 10px;
+
+                                    // Avatar with status dot
+                                    Rectangle {
+                                        width: 32px;
+                                        height: 32px;
+
+                                        VxAvatar {
+                                            avatar-size: 32px;
+                                            initial: friend.initial;
+                                            color-index: friend.color-index;
+                                        }
+
+                                        // Status dot overlay (bottom-right)
+                                        Rectangle {
+                                            x: 22px;
+                                            y: 22px;
+                                            width: 10px;
+                                            height: 10px;
+                                            border-radius: 5px;
+                                            background: friend.is-in-voice ? VxTheme.speaking-border :
+                                                        friend.is-online ? VxTheme.success : VxTheme.text-muted;
+                                            border-color: VxTheme.bg-panel;
+                                            border-width: 2px;
+                                        }
                                     }
-                                    Text {
-                                        text: friend.detail;
-                                        color: VxTheme.text-muted;
-                                        font-size: 9px;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: friend.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                        }
+                                        Text {
+                                            text: friend.detail;
+                                            color: friend.is-in-voice ? VxTheme.speaking-border :
+                                                   friend.is-online ? VxTheme.accent : VxTheme.text-muted;
+                                            font-size: 9px;
+                                        }
                                     }
+
                                     HorizontalLayout {
-                                        spacing: 8px;
+                                        alignment: center;
+                                        spacing: 6px;
                                         VxButton {
                                             label: "Message";
                                             small: true;
                                             accent: true;
-                                            horizontal-stretch: 1;
                                             clicked => { root.open-direct-message(friend.user-id); }
                                         }
                                         VxButton {
                                             label: "Remove";
                                             small: true;
                                             soft: true;
-                                            horizontal-stretch: 1;
                                             clicked => { root.remove-friend(friend.user-id); }
                                         }
                                     }

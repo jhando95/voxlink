@@ -165,6 +165,13 @@ pub fn start(
                         w.set_quick_switcher_visible(true);
                     }
 
+                // Ctrl+/ keyboard shortcuts overlay
+                if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::Slash) ||
+                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::Slash))
+                    && !w.get_shortcuts_visible() {
+                        w.set_shortcuts_visible(true);
+                    }
+
                 // Alt+Up/Down channel switching (Space or TextChat view)
                 {
                     let alt = keys.contains(&Keycode::LAlt) || keys.contains(&Keycode::RAlt);
@@ -569,10 +576,17 @@ fn handle_escape(
     let esc_held = keys.contains(&Keycode::Escape);
     let was_esc = *prev_esc_held.borrow();
     if esc_held && !was_esc {
-        match current_view {
-            2 | 3 => w.invoke_navigate(w.get_previous_view()),
-            4 => w.invoke_navigate(0),
-            _ => {}
+        // Close overlays first, then navigate
+        if w.get_quick_switcher_visible() {
+            w.set_quick_switcher_visible(false);
+        } else if w.get_shortcuts_visible() {
+            w.set_shortcuts_visible(false);
+        } else {
+            match current_view {
+                2 | 3 => w.invoke_navigate(w.get_previous_view()),
+                4 => w.invoke_navigate(0),
+                _ => {}
+            }
         }
     }
     *prev_esc_held.borrow_mut() = esc_held;

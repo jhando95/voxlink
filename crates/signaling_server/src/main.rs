@@ -1212,6 +1212,16 @@ async fn handle_signal(
             handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji)
                 .await;
         }
+        SignalMessage::ReactToDirectMessage {
+            user_id,
+            message_id,
+            emoji,
+        } => {
+            handlers::chat::handle_react_to_direct_message(
+                state, peer_id, user_id, message_id, emoji,
+            )
+            .await;
+        }
         SignalMessage::SetUserStatus { status } => {
             handle_set_user_status(state, peer_id, status, db).await;
         }

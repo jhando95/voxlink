@@ -1148,6 +1148,54 @@ pub async fn handle_react_to_message(
     crate::handlers::broadcast_to_space(state, &space_id, "", &notify).await;
 }
 
+// ─── React to Direct Message ───
+
+pub async fn handle_react_to_direct_message(
+    state: &State,
+    peer_id: &str,
+    target_user_id: String,
+    message_id: String,
+    emoji: String,
+) {
+    let emoji = emoji.trim().to_string();
+    if emoji.is_empty() || emoji.len() > 16 {
+        return;
+    }
+
+    let Some(current_user_id) = authenticated_user_id(state, peer_id).await else {
+        return;
+    };
+    let user_name = {
+        let s = state.read().await;
+        s.peers
+            .get(peer_id)
+            .map(|p| p.name.try_lock().map(|n| n.clone()).unwrap_or_default())
+    };
+    let Some(user_name) = user_name else { return };
+
+    // Notify the target user
+    let target_notify = SignalMessage::DirectMessageReaction {
+        user_id: current_user_id.clone(),
+        message_id: message_id.clone(),
+        emoji: emoji.clone(),
+        user_name: user_name.clone(),
+    };
+    for recipient in peers_for_user(state, &target_user_id).await {
+        send_to(&recipient, &target_notify).await;
+    }
+
+    // Notify the sender (self) so all their devices update
+    let self_notify = SignalMessage::DirectMessageReaction {
+        user_id: target_user_id,
+        message_id,
+        emoji,
+        user_name,
+    };
+    for recipient in peers_for_user(state, &current_user_id).await {
+        send_to(&recipient, &self_notify).await;
+    }
+}
+
 async fn peer_for_id(state: &State, peer_id: &str) -> Option<Arc<Peer>> {
     let s = state.read().await;
     s.peers.get(peer_id).cloned()
