@@ -795,6 +795,28 @@ impl Database {
         Ok(result)
     }
 
+    pub fn find_user_by_display_name(&self, name: &str) -> Result<Option<UserRow>, String> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT user_id, token, display_name, created_at, issued_at, last_seen_at FROM users WHERE display_name = ?1 COLLATE NOCASE",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+        let result = stmt
+            .query_row(params![name], |row| {
+                Ok(UserRow {
+                    user_id: row.get(0)?,
+                    token: row.get(1)?,
+                    display_name: row.get(2)?,
+                    created_at: row.get(3)?,
+                    issued_at: row.get(4)?,
+                    last_seen_at: row.get(5)?,
+                })
+            })
+            .ok();
+        Ok(result)
+    }
+
     pub fn update_user_name(&self, user_id: &str, name: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(

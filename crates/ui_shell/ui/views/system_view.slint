@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, VxTheme } from "../theme.slint";
-import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxLogo, VxStatusPill } from "../components.slint";
+import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatusPill } from "../components.slint";
 
 export component SystemView inherits Rectangle {
     in property <bool> wide: false;
@@ -23,11 +23,15 @@ export component SystemView inherits Rectangle {
     in property <int> unread-direct-messages-count: 0;
     callback navigate(int);
     callback toggle-member-widget();
+    callback send-friend-request-by-name(string);
     callback accept-friend-request(string);
     callback decline-friend-request(string);
     callback cancel-friend-request(string);
     callback remove-friend(string);
     callback open-direct-message(string);
+
+    property <string> add-friend-input: "";
+    property <string> add-friend-status: "";
 
     background: transparent;
 
@@ -369,13 +373,48 @@ export component SystemView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 10px;
-                            SectionLabel { text: "FRIENDS"; }
+                            SectionLabel { text: "ADD FRIEND"; }
                             Text {
-                                text: "Real friendships now live on the server instead of only in local pins.";
+                                text: "You can add friends with their Voxlink username.";
                                 color: VxTheme.text-secondary;
                                 font-size: 10px;
                                 wrap: word-wrap;
                             }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                add-friend-narrow := VxInput {
+                                    placeholder: "Enter a username...";
+                                    text <=> root.add-friend-input;
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if root.add-friend-input != "" {
+                                            root.add-friend-status = "Sending...";
+                                            root.send-friend-request-by-name(root.add-friend-input);
+                                            root.add-friend-input = "";
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Send Request";
+                                    small: true;
+                                    accent: true;
+                                    clicked => {
+                                        if root.add-friend-input != "" {
+                                            root.add-friend-status = "Sending...";
+                                            root.send-friend-request-by-name(root.add-friend-input);
+                                            root.add-friend-input = "";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "FRIENDS"; }
                             HorizontalLayout {
                                 spacing: 8px;
                                 VxStatusPill {
@@ -800,6 +839,47 @@ export component SystemView inherits Rectangle {
                                         color: VxTheme.text-secondary;
                                         font-size: 9px;
                                         overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "ADD FRIEND"; }
+                        Text {
+                            text: "You can add friends with their Voxlink username.";
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            add-friend-wide := VxInput {
+                                placeholder: "Enter a username...";
+                                text <=> root.add-friend-input;
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if root.add-friend-input != "" {
+                                        root.add-friend-status = "Sending...";
+                                        root.send-friend-request-by-name(root.add-friend-input);
+                                        root.add-friend-input = "";
+                                    }
+                                }
+                            }
+                            VxButton {
+                                label: "Send Request";
+                                small: true;
+                                accent: true;
+                                clicked => {
+                                    if root.add-friend-input != "" {
+                                        root.add-friend-status = "Sending...";
+                                        root.send-friend-request-by-name(root.add-friend-input);
+                                        root.add-friend-input = "";
                                     }
                                 }
                             }

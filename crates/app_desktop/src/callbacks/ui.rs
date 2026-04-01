@@ -508,6 +508,28 @@ pub fn setup_friend_actions(
         let network = network.clone();
         let rt_handle = rt_handle.clone();
         let window_weak = window.as_weak();
+        window.on_send_friend_request_by_name(move |name| {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return;
+            }
+            if let Some(w) = window_weak.upgrade() {
+                w.set_status_text(format!("Sending friend request to {name}...").into());
+            }
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::SendFriendRequestByName { name })
+                    .await;
+            });
+        });
+    }
+
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        let window_weak = window.as_weak();
         window.on_accept_friend_request(move |user_id| {
             let user_id = user_id.trim().to_string();
             if user_id.is_empty() {

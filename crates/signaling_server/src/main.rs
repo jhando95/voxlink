@@ -1150,6 +1150,9 @@ async fn handle_signal(
         SignalMessage::SendFriendRequest { user_id } => {
             handlers::friends::handle_send_friend_request(state, peer_id, user_id, db).await;
         }
+        SignalMessage::SendFriendRequestByName { name } => {
+            handlers::friends::handle_send_friend_request_by_name(state, peer_id, name, db).await;
+        }
         SignalMessage::RespondFriendRequest { user_id, accept } => {
             handlers::friends::handle_respond_friend_request(state, peer_id, user_id, accept, db)
                 .await;

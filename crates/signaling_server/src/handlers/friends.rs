@@ -135,6 +135,48 @@ pub async fn handle_send_friend_request(state: &State, peer_id: &str, user_id: S
     }
 }
 
+pub async fn handle_send_friend_request_by_name(
+    state: &State,
+    peer_id: &str,
+    name: String,
+    db: &Db,
+) {
+    let Some(db_arc) = db.as_ref().cloned() else {
+        send_error(state, peer_id, "Friend requests require persistence").await;
+        return;
+    };
+
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        send_error(state, peer_id, "Please enter a username").await;
+        return;
+    }
+
+    // Look up user by display name
+    let name_for_db = name.clone();
+    let lookup = tokio::task::spawn_blocking(move || db_arc.find_user_by_display_name(&name_for_db))
+        .await
+        .unwrap_or_else(|_| Err("Lookup task failed".into()));
+
+    match lookup {
+        Ok(Some(user)) => {
+            // Delegate to the existing user_id-based handler
+            handle_send_friend_request(state, peer_id, user.user_id, db).await;
+        }
+        Ok(None) => {
+            send_error(
+                state,
+                peer_id,
+                &format!("No user found with the name \"{}\"", name),
+            )
+            .await;
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
 pub async fn handle_respond_friend_request(
     state: &State,
     peer_id: &str,

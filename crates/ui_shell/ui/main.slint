@@ -175,6 +175,7 @@ export component MainWindow inherits Window {
     callback play-soundboard-clip(int);
     callback remove-soundboard-clip(int);
     callback send-friend-request(string);
+    callback send-friend-request-by-name(string);
     callback accept-friend-request(string);
     callback decline-friend-request(string);
     callback cancel-friend-request(string);
@@ -663,6 +664,7 @@ export component MainWindow inherits Window {
                             unread-direct-messages-count: root.unread-direct-messages-count;
                             navigate(view-index) => { root.navigate(view-index); }
                             toggle-member-widget => { root.toggle-member-widget(); }
+                            send-friend-request-by-name(name) => { root.send-friend-request-by-name(name); }
                             accept-friend-request(user-id) => { root.accept-friend-request(user-id); }
                             decline-friend-request(user-id) => { root.decline-friend-request(user-id); }
                             cancel-friend-request(user-id) => { root.cancel-friend-request(user-id); }

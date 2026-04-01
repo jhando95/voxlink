@@ -445,6 +445,9 @@ pub enum SignalMessage {
     SendFriendRequest {
         user_id: String,
     },
+    SendFriendRequestByName {
+        name: String,
+    },
     RespondFriendRequest {
         user_id: String,
         accept: bool,
