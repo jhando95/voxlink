@@ -48,6 +48,7 @@ pub fn sync_ui(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
             &app.incoming_friend_requests,
             &app.outgoing_friend_requests,
             app.self_user_id.as_deref(),
+            &config_store::load_config().collapsed_categories,
         );
     }
     ui_shell::set_friend_counts(window, &app.favorite_friends);

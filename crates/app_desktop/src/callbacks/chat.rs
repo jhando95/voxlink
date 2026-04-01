@@ -333,6 +333,42 @@ pub fn setup_react_to_message(
     });
 }
 
+pub fn setup_open_thread(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let weak = window.as_weak();
+    window.on_open_thread(move |channel_id, message_id| {
+        let Some(w) = weak.upgrade() else { return };
+        let channel_id = if channel_id.is_empty() {
+            w.get_chat_channel_id().to_string()
+        } else {
+            channel_id.to_string()
+        };
+        let message_id = message_id.to_string();
+        if channel_id.is_empty() || message_id.is_empty() {
+            return;
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::GetThread {
+                    channel_id,
+                    message_id,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_close_thread(window: &MainWindow) {
+    window.on_close_thread(move || {});
+}
+
 pub fn setup_search_messages(
     window: &MainWindow,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,

@@ -138,8 +138,19 @@ export component MainWindow inherits Window {
     in-out property <string> reply-target-message-id: "";
     in-out property <string> reply-target-sender-name: "";
     in-out property <string> reply-target-preview: "";
+    in property <int> typing-dot-phase: 0;
+    in property <bool> unread-pulse: false;
     in-out property <[ChatMessage]> chat-search-results: [];
     in-out property <string> chat-search-query: "";
+
+    // Thread panel
+    in-out property <[ChatMessage]> thread-messages: [];
+    in-out property <bool> thread-panel-visible: false;
+    in-out property <string> thread-parent-sender: "";
+    in-out property <string> thread-parent-content: "";
+    in-out property <string> thread-parent-timestamp: "";
+    callback open-thread(string, string);
+    callback close-thread();
 
     // Notifications
     in-out property <bool> notifications-enabled: true;
@@ -273,6 +284,7 @@ export component MainWindow inherits Window {
     callback set-channel-slow-mode(/* channel_id */ string, /* secs */ int);
     callback set-channel-category(/* channel_id */ string, /* category */ string);
     callback set-channel-status(/* channel_id */ string, /* status */ string);
+    callback toggle-category-collapse(/* category */ string);
     callback timeout-member(/* member_id */ string, /* duration_secs */ int);
     callback set-priority-speaker(/* peer_id */ string, /* enabled */ bool);
     callback whisper-to(/* comma-separated peer IDs */ string);
@@ -361,6 +373,26 @@ export component MainWindow inherits Window {
                         update-available: root.update-available;
                         update-version: root.update-version;
                         nav-toggle => { root.sidebar-expanded = !root.sidebar-expanded; }
+                    }
+
+                    if !root.is-connected && root.current-view != 0 : Rectangle {
+                        height: 28px;
+                        background: VxTheme.danger.transparentize(0.85);
+                        border-color: VxTheme.danger.transparentize(0.6);
+                        border-width: 1px;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            alignment: center;
+                            spacing: 8px;
+                            Text {
+                                text: "Connection lost — attempting to reconnect...";
+                                color: VxTheme.danger;
+                                font-size: 10px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
 
                     NavBreadcrumb {
@@ -566,6 +598,8 @@ export component MainWindow inherits Window {
                             cancel-friend-request(user-id) => { root.cancel-friend-request(user-id); }
                             remove-friend(user-id) => { root.remove-friend(user-id); }
                             open-direct-message(user-id) => { root.open-direct-message(user-id); }
+                            toggle-category-collapse(cat) => { root.toggle-category-collapse(cat); }
+                            unread-pulse: root.unread-pulse;
                         }
 
                         if root.current-view == 5 : ChatView {
@@ -595,6 +629,14 @@ export component MainWindow inherits Window {
                             chat-search-results: root.chat-search-results;
                             chat-search-query <=> root.chat-search-query;
                             search-messages(query) => { root.search-messages(query); }
+                            typing-dot-phase: root.typing-dot-phase;
+                            thread-messages: root.thread-messages;
+                            thread-panel-visible: root.thread-panel-visible;
+                            thread-parent-sender: root.thread-parent-sender;
+                            thread-parent-content: root.thread-parent-content;
+                            thread-parent-timestamp: root.thread-parent-timestamp;
+                            open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
+                            close-thread => { root.close-thread(); }
                         }
 
                         if root.current-view == 3 : SystemView {

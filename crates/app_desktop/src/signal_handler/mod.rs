@@ -535,10 +535,27 @@ pub fn process_signals(
             SignalMessage::ThreadMessages {
                 channel_id: _,
                 root_message_id: _,
-                messages: _,
+                messages,
             } => {
-                log::info!("Thread messages received");
-                // Thread view rendering would go here
+                log::info!("Thread messages received ({} replies)", messages.len());
+                let self_name = w.get_user_name().to_string();
+                if let Some(parent) = messages.first() {
+                    w.set_thread_parent_sender(parent.sender_name.clone().into());
+                    w.set_thread_parent_content(
+                        ui_shell::render_markdown(&parent.content).0.into(),
+                    );
+                    w.set_thread_parent_timestamp(
+                        ui_shell::format_timestamp(parent.timestamp).into(),
+                    );
+                }
+                let replies: Vec<ui_shell::ChatMessage> = messages
+                    .iter()
+                    .skip(1)
+                    .map(|m| ui_shell::text_msg_to_chat_msg(m, &self_name))
+                    .collect();
+                let model = std::rc::Rc::new(slint::VecModel::from(replies));
+                w.set_thread_messages(model.into());
+                w.set_thread_panel_visible(true);
             }
             // v0.8.0: Nicknames
             SignalMessage::NicknameChanged {

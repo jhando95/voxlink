@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use shared_types::{MicMode, SignalMessage};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
@@ -81,6 +81,7 @@ pub fn start(
     let prev_m_held = Rc::new(RefCell::new(false));
     let prev_d_held = Rc::new(RefCell::new(false));
     let prev_esc_held = Rc::new(RefCell::new(false));
+    let prev_alt_arrow_held: Rc<RefCell<(bool, u64)>> = Rc::new(RefCell::new((false, 0)));
     let mute_cooldown = Rc::new(RefCell::new(0u64));
     let deafen_cooldown = Rc::new(RefCell::new(0u64));
     let listen_state: Rc<RefCell<Option<ListenState>>> = Rc::new(RefCell::new(None));
@@ -164,6 +165,40 @@ pub fn start(
                         w.set_quick_switcher_visible(true);
                     }
 
+                // Alt+Up/Down channel switching (Space or TextChat view)
+                {
+                    let alt = keys.contains(&Keycode::LAlt) || keys.contains(&Keycode::RAlt);
+                    let up = keys.contains(&Keycode::Up);
+                    let down = keys.contains(&Keycode::Down);
+                    let was_held = prev_alt_arrow_held.borrow().0;
+                    let now_held = alt && (up || down);
+                    if alt && (up || down) && !was_held && (current_view == 4 || current_view == 5) {
+                        let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                        let current_ch = w.get_chat_channel_id().to_string();
+                        // Find text channels (non-header, non-voice)
+                        let text_ids: Vec<String> = channels.iter()
+                            .filter(|c| !c.is_category_header && !c.is_voice && !c.category_collapsed)
+                            .map(|c| c.id.to_string())
+                            .collect();
+                        if !text_ids.is_empty() {
+                            let current_idx = text_ids.iter().position(|id| id == &current_ch);
+                            let next_idx = if up {
+                                match current_idx {
+                                    Some(0) | None => text_ids.len() - 1,
+                                    Some(i) => i - 1,
+                                }
+                            } else {
+                                match current_idx {
+                                    Some(i) if i + 1 < text_ids.len() => i + 1,
+                                    _ => 0,
+                                }
+                            };
+                            w.invoke_select_text_channel(text_ids[next_idx].as_str().into());
+                        }
+                    }
+                    *prev_alt_arrow_held.borrow_mut() = (now_held, tick);
+                }
+
                 if !in_call {
                     *ptt_was_held.borrow_mut() = false;
                 }
@@ -241,6 +276,16 @@ pub fn start(
                         update_preview_mic_level(tick, &audio, &w);
                     }
                 }
+            }
+
+            // Typing dot animation phase (0->1->2->0, every 400ms = 16 ticks)
+            if tick % 16 == 0 {
+                let phase = w.get_typing_dot_phase();
+                w.set_typing_dot_phase((phase + 1) % 3);
+            }
+            // Unread pulse toggle (every 30 ticks = ~750ms)
+            if tick % 30 == 0 {
+                w.set_unread_pulse(!w.get_unread_pulse());
             }
 
             // --- Timed auto-hides ---

@@ -367,6 +367,7 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             user_limit: c.user_limit as i32,
             slow_mode_secs: c.slow_mode_secs as i32,
             is_category_header: false,
+            category_collapsed: false,
             mention_count: 0,
         })
         .collect();
@@ -382,6 +383,7 @@ pub fn render_space(
     incoming_requests: &[shared_types::FriendRequest],
     outgoing_requests: &[shared_types::FriendRequest],
     self_user_id: Option<&str>,
+    collapsed_categories: &[String],
 ) {
     let query = search_query.trim().to_lowercase();
     let mut visible_text_channels = 0i32;
@@ -399,7 +401,8 @@ pub fn render_space(
         .map(|request| request.user_id.as_str())
         .collect();
 
-    let channels: Vec<ChannelData> = space
+    let collapsed = collapsed_categories;
+    let raw_channels: Vec<ChannelData> = space
         .channels
         .iter()
         .filter(|channel| query.is_empty() || channel.name.to_lowercase().contains(&query))
@@ -409,6 +412,8 @@ pub fn render_space(
             } else {
                 visible_text_channels += 1;
             }
+            let cat = channel.category.clone();
+            let is_collapsed = !cat.is_empty() && collapsed.contains(&cat);
 
             ChannelData {
                 id: channel.id.clone().into(),
@@ -424,15 +429,36 @@ pub fn render_space(
                     .unwrap_or(0) as i32,
                 topic: channel.topic.clone().into(),
                 voice_quality: channel.voice_quality as i32,
-                category: channel.category.clone().into(),
+                category: cat.into(),
                 status: channel.status.clone().into(),
                 user_limit: channel.user_limit as i32,
                 slow_mode_secs: channel.slow_mode_secs as i32,
                 is_category_header: false,
+                category_collapsed: is_collapsed,
                 mention_count: 0,
             }
         })
         .collect();
+
+    // Insert category headers before each group of channels with the same category
+    let mut channels: Vec<ChannelData> = Vec::with_capacity(raw_channels.len() + 8);
+    let mut last_category = String::new();
+    for ch in raw_channels {
+        let cat = ch.category.to_string();
+        if !cat.is_empty() && cat != last_category {
+            let is_collapsed = collapsed.contains(&cat);
+            channels.push(ChannelData {
+                id: Default::default(),
+                name: cat.to_uppercase().into(),
+                category: cat.clone().into(),
+                is_category_header: true,
+                category_collapsed: is_collapsed,
+                ..Default::default()
+            });
+            last_category = cat;
+        }
+        channels.push(ch);
+    }
 
     let mut visible_members: Vec<&shared_types::MemberInfo> = space
         .members
@@ -541,6 +567,12 @@ fn member_data_from_info(
         is_online: true,
         is_in_voice: member.channel_id.is_some(),
         color_index: member_color_index(&member.name),
+        status_level: match member.status_preset {
+            shared_types::UserStatus::Online => 1,
+            shared_types::UserStatus::Idle => 2,
+            shared_types::UserStatus::DoNotDisturb => 3,
+            shared_types::UserStatus::Invisible => 0,
+        },
         is_server_muted: false,
         is_friend,
         has_incoming_request,
@@ -768,6 +800,16 @@ fn friend_request_data(request: &shared_types::FriendRequest, incoming: bool) ->
     }
 }
 
+fn format_file_size(bytes: u32) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) -> ChatMessage {
     let color_index = m
         .sender_name
@@ -799,6 +841,9 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         reactions: reactions_str.into(),
         is_code_block,
         forwarded_from: m.forwarded_from.clone().unwrap_or_default().into(),
+        attachment_name: m.attachment_name.clone().unwrap_or_default().into(),
+        attachment_size: m.attachment_size.map(format_file_size).unwrap_or_default().into(),
+        channel_name: Default::default(),
     }
 }
 
@@ -810,7 +855,7 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
 /// - *italic* → strip markers (no italic in monospace anyway)
 /// - ~~strikethrough~~ → strip markers
 /// - > blockquote → prefix with "│ "
-fn render_markdown(content: &str) -> (String, bool) {
+pub fn render_markdown(content: &str) -> (String, bool) {
     let trimmed = content.trim();
 
     // Full code block: ```...```

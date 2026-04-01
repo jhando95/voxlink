@@ -107,6 +107,9 @@ pub struct AppConfig {
     /// Account email (set after login/registration). Used to pre-fill login form.
     #[serde(default)]
     pub account_email: Option<String>,
+    /// Category names that are collapsed in the channel list.
+    #[serde(default)]
+    pub collapsed_categories: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +237,7 @@ impl Default for AppConfig {
             ducking_threshold: default_ducking_threshold(),
             soundboard_clips: Vec::new(),
             account_email: None,
+            collapsed_categories: Vec::new(),
         }
     }
 }
@@ -390,6 +394,7 @@ mod tests {
             ducking_threshold: 0.1,
             soundboard_clips: Vec::new(),
             account_email: None,
+            collapsed_categories: Vec::new(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();

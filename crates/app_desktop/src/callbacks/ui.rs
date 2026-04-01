@@ -958,3 +958,43 @@ pub fn setup_revoke_all_sessions(
         });
     });
 }
+
+pub fn setup_toggle_category_collapse(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    window.on_toggle_category_collapse(move |category| {
+        let cat = category.to_string();
+        if cat.is_empty() {
+            return;
+        }
+        // Update config
+        let mut cfg = config_store::load_config();
+        if let Some(pos) = cfg.collapsed_categories.iter().position(|c| c == &cat) {
+            cfg.collapsed_categories.remove(pos);
+        } else {
+            cfg.collapsed_categories.push(cat);
+        }
+        let _ = config_store::save_config(&cfg);
+        // Re-render space view to reflect the change
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            let query = w.get_space_search_query().to_string();
+            ui_shell::render_space(
+                &w,
+                space,
+                &query,
+                &s.favorite_friends,
+                &s.incoming_friend_requests,
+                &s.outgoing_friend_requests,
+                s.self_user_id.as_deref(),
+                &config_store::load_config().collapsed_categories,
+            );
+        }
+    });
+}

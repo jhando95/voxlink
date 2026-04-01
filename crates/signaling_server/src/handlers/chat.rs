@@ -164,6 +164,8 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                     reply_preview: row.reply_preview,
                     pinned: false,
                     forwarded_from: None,
+                    attachment_name: None,
+                    attachment_size: None,
                 })
                 .collect();
             Ok((target_name, history))
@@ -486,6 +488,8 @@ pub async fn handle_send_text_message(
             .map(|(_, _, preview)| preview.clone()),
         pinned: false,
         forwarded_from: None,
+        attachment_name: None,
+        attachment_size: None,
     };
 
     // Store message in memory
@@ -693,6 +697,8 @@ pub async fn handle_send_direct_message(
                 reply_preview: row.reply_preview,
                 pinned: false,
                 forwarded_from: None,
+                attachment_name: None,
+                attachment_size: None,
             })
         })
         .await
@@ -1314,6 +1320,8 @@ pub async fn handle_search_messages(
                     reply_preview: m.reply_preview,
                     pinned: m.pinned,
                     forwarded_from: None,
+                    attachment_name: None,
+                    attachment_size: None,
                 })
                 .collect();
             let resp = SignalMessage::SearchResults {
@@ -1425,6 +1433,8 @@ pub async fn handle_search_space_messages(
                         reply_preview: m.reply_preview,
                         pinned: m.pinned,
                         forwarded_from: None,
+                        attachment_name: None,
+                        attachment_size: None,
                     },
                 })
                 .collect();
@@ -1554,6 +1564,8 @@ pub async fn handle_select_group_dm(
                     reply_preview: m.reply_preview,
                     pinned: false,
                     forwarded_from: None,
+                    attachment_name: None,
+                    attachment_size: None,
                 })
                 .collect();
             if let Some(peer) = peer_for_id(state, peer_id).await {
@@ -1653,6 +1665,8 @@ pub async fn handle_send_group_message(
                 reply_preview: None,
                 pinned: false,
                 forwarded_from: None,
+                attachment_name: None,
+                attachment_size: None,
             };
             let notify = SignalMessage::GroupMessage {
                 group_id,
@@ -1811,6 +1825,8 @@ pub async fn handle_forward_message(
         reply_preview: None,
         pinned: false,
         forwarded_from: Some(format!("#{source_channel_name}")),
+        attachment_name: None,
+        attachment_size: None,
     };
 
     // Store in memory

@@ -59,6 +59,8 @@ export component SpaceView inherits Rectangle {
     callback cancel-friend-request(string);
     callback remove-friend(string);
     callback open-direct-message(string);
+    callback toggle-category-collapse(string);
+    in property <bool> unread-pulse: false;
 
     background: transparent;
 
@@ -230,8 +232,10 @@ export component SpaceView inherits Rectangle {
                             for channel in root.channels : Rectangle {
                                 height: channel.is-category-header ? 28px :
                                     channel.is-voice ? 0px :
+                                    channel.category-collapsed ? 0px :
                                     (root.topic-edit-channel-id == channel.id ? 100px : 58px);
-                                visible: channel.is-category-header ? true : !channel.is-voice;
+                                visible: channel.is-category-header ? true :
+                                    channel.category-collapsed ? false : !channel.is-voice;
                                 border-radius: channel.is-category-header ? 0px : VxTheme.radius-card;
                                 background: channel.is-category-header ? transparent :
                                             channel.is-active ? VxTheme.tab-active-bg :
@@ -246,6 +250,13 @@ export component SpaceView inherits Rectangle {
                                 if channel.is-category-header : HorizontalLayout {
                                     padding-left: 4px;
                                     alignment: start;
+                                    spacing: 4px;
+                                    Text {
+                                        text: channel.category-collapsed ? "▶" : "▼";
+                                        color: VxTheme.text-muted;
+                                        font-size: 8px;
+                                        vertical-alignment: center;
+                                    }
                                     Text {
                                         text: channel.name;
                                         color: VxTheme.text-muted;
@@ -256,8 +267,14 @@ export component SpaceView inherits Rectangle {
                                 }
 
                                 text-channel-touch := TouchArea {
-                                    mouse-cursor: channel.is-category-header ? default : pointer;
-                                    clicked => { if !channel.is-category-header { root.select-text-channel(channel.id); } }
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if channel.is-category-header {
+                                            root.toggle-category-collapse(channel.category);
+                                        } else {
+                                            root.select-text-channel(channel.id);
+                                        }
+                                    }
                                 }
 
                                 if !channel.is-category-header : VerticalLayout {
@@ -322,6 +339,8 @@ export component SpaceView inherits Rectangle {
                                             label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
                                             tone: VxTheme.accent;
                                             fill: VxTheme.accent-subtle;
+                                            opacity: root.unread-pulse ? 0.6 : 1.0;
+                                            animate opacity { duration: 600ms; easing: ease-in-out; }
                                         }
                                         if channel.unread-count == 0 && channel.mention-count == 0 : VxStatusPill {
                                             label: channel.is-active ? "Recent" : "Open";
@@ -554,9 +573,12 @@ export component SpaceView inherits Rectangle {
                                              : channel.voice-quality == 3 ? "Ultra"
                                              : "High";
                                         tone: channel.voice-quality == 3 ? VxTheme.warning
+                                            : channel.voice-quality == 2 ? VxTheme.success
                                             : channel.voice-quality == 0 ? VxTheme.text-muted
                                             : VxTheme.text-secondary;
-                                        fill: VxTheme.bg-soft;
+                                        fill: channel.voice-quality == 3 ? VxTheme.warning.transparentize(0.88)
+                                            : channel.voice-quality == 2 ? VxTheme.success-dim
+                                            : VxTheme.bg-soft;
                                     }
                                     if channel.is-active : VxStatusPill {
                                         label: "Connected";
@@ -792,6 +814,7 @@ export component SpaceView inherits Rectangle {
                                             color-index: member.color-index;
                                             show-status: true;
                                             is-online: member.is-online;
+                                            status-level: member.status-level;
                                         }
 
                                         VerticalLayout {

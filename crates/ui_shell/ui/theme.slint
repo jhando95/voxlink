@@ -53,6 +53,9 @@ export struct ChatMessage {
     reactions: string,
     is-code-block: bool,
     forwarded-from: string,
+    attachment-name: string,
+    attachment-size: string,
+    channel-name: string,
 }
 
 export struct ChannelData {
@@ -69,6 +72,7 @@ export struct ChannelData {
     user-limit: int,
     slow-mode-secs: int,
     is-category-header: bool,
+    category-collapsed: bool,
     mention-count: int,
 }
 
@@ -84,6 +88,7 @@ export struct MemberData {
     is-online: bool,
     is-in-voice: bool,
     color-index: int,
+    status-level: int,
     is-server-muted: bool,
     is-friend: bool,
     has-incoming-request: bool,

@@ -991,6 +991,10 @@ pub struct TextMessageData {
     pub pinned: bool,
     #[serde(default)]
     pub forwarded_from: Option<String>,
+    #[serde(default)]
+    pub attachment_name: Option<String>,
+    #[serde(default)]
+    pub attachment_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1528,6 +1532,8 @@ mod tests {
                 reply_preview: None,
                 pinned: false,
                 forwarded_from: None,
+                attachment_name: None,
+                attachment_size: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1815,6 +1821,8 @@ mod tests {
             reply_preview: None,
             pinned: false,
             forwarded_from: Some("general".into()),
+            attachment_name: None,
+            attachment_size: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: TextMessageData = serde_json::from_str(&json).unwrap();

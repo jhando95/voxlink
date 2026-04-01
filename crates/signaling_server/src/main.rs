@@ -460,6 +460,8 @@ async fn main() {
                                     reply_preview: m.reply_preview,
                                     pinned: m.pinned,
                                     forwarded_from: None,
+                                    attachment_name: None,
+                                    attachment_size: None,
                                 })
                                 .collect();
                             if !dq.is_empty() {

@@ -137,6 +137,7 @@ pub fn setup(
     ui::setup_toggle_join_leave_sounds(window);
     ui::setup_toggle_show_spoilers(window);
     ui::setup_toggle_compact_chat(window);
+    ui::setup_toggle_category_collapse(window, state);
     ui::setup_toggle_streamer_mode(window);
     ui::setup_quick_switcher(window, state, network, rt_handle);
     ui::setup_toggle_neural_noise_suppression(window, audio, rt_handle);
@@ -157,6 +158,8 @@ pub fn setup(
     chat::setup_react_to_message(window, network, rt_handle);
     chat::setup_toggle_pin_message(window, network, rt_handle);
     chat::setup_search_messages(window, network, rt_handle);
+    chat::setup_open_thread(window, network, rt_handle);
+    chat::setup_close_thread(window);
     space::setup_set_profile(window, network, rt_handle);
 
     // v0.7 features

@@ -175,6 +175,7 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
                     &s.incoming_friend_requests,
                     &s.outgoing_friend_requests,
                     s.self_user_id.as_deref(),
+                    &config_store::load_config().collapsed_categories,
                 );
             }
         }

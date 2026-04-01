@@ -118,6 +118,7 @@ pub fn auto_save_settings(
             soundboard_clips: existing.soundboard_clips,
             streamer_mode: existing.streamer_mode,
             account_email: existing.account_email,
+            collapsed_categories: existing.collapsed_categories,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
