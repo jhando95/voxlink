@@ -966,7 +966,7 @@ export component VxAvatar inherits Rectangle {
         height: self.width;
         border-radius: self.width / 2;
         background: root.status-level == 3 ? VxTheme.danger :
-                    root.status-level == 2 ? #f5a623 :
+                    root.status-level == 2 ? VxTheme.warning :
                     root.status-level == 1 ? VxTheme.success :
                     root.is-online ? VxTheme.success : VxTheme.text-muted;
         border-color: VxTheme.bg-panel;

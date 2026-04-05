@@ -1373,6 +1373,162 @@ pub fn setup_set_channel_notification(
     });
 }
 
+pub fn setup_change_password(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    let window_weak = window.as_weak();
+    window.on_change_password(move |current_password, new_password| {
+        let current_password = current_password.to_string();
+        let new_password = new_password.to_string();
+        if current_password.is_empty() || new_password.is_empty() {
+            if let Some(w) = window_weak.upgrade() {
+                helpers::show_toast(&w, "Both passwords are required", 3);
+            }
+            return;
+        }
+        if new_password.len() < 6 {
+            if let Some(w) = window_weak.upgrade() {
+                helpers::show_toast(&w, "New password must be at least 6 characters", 3);
+            }
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::ChangePassword {
+                    current_password,
+                    new_password,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_show_profile(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+) {
+    let state = state.clone();
+    let window_weak = window.as_weak();
+    window.on_show_profile(move |user_id| {
+        let user_id = user_id.trim().to_string();
+        if user_id.is_empty() {
+            return;
+        }
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        // Look up user info from space member list or friend list
+        let s = state.borrow();
+        let mut found = false;
+        if let Some(ref space) = s.space {
+            if let Some(member) = space.members.iter().find(|m| {
+                m.user_id.as_deref() == Some(&user_id) || m.id == user_id
+            }) {
+                let name = member.nickname.as_deref().unwrap_or(&member.name);
+                let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                let ci = name
+                    .bytes()
+                    .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32))
+                    % 8;
+                let role_label = match member.role {
+                    shared_types::SpaceRole::Owner => "Owner",
+                    shared_types::SpaceRole::Admin => "Admin",
+                    shared_types::SpaceRole::Moderator => "Moderator",
+                    shared_types::SpaceRole::Member => "Member",
+                };
+                w.set_profile_popup_user_id(user_id.as_str().into());
+                w.set_profile_popup_name(name.into());
+                w.set_profile_popup_bio(member.bio.as_str().into());
+                w.set_profile_popup_status(member.status.as_str().into());
+                w.set_profile_popup_role(role_label.into());
+                w.set_profile_popup_role_color(member.role_color.as_str().into());
+                w.set_profile_popup_activity(member.activity.as_str().into());
+                w.set_profile_popup_initial(initial.into());
+                w.set_profile_popup_color_index(ci as i32);
+                w.set_profile_popup_visible(true);
+                found = true;
+            }
+        }
+        if !found {
+            // Check friend list
+            if let Some(friend) = s.favorite_friends.iter().find(|f| f.user_id == user_id) {
+                let initial = friend
+                    .name
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
+                let ci = friend
+                    .name
+                    .bytes()
+                    .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32))
+                    % 8;
+                w.set_profile_popup_user_id(user_id.as_str().into());
+                w.set_profile_popup_name(friend.name.as_str().into());
+                w.set_profile_popup_bio(slint::SharedString::default());
+                w.set_profile_popup_status(slint::SharedString::default());
+                w.set_profile_popup_role(slint::SharedString::default());
+                w.set_profile_popup_role_color(slint::SharedString::default());
+                w.set_profile_popup_activity(slint::SharedString::default());
+                w.set_profile_popup_initial(initial.into());
+                w.set_profile_popup_color_index(ci as i32);
+                w.set_profile_popup_visible(true);
+            }
+        }
+    });
+}
+
+pub fn setup_toggle_favorite_channel(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+) {
+    let state = state.clone();
+    let window_weak = window.as_weak();
+    window.on_toggle_favorite_channel(move |channel_id| {
+        let channel_id = channel_id.to_string();
+        if channel_id.is_empty() {
+            return;
+        }
+        // Toggle in config
+        let mut cfg = config_store::load_config();
+        if let Some(pos) = cfg.favorite_channels.iter().position(|c| c == &channel_id) {
+            cfg.favorite_channels.remove(pos);
+        } else {
+            cfg.favorite_channels.push(channel_id);
+        }
+        let _ = config_store::save_config(&cfg);
+        // Re-render space view to reflect the change
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            let query = w.get_space_search_query().to_string();
+            let cfg = config_store::load_config();
+            ui_shell::render_space(
+                &w,
+                space,
+                &query,
+                &s.favorite_friends,
+                &s.incoming_friend_requests,
+                &s.outgoing_friend_requests,
+                s.self_user_id.as_deref(),
+                &cfg.collapsed_categories,
+                &cfg.user_notes,
+                &cfg.channel_notification_overrides,
+                &cfg.favorite_channels,
+            );
+        }
+    });
+}
+
 pub fn setup_dismiss_welcome(window: &MainWindow) {
     let window_weak = window.as_weak();
     window.on_dismiss_welcome(move || {

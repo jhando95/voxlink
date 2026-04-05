@@ -340,6 +340,7 @@ pub async fn handle_create_space(
         slow_mode_secs: 0,
         position: 0,
         auto_delete_hours: 0,
+        min_role: String::new(),
     }];
 
     log::info!("Space {} created by {peer_id}", space_id);
@@ -499,6 +500,39 @@ pub async fn handle_join_space(
         }
     }
 
+    // Check invite expiry and max uses
+    if let Some(ref db) = db {
+        let db_clone = db.clone();
+        let sid = space_id.clone();
+        let invite_info = tokio::task::spawn_blocking(move || db_clone.get_invite_info(&sid))
+            .await
+            .unwrap_or(Err("task failed".into()));
+        if let Ok((expires_at, max_uses, uses)) = invite_info {
+            if let Some(expires_at) = expires_at {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                if now > expires_at {
+                    send_error(state, peer_id, "This invite link has expired").await;
+                    return;
+                }
+            }
+            if let Some(max_uses) = max_uses {
+                if max_uses > 0 && uses >= max_uses {
+                    send_error(state, peer_id, "This invite link has reached its maximum number of uses").await;
+                    return;
+                }
+            }
+            // Increment invite uses counter
+            let db_clone = db.clone();
+            let sid = space_id.clone();
+            tokio::task::spawn_blocking(move || {
+                let _ = db_clone.increment_invite_uses(&sid);
+            });
+        }
+    }
+
     // Reset join failure counter on successful invite code match
     {
         let s = state.read().await;
@@ -567,6 +601,12 @@ pub async fn handle_join_space(
                     .get(&ch.room_key)
                     .map(|r| r.peer_ids.len() as u32)
                     .unwrap_or(0);
+                let min_role_str = match ch.min_role {
+                    shared_types::SpaceRole::Owner => "owner",
+                    shared_types::SpaceRole::Admin => "admin",
+                    shared_types::SpaceRole::Moderator => "moderator",
+                    shared_types::SpaceRole::Member => "",
+                };
                 ChannelInfo {
                     id: ch.id.clone(),
                     name: ch.name.clone(),
@@ -580,6 +620,7 @@ pub async fn handle_join_space(
                     slow_mode_secs: ch.slow_mode_secs,
                     position: ch.position,
                     auto_delete_hours: ch.auto_delete_hours,
+                    min_role: min_role_str.to_string(),
                 }
             })
             .collect();

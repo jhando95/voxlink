@@ -106,6 +106,7 @@ pub async fn handle_create_channel(
             slow_mode_secs: 0,
             position: 0,
             auto_delete_hours: 0,
+            min_role: String::new(),
         }
     };
 
@@ -633,17 +634,13 @@ pub async fn handle_reorder_channels(
     };
     let Some(space_id) = space_id else { return };
 
-    // Check permission first (read lock)
+    // Check permission using user_id (not peer_id)
     {
-        let s = state.read().await;
-        let Some(space) = s.spaces.get(&space_id) else { return };
-        let role = space
-            .member_roles
-            .get(peer_id)
-            .copied()
-            .unwrap_or(shared_types::SpaceRole::Member);
+        let Some((_sid, _uid, role)) = super::space::peer_space_role(state, peer_id).await else {
+            crate::send_error(state, peer_id, "Not in a space").await;
+            return;
+        };
         if crate::handlers::space::role_rank(role) < crate::handlers::space::role_rank(shared_types::SpaceRole::Admin) {
-            drop(s);
             crate::send_error(state, peer_id, "Only admins can reorder channels").await;
             return;
         }

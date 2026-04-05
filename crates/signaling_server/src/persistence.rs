@@ -370,6 +370,8 @@ impl Database {
         // Account system columns
         self.ensure_column("users", "email", "TEXT")?;
         self.ensure_column("users", "password_hash", "TEXT")?;
+        // Server discovery
+        self.ensure_column("spaces", "is_public", "INTEGER DEFAULT 0")?;
         // Index on email for login lookups
         {
             let conn = self.lock_conn()?;
@@ -1064,13 +1066,16 @@ impl Database {
         Ok(())
     }
 
-    /// Invalidate token (logout).
+    /// Invalidate token (logout). Replaces token with a unique revoked marker so no
+    /// future lookup can match it, while preserving the NOT NULL UNIQUE constraint.
     pub fn invalidate_token(&self, user_id: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        // Set token to empty string — find_user_by_token won't match empty tokens
+        // Use a unique revoked marker: "revoked:<user_id>" — this can never match a
+        // valid hex token and is unique per user.
+        let revoked = format!("revoked:{user_id}");
         conn.execute(
-            "UPDATE users SET token = '' WHERE user_id = ?1",
-            params![user_id],
+            "UPDATE users SET token = ?2 WHERE user_id = ?1",
+            params![user_id, revoked],
         )
         .map_err(|e| format!("Update error: {e}"))?;
         Ok(())
@@ -1988,6 +1993,41 @@ impl Database {
         Ok(())
     }
 
+    /// Return the sender_id of a scheduled message, or None if not found.
+    pub fn get_scheduled_message_sender(&self, schedule_id: &str) -> Result<Option<String>, String> {
+        let conn = self.lock_conn()?;
+        match conn.query_row(
+            "SELECT sender_id FROM scheduled_messages WHERE id = ?1",
+            [schedule_id],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(sender_id) => Ok(Some(sender_id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("get sched sender: {e}")),
+        }
+    }
+
+    /// Return invite settings for a space: (invite_expires_at, invite_max_uses, invite_uses).
+    pub fn get_invite_info(&self, space_id: &str) -> Result<(Option<i64>, Option<i64>, i64), String> {
+        let conn = self.lock_conn()?;
+        let result = conn.query_row(
+            "SELECT invite_expires_at, invite_max_uses, COALESCE(invite_uses, 0) FROM spaces WHERE id = ?1",
+            params![space_id],
+            |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, i64>(2)?)),
+        ).map_err(|e| format!("get invite info: {e}"))?;
+        Ok(result)
+    }
+
+    /// Increment invite_uses counter for a space.
+    pub fn increment_invite_uses(&self, space_id: &str) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "UPDATE spaces SET invite_uses = COALESCE(invite_uses, 0) + 1 WHERE id = ?1",
+            params![space_id],
+        ).map_err(|e| format!("inc invite uses: {e}"))?;
+        Ok(())
+    }
+
     // ── Welcome Message ──
 
     pub fn set_welcome_message(&self, space_id: &str, message: &str) -> Result<(), String> {
@@ -2012,7 +2052,6 @@ impl Database {
 
     pub fn is_space_public(&self, space_id: &str) -> Result<bool, String> {
         let conn = self.lock_conn()?;
-        let _ = self.ensure_column("spaces", "is_public", "INTEGER DEFAULT 0");
         let val: i32 = conn
             .query_row(
                 "SELECT COALESCE(is_public, 0) FROM spaces WHERE id = ?1",
@@ -2025,7 +2064,6 @@ impl Database {
 
     pub fn set_space_public(&self, space_id: &str, is_public: bool) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        let _ = self.ensure_column("spaces", "is_public", "INTEGER DEFAULT 0");
         conn.execute(
             "UPDATE spaces SET is_public = ?1 WHERE id = ?2",
             params![is_public as i32, space_id],
@@ -2035,7 +2073,6 @@ impl Database {
 
     pub fn load_public_spaces(&self) -> Result<Vec<(String, String, String, String)>, String> {
         let conn = self.lock_conn()?;
-        let _ = self.ensure_column("spaces", "is_public", "INTEGER DEFAULT 0");
         let mut stmt = conn.prepare(
             "SELECT id, name, COALESCE(description, ''), invite_code FROM spaces WHERE is_public = 1"
         ).map_err(|e| format!("prep public: {e}"))?;

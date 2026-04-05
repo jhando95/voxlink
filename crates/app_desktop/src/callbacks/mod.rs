@@ -156,7 +156,10 @@ pub fn setup(
     ui::setup_logout(window, network, rt_handle);
     ui::setup_revoke_all_sessions(window, network, rt_handle);
     ui::setup_change_display_name(window, network, rt_handle);
+    ui::setup_change_password(window, network, rt_handle);
     ui::setup_delete_account(window, network, rt_handle);
+    ui::setup_show_profile(window, state);
+    ui::setup_toggle_favorite_channel(window, state);
 
     // Welcome / onboarding
     ui::setup_dismiss_welcome(window);
@@ -178,6 +181,9 @@ pub fn setup(
     chat::setup_close_thread(window);
     chat::setup_mention_input_changed(window, state);
     chat::setup_mention_selected(window);
+    chat::setup_call_user(window, network, rt_handle);
+    chat::setup_accept_call(window, network, rt_handle);
+    chat::setup_decline_call(window, network, rt_handle);
     space::setup_set_profile(window, network, rt_handle);
 
     // v0.7 features

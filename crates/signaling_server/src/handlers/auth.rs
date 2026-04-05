@@ -213,14 +213,14 @@ pub async fn handle_authenticate(
 
 // ─── Account System ───
 
-/// Hash a password using Argon2id with a random salt.
-fn hash_password(password: &str) -> String {
+/// Hash a password using Argon2id with a random salt. Returns Err on hash failure.
+fn hash_password(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     argon2
         .hash_password(password.as_bytes(), &salt)
-        .expect("argon2 hash failed")
-        .to_string()
+        .map(|h| h.to_string())
+        .map_err(|e| format!("Password hashing failed: {e}"))
 }
 
 /// Verify a password against an argon2 or legacy SHA-256 hash.
@@ -327,7 +327,14 @@ pub async fn handle_create_account(
         return;
     };
 
-    let password_hash = hash_password(&password);
+    let password_hash = match hash_password(&password) {
+        Ok(h) => h,
+        Err(e) => {
+            log::error!("Password hash failed during account creation: {e}");
+            send_auth_error(state, peer_id, "Account creation failed").await;
+            return;
+        }
+    };
     let token = generate_token();
     let user_id = generate_user_id();
     let now = unix_now_secs();
@@ -579,7 +586,14 @@ pub async fn handle_change_password(
     }
 
     // Update password
-    let new_hash = hash_password(&new_password);
+    let new_hash = match hash_password(&new_password) {
+        Ok(h) => h,
+        Err(e) => {
+            log::error!("Password hash failed during password change: {e}");
+            send_auth_error(state, peer_id, "Password change failed").await;
+            return;
+        }
+    };
     let db_clone = db_ref.clone();
     let uid_clone = uid.clone();
     let result = tokio::time::timeout(
@@ -721,7 +735,7 @@ mod tests {
     #[test]
     fn test_hash_and_verify_password() {
         let password = "hunter2";
-        let hash = hash_password(password);
+        let hash = hash_password(password).unwrap();
         assert!(hash.starts_with("$argon2"));
         assert!(verify_password(password, &hash));
         assert!(!verify_password("wrong", &hash));
@@ -729,8 +743,8 @@ mod tests {
 
     #[test]
     fn test_hash_different_salts() {
-        let hash1 = hash_password("same_password");
-        let hash2 = hash_password("same_password");
+        let hash1 = hash_password("same_password").unwrap();
+        let hash2 = hash_password("same_password").unwrap();
         assert_ne!(hash1, hash2);
         assert!(verify_password("same_password", &hash1));
         assert!(verify_password("same_password", &hash2));

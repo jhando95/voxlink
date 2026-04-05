@@ -150,7 +150,7 @@ export component RoomView inherits Rectangle {
                 if root.recording-active : Rectangle {
                     height: 24px;
                     border-radius: VxTheme.radius-pill;
-                    background: VxTheme.dark-mode ? #ff6b6b18 : #ff6b6b14;
+                    background: VxTheme.danger.transparentize(VxTheme.dark-mode ? 0.9 : 0.92);
                     border-color: VxTheme.danger.transparentize(0.45);
                     border-width: 1px;
                     width: rec-layout.preferred-width;
@@ -266,6 +266,8 @@ export component RoomView inherits Rectangle {
                             font-weight: 700;
                             horizontal-alignment: center;
                             vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 120px;
                         }
                     }
                 }

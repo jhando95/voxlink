@@ -215,7 +215,7 @@ export component SpaceView inherits Rectangle {
 
                                     Text {
                                         text: "\u{2605}";
-                                        color: #f5c842;
+                                        color: VxTheme.warning;
                                         font-size: 14px;
                                         vertical-alignment: center;
                                     }
@@ -338,7 +338,7 @@ export component SpaceView inherits Rectangle {
                                             clicked => { root.toggle-favorite-channel(channel.id); }
                                             Text {
                                                 text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
-                                                color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                                color: channel.is-favorite ? VxTheme.warning : VxTheme.text-muted;
                                                 font-size: 14px;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
@@ -842,7 +842,7 @@ export component SpaceView inherits Rectangle {
                                     clicked => { root.toggle-favorite-channel(channel.id); }
                                     Text {
                                         text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
-                                        color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                        color: channel.is-favorite ? VxTheme.warning : VxTheme.text-muted;
                                         font-size: 14px;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -1720,7 +1720,7 @@ export component SpaceView inherits Rectangle {
                                 alignment: center;
                                 Text {
                                     text: "\u{2605}";
-                                    color: #f5c842;
+                                    color: VxTheme.warning;
                                     font-size: 13px;
                                     vertical-alignment: center;
                                 }
@@ -1814,7 +1814,7 @@ export component SpaceView inherits Rectangle {
                                         clicked => { root.toggle-favorite-channel(channel.id); }
                                         Text {
                                             text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
-                                            color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                            color: channel.is-favorite ? VxTheme.warning : VxTheme.text-muted;
                                             font-size: 13px;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;

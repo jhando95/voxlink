@@ -229,6 +229,7 @@ export component MainWindow inherits Window {
     in-out property <bool> incoming-call-visible: false;
     in-out property <string> incoming-call-name: "";
     in-out property <string> incoming-call-room: "";
+    in-out property <string> incoming-call-caller-id: "";
     callback accept-call();
     callback decline-call();
 
@@ -974,7 +975,7 @@ export component MainWindow inherits Window {
                             // Submit button
                             Rectangle {
                                 height: 36px;
-                                border-radius: 8px;
+                                border-radius: VxTheme.radius-control;
                                 background: login-submit-touch.has-hover ? VxTheme.accent.darker(0.15) : VxTheme.accent;
                                 login-submit-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -989,7 +990,7 @@ export component MainWindow inherits Window {
                                 }
                                 Text {
                                     text: root.login-mode ? "Sign In" : "Create Account";
-                                    color: white;
+                                    color: VxTheme.text-inverse;
                                     font-size: 12px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
@@ -1041,7 +1042,7 @@ export component MainWindow inherits Window {
         }
 
         if root.quick-switcher-visible : Rectangle {
-            background: #00000080;
+            background: VxTheme.bg-overlay;
             TouchArea {
                 clicked => { root.quick-switcher-visible = false; root.quick-switcher-query = ""; }
             }
@@ -1185,7 +1186,8 @@ export component MainWindow inherits Window {
                                 color: VxTheme.text-secondary;
                                 font-size: 12px;
                                 horizontal-alignment: center;
-                                wrap: word-wrap;
+                                overflow: elide;
+                                max-width: 280px;
                             }
 
                             HorizontalLayout {
@@ -1206,7 +1208,7 @@ export component MainWindow inherits Window {
                                     }
                                     Text {
                                         text: "Accept";
-                                        color: white;
+                                        color: VxTheme.text-inverse;
                                         font-size: 12px;
                                         font-weight: 700;
                                         horizontal-alignment: center;
@@ -1228,7 +1230,7 @@ export component MainWindow inherits Window {
                                     }
                                     Text {
                                         text: "Decline";
-                                        color: white;
+                                        color: VxTheme.text-inverse;
                                         font-size: 12px;
                                         font-weight: 700;
                                         horizontal-alignment: center;
@@ -1334,7 +1336,7 @@ export component MainWindow inherits Window {
 
                             Text {
                                 text: root.profile-popup-initial;
-                                color: #fff;
+                                color: VxTheme.text-inverse;
                                 font-size: 20px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
@@ -1451,7 +1453,7 @@ export component MainWindow inherits Window {
 
                         Text {
                             text: "Message";
-                            color: white;
+                            color: VxTheme.text-inverse;
                             font-size: 11px;
                             font-weight: 700;
                             horizontal-alignment: center;
@@ -1516,7 +1518,7 @@ export component MainWindow inherits Window {
                             // Dismiss button
                             Rectangle {
                                 height: 36px;
-                                border-radius: 8px;
+                                border-radius: VxTheme.radius-control;
                                 background: welcome-dismiss-touch.has-hover ? VxTheme.accent.darker(0.15) : VxTheme.accent;
 
                                 welcome-dismiss-touch := TouchArea {
@@ -1529,7 +1531,7 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: "Got it!";
-                                    color: white;
+                                    color: VxTheme.text-inverse;
                                     font-size: 12px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
@@ -1544,7 +1546,7 @@ export component MainWindow inherits Window {
 
         // ─── Keyboard Shortcuts Overlay (Ctrl+/) ───
         if root.shortcuts-visible : Rectangle {
-            background: #00000080;
+            background: VxTheme.bg-overlay;
             TouchArea {
                 clicked => { root.shortcuts-visible = false; }
             }
@@ -1714,7 +1716,7 @@ export component MainWindow inherits Window {
                             background: VxTheme.accent;
                             Text {
                                 text: "VX";
-                                color: #fff;
+                                color: VxTheme.text-inverse;
                                 font-size: 12px;
                                 font-weight: 800;
                                 horizontal-alignment: center;
@@ -1732,7 +1734,7 @@ export component MainWindow inherits Window {
                     }
 
                     Text {
-                        text: "Version 0.9.0";
+                        text: "Version " + root.version-text;
                         color: VxTheme.text-secondary;
                         font-size: 11px;
                         font-weight: 600;

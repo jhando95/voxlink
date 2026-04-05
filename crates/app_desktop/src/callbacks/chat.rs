@@ -698,6 +698,88 @@ pub fn setup_mention_input_changed(
     });
 }
 
+pub fn setup_call_user(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let window_weak = window.as_weak();
+    window.on_call_user(move |user_id| {
+        let user_id = user_id.trim().to_string();
+        if user_id.is_empty() {
+            return;
+        }
+        if let Some(w) = window_weak.upgrade() {
+            crate::helpers::show_toast(&w, "Calling...", 0);
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::CallUser {
+                    target_user_id: user_id,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_accept_call(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let window_weak = window.as_weak();
+    window.on_accept_call(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let room_key = w.get_incoming_call_room().to_string();
+        if room_key.is_empty() {
+            return;
+        }
+        w.set_incoming_call_visible(false);
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::AcceptCall { room_key })
+                .await;
+        });
+    });
+}
+
+pub fn setup_decline_call(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let window_weak = window.as_weak();
+    window.on_decline_call(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let room_key = w.get_incoming_call_room().to_string();
+        if room_key.is_empty() {
+            return;
+        }
+        w.set_incoming_call_visible(false);
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::DeclineCall { room_key })
+                .await;
+        });
+    });
+}
+
 pub fn setup_mention_selected(
     window: &MainWindow,
 ) {

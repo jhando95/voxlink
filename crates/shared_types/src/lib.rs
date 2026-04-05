@@ -147,6 +147,9 @@ pub struct ChannelInfo {
     /// Auto-delete messages after N hours (0 = disabled)
     #[serde(default)]
     pub auto_delete_hours: u32,
+    /// Minimum role required to access this channel (empty = member)
+    #[serde(default)]
+    pub min_role: String,
 }
 
 fn default_voice_quality() -> u8 {
@@ -1625,6 +1628,7 @@ mod tests {
                 category: String::new(),
                 status: String::new(),
                 slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
+                min_role: String::new(),
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1666,6 +1670,7 @@ mod tests {
                 category: String::new(),
                 status: String::new(),
                 slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
+                min_role: String::new(),
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),

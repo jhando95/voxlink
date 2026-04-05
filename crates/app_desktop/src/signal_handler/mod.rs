@@ -913,6 +913,65 @@ pub fn process_signals(
                     }
                 }
             }
+            // DM Voice Calls
+            SignalMessage::IncomingCall {
+                caller_id,
+                caller_name,
+                room_key,
+            } => {
+                log::info!("Incoming call from {caller_name} ({caller_id})");
+                w.set_incoming_call_visible(true);
+                w.set_incoming_call_name(caller_name.as_str().into());
+                w.set_incoming_call_room(room_key.as_str().into());
+                w.set_incoming_call_caller_id(caller_id.as_str().into());
+                if w.get_notifications_enabled() && w.get_status_preset() != 2 {
+                    crate::helpers::send_notification("Voxlink", &format!("{caller_name} is calling you"));
+                }
+            }
+            SignalMessage::CallEnded { room_key: _, reason } => {
+                log::info!("Call ended: {reason}");
+                w.set_incoming_call_visible(false);
+                let display_reason = match reason.as_str() {
+                    "declined" => "Call declined",
+                    "offline" => "User is offline",
+                    "not_authenticated" => "Not authenticated",
+                    "caller_disconnected" => "Caller disconnected",
+                    _ => reason.as_str(),
+                };
+                crate::helpers::show_toast(w, display_reason, 0);
+            }
+            // Channel permissions
+            SignalMessage::ChannelPermissionsChanged {
+                channel_id,
+                min_role,
+            } => {
+                log::info!("Channel {channel_id} permissions changed: min_role={min_role}");
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.min_role = min_role.clone();
+                });
+                crate::helpers::show_toast(w, "Channel permissions updated", 0);
+            }
+            // Space-wide search results
+            SignalMessage::SpaceSearchResults { results } => {
+                log::info!("Space search results: {} matches", results.len());
+                let user_name = w.get_user_name().to_string();
+                let items: Vec<ui_shell::ChatMessage> = results
+                    .iter()
+                    .map(|r| {
+                        let mut msg = ui_shell::text_msg_to_chat_msg(&r.message, &user_name);
+                        // Prefix channel name so the user knows where the result came from
+                        let prefix = format!("#{} \u{2014} ", r.channel_name);
+                        msg.content = slint::SharedString::from(format!(
+                            "{}{}",
+                            prefix,
+                            msg.content
+                        ));
+                        msg
+                    })
+                    .collect();
+                let model = Rc::new(slint::VecModel::from(items));
+                w.set_chat_search_results(model.into());
+            }
             other => {
                 log::trace!("Unhandled signal (client-to-server variant): {:?}",
                     std::mem::discriminant(other));

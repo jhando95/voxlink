@@ -664,6 +664,14 @@ async fn main() {
                 if udp_removed > 0 {
                     log::debug!("Cleaned up {udp_removed} orphaned UDP session tokens");
                 }
+
+                // Remove stale connections_per_ip entries where count has reached 0
+                let ip_before = s.connections_per_ip.len();
+                s.connections_per_ip.retain(|_, count| *count > 0);
+                let ip_removed = ip_before - s.connections_per_ip.len();
+                if ip_removed > 0 {
+                    log::debug!("Cleaned up {ip_removed} stale connections_per_ip entries");
+                }
             }
         });
     }
@@ -709,6 +717,101 @@ async fn main() {
                             }
                         }
                     }
+                }
+            }
+        });
+    }
+
+    // Periodic scheduled message delivery (every 30 seconds)
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let db_clone = db.clone();
+                let due = tokio::task::spawn_blocking(move || {
+                    db_clone.get_due_scheduled_messages().unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+                for (sched_id, space_id, channel_id, sender_id, sender_name, content) in due {
+                    let msg_id = {
+                        let mut s = state.write().await;
+                        s.alloc_message_id()
+                    };
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let link_url = shared_types::extract_first_url(&content);
+                    let msg_data = shared_types::TextMessageData {
+                        message_id: msg_id.clone(),
+                        sender_id: sender_id.clone(),
+                        sender_name: sender_name.clone(),
+                        content: content.clone(),
+                        timestamp: now,
+                        edited: false,
+                        reactions: vec![],
+                        reply_to_message_id: None,
+                        reply_to_sender_name: None,
+                        reply_preview: None,
+                        pinned: false,
+                        forwarded_from: None,
+                        attachment_name: None,
+                        attachment_size: None,
+                        link_url,
+                    };
+                    // Store in in-memory buffer and broadcast
+                    {
+                        let mut s = state.write().await;
+                        if let Some(space) = s.spaces.get_mut(&space_id) {
+                            let msgs = space.text_messages.entry(channel_id.clone()).or_insert_with(VecDeque::new);
+                            msgs.push_back(msg_data.clone());
+                            while msgs.len() > max_channel_messages() {
+                                msgs.pop_front();
+                            }
+                        }
+                    }
+                    // Persist the message
+                    {
+                        let db_clone = db.clone();
+                        let cid = channel_id.clone();
+                        let mid = msg_id;
+                        let sid = sender_id;
+                        let sn = sender_name;
+                        let ct = content;
+                        let ts = now as i64;
+                        tokio::task::spawn_blocking(move || {
+                            let _ = db_clone.save_message(&crate::persistence::MessageRow {
+                                id: mid,
+                                channel_id: cid,
+                                sender_id: sid,
+                                sender_name: sn,
+                                content: ct,
+                                timestamp: ts,
+                                edited: false,
+                                reply_to_message_id: None,
+                                reply_to_sender_name: None,
+                                reply_preview: None,
+                                pinned: false,
+                                link_url: None,
+                            });
+                        });
+                    }
+                    // Broadcast to space members
+                    let notify = SignalMessage::TextMessage {
+                        channel_id,
+                        message: msg_data,
+                    };
+                    handlers::broadcast_to_space(&state, &space_id, "", &notify).await;
+                    // Delete the scheduled message from DB
+                    let db_clone = db.clone();
+                    let sid = sched_id;
+                    tokio::task::spawn_blocking(move || {
+                        let _ = db_clone.delete_scheduled_message(&sid);
+                    });
                 }
             }
         });
@@ -1842,6 +1945,10 @@ async fn handle_list_events(state: &State, peer_id: &str, db: &Db) {
 // ─── Message Scheduling ───
 
 async fn handle_schedule_message(state: &State, peer_id: &str, channel_id: String, content: String, send_at: i64, db: &Db) {
+    if content.len() > 2000 {
+        send_error(state, peer_id, "Message content too long (max 2000 characters)").await;
+        return;
+    }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
     if send_at <= now {
         send_error(state, peer_id, "Scheduled time must be in the future").await;
@@ -1869,6 +1976,35 @@ async fn handle_schedule_message(state: &State, peer_id: &str, channel_id: Strin
 
 async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_id: String, db: &Db) {
     let db = match db { Some(db) => db, None => return };
+    // Verify the caller owns this scheduled message
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let user_id_opt = peer.user_id.lock().await.clone();
+    drop(s);
+    let user_id = match user_id_opt {
+        Some(id) => id,
+        None => {
+            send_error(state, peer_id, "Not authenticated").await;
+            return;
+        }
+    };
+    let db_clone = db.clone();
+    let sid = schedule_id.clone();
+    let owner = tokio::task::spawn_blocking(move || db_clone.get_scheduled_message_sender(&sid))
+        .await
+        .unwrap_or(Err("task failed".into()));
+    match owner {
+        Ok(Some(sender_id)) if sender_id == user_id => {}
+        Ok(Some(_)) => {
+            send_error(state, peer_id, "You can only cancel your own scheduled messages").await;
+            return;
+        }
+        Ok(None) => {
+            send_error(state, peer_id, "Scheduled message not found").await;
+            return;
+        }
+        Err(_) => return,
+    }
     let _ = db.cancel_scheduled_message(&schedule_id);
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
@@ -1926,6 +2062,15 @@ async fn handle_stop_recording(state: &State, peer_id: &str, channel_id: String)
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
     let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let role = handlers::space::role_for_identity(space, &user_id);
+    // Only Moderator+ can stop recording (recording initiators are always Admin+)
+    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+        drop(s);
+        send_error(state, peer_id, "Moderator+ required to stop recording").await;
+        return;
+    }
     let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
     let room_peers: Vec<_> = if let Some(room) = s.rooms.get(&room_key) {
         room.peer_ids.iter().filter_map(|pid| s.peers.get(pid).cloned()).collect()
@@ -1945,7 +2090,14 @@ async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db:
     }
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let user_id = match peer.user_id.lock().await.clone() {
+        Some(id) => id,
+        None => {
+            drop(s);
+            send_error(state, peer_id, "Not authenticated").await;
+            return;
+        }
+    };
     drop(s);
     *peer.name.lock().await = trimmed.clone();
     if let Some(db) = db { let _ = db.update_display_name(&user_id, &trimmed); }
@@ -1958,7 +2110,14 @@ async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db:
 async fn handle_delete_account(state: &State, peer_id: &str, db: &Db) {
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let user_id = match peer.user_id.lock().await.clone() {
+        Some(id) => id,
+        None => {
+            drop(s);
+            send_error(state, peer_id, "Not authenticated").await;
+            return;
+        }
+    };
     drop(s);
     if let Some(db) = db { let _ = db.delete_user(&user_id); }
     let s = state.read().await;
@@ -1976,7 +2135,7 @@ async fn handle_set_space_public(state: &State, peer_id: &str, is_public: bool, 
         let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
         let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
         let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
-        let role = space.member_roles.get(&user_id).copied().unwrap_or(shared_types::SpaceRole::Member);
+        let role = handlers::space::role_for_identity(space, &user_id);
         let member_ids = space.member_ids.clone();
         (space_id, user_id, role, member_ids)
     };
@@ -2037,26 +2196,117 @@ async fn handle_browse_public_spaces(state: &State, peer_id: &str, db: &Db) {
 
 async fn handle_send_voice_note(
     state: &State, peer_id: &str, channel_id: String,
-    duration_secs: u32, data: Vec<u8>, _db: &Db,
+    duration_secs: u32, data: Vec<u8>, db: &Db,
 ) {
     // Voice note = special text message with voice note attachment
     if data.len() > 512_000 { // 500KB max
         send_error(state, peer_id, "Voice note too large (max 500KB)").await;
         return;
     }
+
+    let space_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.space_id.lock().await.clone(),
+            None => None,
+        }
+    };
+    let Some(space_id) = space_id else { return };
+
+    // Check if peer is timed out
+    {
+        let s = state.read().await;
+        if let Some(peer) = s.peers.get(peer_id) {
+            let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+            if until > 0 && now_epoch_secs() < until {
+                let peer = peer.clone();
+                drop(s);
+                send_to(&peer, &SignalMessage::Error {
+                    message: "You are timed out and cannot send messages".into(),
+                }).await;
+                return;
+            }
+        }
+    }
+
+    // Check channel permissions (min_role)
+    {
+        let s = state.read().await;
+        let min_role = s.spaces.get(&space_id)
+            .and_then(|sp| sp.channels.iter().find(|ch| ch.id == channel_id))
+            .map(|ch| ch.min_role)
+            .unwrap_or(shared_types::SpaceRole::Member);
+        if min_role != shared_types::SpaceRole::Member {
+            let user_role = if let Some(peer) = s.peers.get(peer_id) {
+                if let Some(uid) = peer.user_id.lock().await.as_deref() {
+                    s.spaces.get(&space_id)
+                        .and_then(|sp| sp.member_roles.get(uid).copied())
+                        .unwrap_or(shared_types::SpaceRole::Member)
+                } else {
+                    shared_types::SpaceRole::Member
+                }
+            } else {
+                shared_types::SpaceRole::Member
+            };
+            if !user_role.has_at_least(min_role) {
+                if let Some(peer) = s.peers.get(peer_id).cloned() {
+                    drop(s);
+                    send_to(&peer, &SignalMessage::Error {
+                        message: "You don't have permission to use this channel".into(),
+                    }).await;
+                }
+                return;
+            }
+        }
+    }
+
+    // Slow mode check
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            let slow_mode_secs = space.channels.iter()
+                .find(|ch| ch.id == channel_id)
+                .map(|ch| ch.slow_mode_secs)
+                .unwrap_or(0);
+            if slow_mode_secs > 0 {
+                let now = now_epoch_secs();
+                let key = (channel_id.clone(), peer_id.to_string());
+                if let Some(&last) = space.slow_mode_timestamps.get(&key) {
+                    if now < last + slow_mode_secs as u64 {
+                        let remaining = (last + slow_mode_secs as u64) - now;
+                        if let Some(peer) = s.peers.get(peer_id).cloned() {
+                            drop(s);
+                            send_to(&peer, &SignalMessage::Error {
+                                message: format!("Slow mode: wait {remaining}s before sending another message"),
+                            }).await;
+                        }
+                        return;
+                    }
+                }
+                space.slow_mode_timestamps.insert(key, now);
+            }
+        }
+    }
+
+    // Auto-moderation filter check (on the voice note description text)
+    let content_text = format!("\u{1F3A4} Voice note ({duration_secs}s)");
+    if let Some((matched_word, action)) = handlers::moderation::check_automod(db, &space_id, &content_text).await {
+        if action == "block" {
+            send_error(state, peer_id, &format!("Message blocked by auto-moderation (matched: {matched_word})")).await;
+            return;
+        }
+    }
+
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
     let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
     let name = peer.name.lock().await.clone();
     let name = if name.is_empty() { "Anonymous".to_string() } else { name };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
     drop(s);
 
     let msg_id = {
-        use rand::RngCore;
-        let mut buf = [0u8; 4];
-        rand::rngs::OsRng.fill_bytes(&mut buf);
-        format!("vn_{:08x}", u32::from_le_bytes(buf))
+        let mut s = state.write().await;
+        s.alloc_message_id()
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2067,7 +2317,7 @@ async fn handle_send_voice_note(
         message_id: msg_id,
         sender_name: name,
         sender_id: user_id,
-        content: format!("\u{1F3A4} Voice note ({duration_secs}s)"),
+        content: content_text,
         timestamp: now,
         reply_to_message_id: None,
         reply_to_sender_name: None,
@@ -2953,7 +3203,19 @@ async fn handle_set_priority_speaker(
     target_id: String,
     enabled: bool,
 ) {
-    // Only admins+ can set priority speaker, or self
+    // Only Moderator+ can set priority speaker on others; anyone can set it on themselves
+    let is_self = peer_id == target_id;
+    if !is_self {
+        if let Some((_space_id, _user_id, role)) = handlers::space::peer_space_role(state, peer_id).await {
+            if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+                send_error(state, peer_id, "Moderator+ required to set priority speaker on others").await;
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
     let room_code = {
         let s = state.read().await;
         let Some(peer) = s.peers.get(peer_id) else {
@@ -2995,6 +3257,11 @@ async fn handle_set_priority_speaker(
 // ─── Whisper ───
 
 async fn handle_whisper_to(state: &State, peer_id: &str, target_peer_ids: Vec<String>) {
+    // Cap whisper targets to 20 to prevent abuse
+    if target_peer_ids.len() > 20 {
+        send_error(state, peer_id, "Too many whisper targets (max 20)").await;
+        return;
+    }
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id) {
         if let Ok(mut wt) = peer.whisper_targets.write() {
