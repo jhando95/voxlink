@@ -1,6 +1,6 @@
 [package]
 name = "signaling_server"
-version = "0.9.9"
+version = "0.10.0"
 edition = "2021"
 
 [dependencies]
