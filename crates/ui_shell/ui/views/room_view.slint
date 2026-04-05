@@ -1,5 +1,5 @@
 import { ListView, ScrollView } from "std-widgets.slint";
-import { ParticipantData, ShareSourceData, VxTheme } from "../theme.slint";
+import { ParticipantData, ShareSourceData, SoundboardClipData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
 
 export component RoomView inherits Rectangle {
@@ -23,6 +23,7 @@ export component RoomView inherits Rectangle {
     in property <int> dropped-frames: 0;
     in property <bool> in-space-channel: false;
     in property <string> current-space-name: "";
+    in property <string> channel-topic: "";
     in property <bool> has-screen-share: false;
     in property <bool> is-sharing-screen: false;
     in property <string> screen-share-owner-name: "";
@@ -50,6 +51,11 @@ export component RoomView inherits Rectangle {
     callback select-screen-share-profile(int);
     callback volume-changed(string, float);
     callback navigate(int);
+    in property <[SoundboardClipData]> soundboard-clips: [];
+    callback play-soundboard-clip(int);
+    in-out property <bool> show-soundboard: false;
+    in property <bool> recording-active: false;
+    in property <string> recording-user: "";
 
     background: transparent;
 
@@ -100,6 +106,7 @@ export component RoomView inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
+                    spacing: 1px;
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
@@ -118,6 +125,12 @@ export component RoomView inherits Rectangle {
                             vertical-alignment: center;
                         }
                     }
+                    if root.channel-topic != "" : Text {
+                        text: root.channel-topic;
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        overflow: elide;
+                    }
                 }
 
                 // Center: status
@@ -133,6 +146,45 @@ export component RoomView inherits Rectangle {
                     fill: VxTheme.warning-soft;
                 }
 
+                // Recording indicator — pulsing red pill
+                if root.recording-active : Rectangle {
+                    height: 24px;
+                    border-radius: VxTheme.radius-pill;
+                    background: VxTheme.dark-mode ? #ff6b6b18 : #ff6b6b14;
+                    border-color: VxTheme.danger.transparentize(0.45);
+                    border-width: 1px;
+                    width: rec-layout.preferred-width;
+
+                    rec-layout := HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 6px;
+
+                        // Pulsing red dot
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: VxTheme.danger;
+                            opacity: 0.5 + 0.5 * Math.sin(animation-tick() / 600ms * 360deg);
+                        }
+                        Text {
+                            text: "REC";
+                            color: VxTheme.danger;
+                            font-size: 10px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.recording-user;
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
                 // PTT state indicator — shows when push-to-talk is active
                 if !root.is-open-mic && !root.is-muted && !root.is-deafened : VxStatusPill {
                     label: "Transmitting  " + root.ptt-key-display;
@@ -145,7 +197,7 @@ export component RoomView inherits Rectangle {
                     fill: VxTheme.bg-soft;
                 }
 
-                // Right: participant count + ping
+                // Right: participant count + copy button
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;
@@ -154,29 +206,6 @@ export component RoomView inherits Rectangle {
                         text: root.participants.length + "";
                         color: VxTheme.text-secondary;
                         font-size: 11px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    // Ping dot
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: root.ping-ms < 0 ? VxTheme.text-muted :
-                                    root.ping-ms < 60 ? VxTheme.success :
-                                    root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
-                    }
-                    Text {
-                        text: root.ping-ms >= 0 ? root.ping-ms + "ms" : "--";
-                        color: VxTheme.text-muted;
-                        font-size: 10px;
-                        vertical-alignment: center;
-                    }
-                    // Transport indicator
-                    Text {
-                        text: root.udp-active ? "UDP" : "WS";
-                        color: root.udp-active ? VxTheme.success : VxTheme.text-muted;
-                        font-size: 9px;
                         font-weight: 700;
                         vertical-alignment: center;
                     }
@@ -263,9 +292,9 @@ export component RoomView inherits Rectangle {
                             y: 36px;
                             width: parent.width;
                             text: p.id == "self" ? "You" : p.name;
-                            color: VxTheme.text-secondary;
+                            color: p.is-speaking ? VxTheme.success : VxTheme.text-secondary;
                             font-size: 9px;
-                            font-weight: 600;
+                            font-weight: p.is-speaking ? 800 : 600;
                             horizontal-alignment: center;
                             overflow: elide;
                         }
@@ -347,6 +376,19 @@ export component RoomView inherits Rectangle {
                                     width: root.avatar-sz;
                                     height: root.avatar-sz;
                                     x: (parent.width - self.width) / 2;
+
+                                    // Speaking glow ring (behind avatar)
+                                    if p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted) : Rectangle {
+                                        x: -4px;
+                                        y: -4px;
+                                        width: root.avatar-sz + 8px;
+                                        height: root.avatar-sz + 8px;
+                                        border-radius: (root.avatar-sz + 8px) * VxTheme.avatar-roundness;
+                                        background: transparent;
+                                        border-color: VxTheme.success.transparentize(0.45);
+                                        border-width: 2px;
+                                        animate border-color { duration: 200ms; }
+                                    }
 
                                     VxAvatar {
                                         avatar-size: root.avatar-sz;
@@ -438,23 +480,30 @@ export component RoomView inherits Rectangle {
                                     color: p.is-priority-speaker ? VxTheme.warning :
                                            p.is-speaking ? VxTheme.success :
                                            root.selected-peer-id == p.id ? VxTheme.accent : VxTheme.text-primary;
-                                    font-size: 11px;
-                                    font-weight: 600;
+                                    font-size: p.is-speaking ? 12px : 11px;
+                                    font-weight: p.is-speaking ? 800 : 600;
                                     horizontal-alignment: center;
                                     overflow: elide;
                                     max-width: root.tile-w;
                                 }
                             }
 
-                            // Hover highlight
+                            // Hover / speaking highlight
                             Rectangle {
                                 width: parent.width;
                                 height: parent.height;
                                 border-radius: VxTheme.radius-card;
-                                background: tile-touch.has-hover && p.id != "self" ? VxTheme.row-hover-bg : transparent;
-                                border-color: root.selected-peer-id == p.id ? VxTheme.accent-border : transparent;
-                                border-width: root.selected-peer-id == p.id ? 1px : 0px;
-                                animate background { duration: 80ms; }
+                                background: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
+                                    ? VxTheme.success.transparentize(0.92)
+                                    : tile-touch.has-hover && p.id != "self" ? VxTheme.row-hover-bg : transparent;
+                                border-color: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
+                                    ? VxTheme.success.transparentize(0.55)
+                                    : root.selected-peer-id == p.id ? VxTheme.accent-border : transparent;
+                                border-width: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
+                                    ? 1px
+                                    : root.selected-peer-id == p.id ? 1px : 0px;
+                                animate background { duration: 120ms; }
+                                animate border-color { duration: 120ms; }
                             }
                         }
                     }
@@ -589,6 +638,121 @@ export component RoomView inherits Rectangle {
         }
 
         // ═══════════════════════════════════════════
+        //  CONNECTION STATUS BAR
+        // ═══════════════════════════════════════════
+        Rectangle {
+            height: 28px * VxTheme.s;
+            background: VxTheme.bg-card;
+            border-color: VxTheme.border-subtle;
+            border-width: 0px;
+
+            // Top border
+            Rectangle {
+                y: 0px;
+                width: parent.width;
+                height: 1px;
+                background: VxTheme.border-subtle;
+            }
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+                alignment: center;
+
+                // Connection quality dot
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: !root.is-connected ? VxTheme.danger :
+                                root.reconnect-attempts > 0 ? VxTheme.danger :
+                                root.ping-ms < 0 ? VxTheme.text-muted :
+                                root.ping-ms < 100 ? VxTheme.success :
+                                root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    opacity: !root.is-connected || root.reconnect-attempts > 0
+                        ? 0.4 + 0.6 * Math.abs(Math.sin(animation-tick() / 800ms * 360deg))
+                        : 1.0;
+                }
+
+                // Connection label
+                Text {
+                    text: !root.is-connected
+                        ? "Reconnecting" + (root.reconnect-attempts > 0 ? " (" + root.reconnect-attempts + ")" : "...")
+                        : root.ping-ms < 0 ? "Connecting..."
+                        : root.ping-ms < 100 ? "Connected"
+                        : root.ping-ms < 200 ? "Unstable"
+                        : "Poor connection";
+                    color: !root.is-connected || root.reconnect-attempts > 0 ? VxTheme.danger :
+                           root.ping-ms < 0 ? VxTheme.text-muted :
+                           root.ping-ms < 100 ? VxTheme.success :
+                           root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    font-size: 10px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                // Ping value
+                if root.ping-ms >= 0 : Text {
+                    text: root.ping-ms + "ms";
+                    color: root.ping-ms < 100 ? VxTheme.text-muted :
+                           root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    font-size: 10px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                // Separator
+                if root.ping-ms >= 0 : Rectangle {
+                    width: 1px;
+                    height: 12px;
+                    background: VxTheme.border-subtle;
+                }
+
+                // Protocol badge
+                Rectangle {
+                    width: proto-text.preferred-width + 10px;
+                    height: 16px;
+                    border-radius: 3px;
+                    background: root.udp-active
+                        ? VxTheme.success.transparentize(0.85)
+                        : VxTheme.text-muted.transparentize(0.85);
+                    border-color: root.udp-active
+                        ? VxTheme.success.transparentize(0.6)
+                        : VxTheme.border-subtle;
+                    border-width: 1px;
+
+                    proto-text := Text {
+                        text: root.udp-active ? "UDP" : "WS";
+                        color: root.udp-active ? VxTheme.success : VxTheme.text-muted;
+                        font-size: 9px;
+                        font-weight: 800;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Dropped frames (only show if > 0)
+                if root.dropped-frames > 0 : HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 12px;
+                        background: VxTheme.border-subtle;
+                    }
+                    Text {
+                        text: root.dropped-frames + " dropped";
+                        color: VxTheme.warning;
+                        font-size: 9px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════
         //  ZONE 3 — Control bar (pinned bottom)
         // ═══════════════════════════════════════════
 
@@ -612,6 +776,33 @@ export component RoomView inherits Rectangle {
             background: VxTheme.bg-card;
             border-color: VxTheme.border-subtle;
 
+            // Soundboard quick-panel
+            if root.show-soundboard && root.soundboard-clips.length > 0 : Rectangle {
+                background: VxTheme.bg-panel;
+                border-color: VxTheme.border-subtle;
+                border-width: 1px;
+                height: 44px;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 6px;
+                    alignment: center;
+                    Text {
+                        text: "SFX";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    for clip[idx] in root.soundboard-clips : VxButton {
+                        label: clip.name;
+                        small: true;
+                        soft: true;
+                        clicked => { root.play-soundboard-clip(idx); }
+                    }
+                }
+            }
+
             // Top border
             Rectangle {
                 width: parent.width;
@@ -622,70 +813,104 @@ export component RoomView inherits Rectangle {
             HorizontalLayout {
                 padding-left: root.wide ? 24px : 10px;
                 padding-right: root.wide ? 24px : 10px;
-                spacing: root.wide ? 10px : 6px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 0px;
                 alignment: center;
 
-                // Mute
-                VxButton {
-                    label: root.wide && root.mute-key-display != ""
-                        ? (root.is-muted ? "Unmute" : "Mute") + "  [" + root.mute-key-display + "]"
-                        : (root.is-muted ? "Unmute" : "Mute");
-                    danger: root.is-muted;
-                    soft: !root.is-muted;
-                    horizontal-stretch: 1;
-                    clicked => { root.toggle-mute(); }
-                }
+                // ── Group 1: Audio controls ──
+                HorizontalLayout {
+                    spacing: root.wide ? 6px : 4px;
+                    horizontal-stretch: 3;
 
-                // Deafen
-                VxButton {
-                    label: root.wide && root.deafen-key-display != ""
-                        ? (root.is-deafened ? "Undeafen" : "Deafen") + "  [" + root.deafen-key-display + "]"
-                        : (root.is-deafened ? "Undeafen" : "Deafen");
-                    soft: true;
-                    horizontal-stretch: 1;
-                    clicked => { root.toggle-deafen(); }
-                }
-
-                // Mic mode
-                VxButton {
-                    label: root.is-open-mic ? "Open Mic" : "PTT";
-                    accent: root.is-open-mic;
-                    soft: !root.is-open-mic;
-                    horizontal-stretch: 1;
-                    clicked => { root.toggle-mic-mode(); }
-                }
-
-                // Screen share
-                VxButton {
-                    label: root.is-sharing-screen ? "Stop" :
-                           root.has-screen-share ? "Viewing" : "Share";
-                    accent: root.is-sharing-screen;
-                    soft: !root.is-sharing-screen;
-                    horizontal-stretch: 1;
-                    clicked => {
-                        if !root.has-screen-share && !root.is-sharing-screen {
-                            root.show-share-config = !root.show-share-config;
-                        }
-                        root.toggle-screen-share();
+                    VxButton {
+                        label: root.wide && root.mute-key-display != ""
+                            ? (root.is-muted ? "Unmute" : "Mute") + "  [" + root.mute-key-display + "]"
+                            : (root.is-muted ? "Unmute" : "Mute");
+                        danger: root.is-muted;
+                        soft: !root.is-muted;
+                        horizontal-stretch: 1;
+                        clicked => { root.toggle-mute(); }
+                    }
+                    VxButton {
+                        label: root.wide && root.deafen-key-display != ""
+                            ? (root.is-deafened ? "Undeafen" : "Deafen") + "  [" + root.deafen-key-display + "]"
+                            : (root.is-deafened ? "Undeafen" : "Deafen");
+                        soft: true;
+                        horizontal-stretch: 1;
+                        clicked => { root.toggle-deafen(); }
+                    }
+                    VxButton {
+                        label: root.is-open-mic ? "Open Mic" : "PTT";
+                        accent: root.is-open-mic;
+                        soft: !root.is-open-mic;
+                        horizontal-stretch: 1;
+                        clicked => { root.toggle-mic-mode(); }
                     }
                 }
 
-                // Settings
-                VxButton {
-                    label: "Settings";
-                    ghost: true;
-                    clicked => { root.navigate(2); }
+                // Separator
+                Rectangle {
+                    width: 1px;
+                    height: 24px;
+                    background: VxTheme.border-subtle;
                 }
 
-                // Disconnect
-                VxButton {
-                    label: root.in-space-channel ? "Leave" : "Disconnect";
-                    danger: true;
-                    clicked => {
-                        if root.in-space-channel {
-                            root.leave-channel();
-                        } else {
-                            root.leave-room();
+                // ── Group 2: Media & extras ──
+                HorizontalLayout {
+                    padding-left: root.wide ? 8px : 4px;
+                    padding-right: root.wide ? 8px : 4px;
+                    spacing: root.wide ? 6px : 4px;
+                    horizontal-stretch: 2;
+
+                    VxButton {
+                        label: root.is-sharing-screen ? "Stop" :
+                               root.has-screen-share ? "Viewing" : "Share";
+                        accent: root.is-sharing-screen;
+                        soft: !root.is-sharing-screen;
+                        horizontal-stretch: 1;
+                        clicked => {
+                            if !root.has-screen-share && !root.is-sharing-screen {
+                                root.show-share-config = !root.show-share-config;
+                            }
+                            root.toggle-screen-share();
+                        }
+                    }
+                    if root.soundboard-clips.length > 0 : VxButton {
+                        label: "SFX";
+                        accent: root.show-soundboard;
+                        soft: !root.show-soundboard;
+                        horizontal-stretch: 1;
+                        clicked => { root.show-soundboard = !root.show-soundboard; }
+                    }
+                }
+
+                // Separator
+                Rectangle {
+                    width: 1px;
+                    height: 24px;
+                    background: VxTheme.border-subtle;
+                }
+
+                // ── Group 3: Navigation ──
+                HorizontalLayout {
+                    padding-left: root.wide ? 8px : 4px;
+                    spacing: root.wide ? 6px : 4px;
+
+                    VxButton {
+                        label: "Settings";
+                        ghost: true;
+                        clicked => { root.navigate(2); }
+                    }
+                    VxButton {
+                        label: root.in-space-channel ? "Leave" : "Disconnect";
+                        danger: true;
+                        clicked => {
+                            if root.in-space-channel {
+                                root.leave-channel();
+                            } else {
+                                root.leave-room();
+                            }
                         }
                     }
                 }

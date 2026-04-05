@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { DirectMessageThreadData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
+import { DirectMessageThreadData, PublicSpaceData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
@@ -18,6 +18,8 @@ export component HomeView inherits Rectangle {
     in property <[DirectMessageThreadData]> direct-message-threads: [];
     in property <int> unread-direct-messages-count: 0;
     in property <[SavedServerData]> saved-servers: [];
+    in property <bool> streamer-mode: false;
+    in-out property <string> activity-text: "";
     callback connect-server();
     callback disconnect-server();
     callback find-server();
@@ -29,6 +31,14 @@ export component HomeView inherits Rectangle {
     callback create-room();
     callback join-room(string);
     callback open-direct-message(string);
+    callback close-direct-message(string);
+    callback call-user(string); // user_id — initiate DM voice call
+    callback set-activity(string);
+    callback dismiss-welcome();
+    in property <[PublicSpaceData]> public-spaces: [];
+    callback browse-public-spaces();
+    callback join-public-space(string); // invite_code
+    property <bool> show-explore: false;
 
     background: transparent;
 
@@ -108,30 +118,66 @@ export component HomeView inherits Rectangle {
                 }
             }
 
-            // First-run onboarding card — shown once for new users
-            if root.first-run && !root.is-connected : VxCard {
+            // Activity status — let users set "Playing ...", "Working on ..."
+            if root.is-connected : HorizontalLayout {
+                spacing: 8px;
+                alignment: stretch;
+                VxInput {
+                    horizontal-stretch: 1;
+                    placeholder: "Set activity (e.g. Playing Valorant)";
+                    text <=> root.activity-text;
+                    accepted => {
+                        root.set-activity(root.activity-text);
+                    }
+                }
+                VxButton {
+                    label: root.activity-text == "" ? "Set" : "Clear";
+                    small: true;
+                    soft: root.activity-text != "";
+                    accent: root.activity-text == "";
+                    clicked => {
+                        if root.activity-text != "" {
+                            root.activity-text = "";
+                            root.set-activity("");
+                        } else {
+                            root.set-activity(root.activity-text);
+                        }
+                    }
+                }
+            }
+
+            // First-run welcome card — shown once for new users, dismissed via "Got it!"
+            if root.first-run : VxCard {
                 VerticalLayout {
                     padding: 20px;
-                    spacing: 14px;
+                    spacing: 16px;
 
                     Text {
-                        text: "Get started in 3 steps";
+                        text: "Welcome to Voxlink";
                         color: VxTheme.accent;
-                        font-size: 16px;
+                        font-size: 20px;
                         font-weight: 700;
                     }
 
+                    Text {
+                        text: "Voxlink is a voice-first chat app. Here's how to get started:";
+                        color: VxTheme.text-secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    // Step 1: Create a Space
                     HorizontalLayout {
                         spacing: 12px;
                         Rectangle {
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 12px;
-                            background: root.user-name != "" && root.user-name != "User" ? VxTheme.success : VxTheme.accent;
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
+                            background: VxTheme.accent;
                             Text {
-                                text: root.user-name != "" && root.user-name != "User" ? "✓" : "1";
+                                text: "1";
                                 color: white;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -139,14 +185,15 @@ export component HomeView inherits Rectangle {
                         }
                         VerticalLayout {
                             alignment: center;
+                            spacing: 2px;
                             Text {
-                                text: "Set your display name";
-                                color: root.user-name != "" && root.user-name != "User" ? VxTheme.success : VxTheme.text-primary;
-                                font-size: 12px;
+                                text: "Create a Space";
+                                color: VxTheme.text-primary;
+                                font-size: 13px;
                                 font-weight: 600;
                             }
                             Text {
-                                text: "Scroll down to the Server card and type a name others will see.";
+                                text: "Your own server with voice and text channels.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
@@ -154,17 +201,18 @@ export component HomeView inherits Rectangle {
                         }
                     }
 
+                    // Step 2: Invite Friends
                     HorizontalLayout {
                         spacing: 12px;
                         Rectangle {
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 12px;
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
                             background: VxTheme.accent;
                             Text {
                                 text: "2";
                                 color: white;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -172,14 +220,15 @@ export component HomeView inherits Rectangle {
                         }
                         VerticalLayout {
                             alignment: center;
+                            spacing: 2px;
                             Text {
-                                text: "Connect to a server";
+                                text: "Invite Friends";
                                 color: VxTheme.text-primary;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 600;
                             }
                             Text {
-                                text: "The default server is pre-filled. Tap Connect or use Find on LAN.";
+                                text: "Share your invite code to bring people in.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
@@ -187,17 +236,18 @@ export component HomeView inherits Rectangle {
                         }
                     }
 
+                    // Step 3: Join a Voice Channel
                     HorizontalLayout {
                         spacing: 12px;
                         Rectangle {
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 12px;
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
                             background: VxTheme.accent;
                             Text {
                                 text: "3";
                                 color: white;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -205,18 +255,62 @@ export component HomeView inherits Rectangle {
                         }
                         VerticalLayout {
                             alignment: center;
+                            spacing: 2px;
                             Text {
-                                text: "Join or create a space";
+                                text: "Join a Voice Channel";
                                 color: VxTheme.text-primary;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 600;
                             }
                             Text {
-                                text: "Spaces give you voice channels, text chat, and a member list.";
+                                text: "Click any voice channel to start talking.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;
                             }
+                        }
+                    }
+
+                    // Step 4: Chat
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            border-radius: 14px;
+                            background: VxTheme.accent;
+                            Text {
+                                text: "4";
+                                color: white;
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Chat";
+                                color: VxTheme.text-primary;
+                                font-size: 13px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "Use text channels for messages, reactions, and threads.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    VxButton {
+                        label: "Got it!";
+                        accent: true;
+                        clicked => {
+                            root.dismiss-welcome();
                         }
                     }
                 }
@@ -298,7 +392,7 @@ export component HomeView inherits Rectangle {
                                         }
 
                                         Text {
-                                            text: server.address;
+                                            text: root.streamer-mode ? "ws://***:****" : server.address;
                                             color: VxTheme.text-muted;
                                             font-size: 10px;
                                             vertical-alignment: center;
@@ -478,13 +572,13 @@ export component HomeView inherits Rectangle {
                                     padding: 16px;
                                     spacing: 5px;
                                     Text {
-                                        text: "No conversations yet.";
-                                        color: VxTheme.text-primary;
+                                        text: "No conversations yet";
+                                        color: VxTheme.text-secondary;
                                         font-size: 12px;
                                         font-weight: 700;
                                     }
                                     Text {
-                                        text: "Open a direct message from a friend card and it will appear here.";
+                                        text: "Start a conversation from your friends list.";
                                         color: VxTheme.text-muted;
                                         font-size: 10px;
                                         wrap: word-wrap;
@@ -556,6 +650,43 @@ export component HomeView inherits Rectangle {
                                         tone: VxTheme.accent;
                                         fill: VxTheme.accent-subtle;
                                     }
+
+                                    if dm-wide-touch.has-hover : Rectangle {
+                                        width: 22px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: dm-call-wide.has-hover ? VxTheme.success.transparentize(0.8) : transparent;
+                                        dm-call-wide := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.call-user(thread.user-id); }
+                                        }
+                                        Text {
+                                            text: "Call";
+                                            color: dm-call-wide.has-hover ? VxTheme.success : VxTheme.text-muted;
+                                            font-size: 9px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    if dm-wide-touch.has-hover : Rectangle {
+                                        width: 22px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: dm-close-wide.has-hover ? VxTheme.bg-elevated : transparent;
+                                        dm-close-wide := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.close-direct-message(thread.user-id); }
+                                        }
+                                        Text {
+                                            text: "\u{00D7}";
+                                            color: dm-close-wide.has-hover ? VxTheme.text-primary : VxTheme.text-muted;
+                                            font-size: 14px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -597,6 +728,12 @@ export component HomeView inherits Rectangle {
                             VerticalLayout {
                                 spacing: 6px;
                                 FieldLabel { text: "Create a new space"; }
+                                Text {
+                                    text: "A space is your own group with voice and text channels.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
                                 VxInput {
                                     text <=> root.space-name;
                                     placeholder: "Studio, Guild, Squad";
@@ -784,7 +921,7 @@ export component HomeView inherits Rectangle {
                                     }
 
                                     Text {
-                                        text: server.address;
+                                        text: root.streamer-mode ? "ws://***:****" : server.address;
                                         color: VxTheme.text-muted;
                                         font-size: 10px;
                                         vertical-alignment: center;
@@ -1016,6 +1153,114 @@ export component HomeView inherits Rectangle {
                     }
                 }
 
+                // ─── Explore Public Spaces ───
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "EXPLORE"; }
+                            VxButton {
+                                label: root.show-explore ? "Hide" : "Browse Servers";
+                                small: true;
+                                soft: true;
+                                clicked => {
+                                    root.show-explore = !root.show-explore;
+                                    if root.show-explore {
+                                        root.browse-public-spaces();
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.show-explore : VerticalLayout {
+                            spacing: 8px;
+
+                            if root.public-spaces.length == 0 : Text {
+                                text: "No public spaces found. Ask a server admin to make their space public.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+
+                            for ps in root.public-spaces : Rectangle {
+                                height: 64px;
+                                border-radius: VxTheme.radius-card;
+                                background: ps-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                ps-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.join-public-space(ps.invite-code); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 36px;
+                                        initial: ps.initial;
+                                        color-index: ps.color-index;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: ps.name;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                        }
+                                        if ps.description != "" : Text {
+                                            text: ps.description;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 9px;
+                                            overflow: elide;
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: ps.member-count + " members";
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                            }
+                                            if ps.online-count > 0 : HorizontalLayout {
+                                                spacing: 3px;
+                                                Rectangle {
+                                                    width: 6px; height: 6px;
+                                                    border-radius: 3px;
+                                                    background: VxTheme.success;
+                                                    y: 2px;
+                                                }
+                                                Text {
+                                                    text: ps.online-count + " online";
+                                                    color: VxTheme.success;
+                                                    font-size: 9px;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    VxButton {
+                                        label: "Join";
+                                        small: true;
+                                        accent: true;
+                                        clicked => { root.join-public-space(ps.invite-code); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 VxCard {
                     VerticalLayout {
                         padding: 18px;
@@ -1086,6 +1331,43 @@ export component HomeView inherits Rectangle {
                                         label: thread.unread-count + "";
                                         tone: VxTheme.accent;
                                         fill: VxTheme.accent-subtle;
+                                    }
+
+                                    if dm-compact-touch.has-hover : Rectangle {
+                                        width: 22px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: dm-call-compact.has-hover ? VxTheme.success.transparentize(0.8) : transparent;
+                                        dm-call-compact := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.call-user(thread.user-id); }
+                                        }
+                                        Text {
+                                            text: "Call";
+                                            color: dm-call-compact.has-hover ? VxTheme.success : VxTheme.text-muted;
+                                            font-size: 9px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    if dm-compact-touch.has-hover : Rectangle {
+                                        width: 22px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: dm-close-compact.has-hover ? VxTheme.bg-elevated : transparent;
+                                        dm-close-compact := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.close-direct-message(thread.user-id); }
+                                        }
+                                        Text {
+                                            text: "\u{00D7}";
+                                            color: dm-close-compact.has-hover ? VxTheme.text-primary : VxTheme.text-muted;
+                                            font-size: 14px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                 }
 

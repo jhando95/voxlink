@@ -2,7 +2,7 @@
 //! Zero-allocation at runtime: tone samples are pre-computed once.
 //! Lower pitch = action on (muted/deafened), higher = action off.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use shared_types::SAMPLE_RATE;
@@ -109,13 +109,71 @@ fn generate_preview_tone() -> Vec<f32> {
     buf
 }
 
+/// Notification sound style index values.
+/// 0 = default, 1 = subtle, 2 = chime, 3 = none
+const STYLE_DEFAULT: u8 = 0;
+const STYLE_SUBTLE: u8 = 1;
+const STYLE_CHIME: u8 = 2;
+const STYLE_NONE: u8 = 3;
+
+/// "Subtle" style: quieter, shorter tones (half duration, half volume).
+const SUBTLE_TONE_MS: u32 = 40;
+const SUBTLE_TONE_SAMPLES: usize = (SAMPLE_RATE * SUBTLE_TONE_MS / 1000) as usize;
+const SUBTLE_VOLUME: f32 = 0.12;
+
+fn generate_subtle_tone(freq: f32) -> Vec<f32> {
+    let mut buf = vec![0.0f32; SUBTLE_TONE_SAMPLES];
+    let tau = std::f32::consts::TAU;
+    let fade = FADE_SAMPLES.min(SUBTLE_TONE_SAMPLES / 2);
+    for (i, sample) in buf.iter_mut().enumerate() {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let envelope = if i < fade {
+            i as f32 / fade as f32
+        } else if i > SUBTLE_TONE_SAMPLES - fade {
+            (SUBTLE_TONE_SAMPLES - i) as f32 / fade as f32
+        } else {
+            1.0
+        };
+        *sample = (tau * freq * t).sin() * SUBTLE_VOLUME * envelope;
+    }
+    buf
+}
+
+/// "Chime" style: two-note ascending pattern, softer and more musical.
+const CHIME_TONE_MS: u32 = 120;
+const CHIME_TONE_SAMPLES: usize = (SAMPLE_RATE * CHIME_TONE_MS / 1000) as usize;
+const CHIME_VOLUME: f32 = 0.18;
+
+fn generate_chime_tone(freq_low: f32, freq_high: f32) -> Vec<f32> {
+    let mut buf = vec![0.0f32; CHIME_TONE_SAMPLES];
+    let tau = std::f32::consts::TAU;
+    let split = CHIME_TONE_SAMPLES / 2;
+    for (i, sample) in buf.iter_mut().enumerate() {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let freq = if i < split { freq_low } else { freq_high };
+        let envelope = if i < FADE_SAMPLES {
+            i as f32 / FADE_SAMPLES as f32
+        } else if i > CHIME_TONE_SAMPLES - FADE_SAMPLES {
+            (CHIME_TONE_SAMPLES - i) as f32 / FADE_SAMPLES as f32
+        } else {
+            1.0
+        };
+        *sample = (tau * freq * t).sin() * CHIME_VOLUME * envelope;
+    }
+    buf
+}
+
 /// Pre-computed feedback tone buffers for all actions.
 pub(crate) struct FeedbackTone {
     tones: [Arc<[f32]>; 7], // MuteOn, MuteOff, DeafenOn, DeafenOff, OutputPreview, JoinRoom, LeaveRoom
+    subtle_tones: [Arc<[f32]>; 7],
+    chime_tones: [Arc<[f32]>; 7],
     /// Which tone to play (index*TONE_SAMPLES + position, 0 = idle)
     cursor: Arc<AtomicU32>,
     /// Which tone index is active
     active_tone: Arc<AtomicU32>,
+    /// Sound style: 0=default, 1=subtle, 2=chime, 3=none
+    sound_style: Arc<AtomicU8>,
 }
 
 impl FeedbackTone {
@@ -130,22 +188,60 @@ impl FeedbackTone {
                 Arc::from(generate_join_leave_tone(FREQ_JOIN_LOW, FREQ_JOIN_HIGH)),
                 Arc::from(generate_join_leave_tone(FREQ_LEAVE_LOW, FREQ_LEAVE_HIGH)),
             ],
+            subtle_tones: [
+                Arc::from(generate_subtle_tone(FREQ_MUTE_ON)),
+                Arc::from(generate_subtle_tone(FREQ_MUTE_OFF)),
+                Arc::from(generate_subtle_tone(FREQ_DEAFEN_ON)),
+                Arc::from(generate_subtle_tone(FREQ_DEAFEN_OFF)),
+                Arc::from(generate_preview_tone()), // preview always uses default
+                Arc::from(generate_subtle_tone(FREQ_JOIN_LOW)),
+                Arc::from(generate_subtle_tone(FREQ_LEAVE_LOW)),
+            ],
+            chime_tones: [
+                Arc::from(generate_chime_tone(FREQ_MUTE_ON, FREQ_MUTE_ON * 1.25)),
+                Arc::from(generate_chime_tone(FREQ_MUTE_OFF * 0.8, FREQ_MUTE_OFF)),
+                Arc::from(generate_chime_tone(FREQ_DEAFEN_ON, FREQ_DEAFEN_ON * 1.25)),
+                Arc::from(generate_chime_tone(FREQ_DEAFEN_OFF * 0.8, FREQ_DEAFEN_OFF)),
+                Arc::from(generate_preview_tone()), // preview always uses default
+                Arc::from(generate_chime_tone(523.25, 783.99)), // C5 -> G5
+                Arc::from(generate_chime_tone(783.99, 523.25)), // G5 -> C5
+            ],
             cursor: Arc::new(AtomicU32::new(0)),
             active_tone: Arc::new(AtomicU32::new(0)),
+            sound_style: Arc::new(AtomicU8::new(STYLE_DEFAULT)),
         }
+    }
+
+    /// Set the notification sound style from a config string.
+    /// Valid values: "default", "subtle", "chime", "none".
+    pub fn set_sound_style(&self, style: &str) {
+        let val = match style {
+            "subtle" => STYLE_SUBTLE,
+            "chime" => STYLE_CHIME,
+            "none" => STYLE_NONE,
+            _ => STYLE_DEFAULT,
+        };
+        self.sound_style.store(val, Ordering::Relaxed);
     }
 
     /// Get cloneable handles for use in playback callback.
     pub fn playback_state(&self) -> FeedbackPlayback {
         FeedbackPlayback {
             tones: self.tones.clone(),
+            subtle_tones: self.subtle_tones.clone(),
+            chime_tones: self.chime_tones.clone(),
             cursor: self.cursor.clone(),
             active_tone: self.active_tone.clone(),
+            sound_style: self.sound_style.clone(),
         }
     }
 
     /// Trigger a specific feedback action.
     pub fn trigger(&self, action: FeedbackAction) {
+        // "none" style: skip all sounds
+        if self.sound_style.load(Ordering::Relaxed) == STYLE_NONE {
+            return;
+        }
         let idx = action as u32;
         self.active_tone.store(idx, Ordering::Relaxed);
         self.cursor.store(1, Ordering::Relaxed); // 1-indexed, 0 = idle
@@ -155,8 +251,11 @@ impl FeedbackTone {
 /// Cloneable state for use in the playback callback.
 pub(crate) struct FeedbackPlayback {
     tones: [Arc<[f32]>; 7],
+    subtle_tones: [Arc<[f32]>; 7],
+    chime_tones: [Arc<[f32]>; 7],
     cursor: Arc<AtomicU32>,
     active_tone: Arc<AtomicU32>,
+    sound_style: Arc<AtomicU8>,
 }
 
 impl FeedbackPlayback {
@@ -171,7 +270,12 @@ impl FeedbackPlayback {
         if tone_idx >= self.tones.len() {
             return;
         }
-        let samples = &self.tones[tone_idx];
+        let style = self.sound_style.load(Ordering::Relaxed);
+        let samples = match style {
+            STYLE_SUBTLE => &self.subtle_tones[tone_idx],
+            STYLE_CHIME => &self.chime_tones[tone_idx],
+            _ => &self.tones[tone_idx],
+        };
         let start = pos - 1;
         if start >= samples.len() {
             self.cursor.store(0, Ordering::Relaxed);

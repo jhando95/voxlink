@@ -40,6 +40,7 @@ pub fn sync_ui(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
 
     let app = state.borrow();
     if let Some(ref space) = app.space {
+        let cfg = config_store::load_config();
         ui_shell::render_space(
             window,
             space,
@@ -48,7 +49,10 @@ pub fn sync_ui(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
             &app.incoming_friend_requests,
             &app.outgoing_friend_requests,
             app.self_user_id.as_deref(),
-            &config_store::load_config().collapsed_categories,
+            &cfg.collapsed_categories,
+            &cfg.user_notes,
+            &cfg.channel_notification_overrides,
+            &cfg.favorite_channels,
         );
     }
     ui_shell::set_friend_counts(window, &app.favorite_friends);

@@ -47,6 +47,7 @@ pub fn setup_create_channel(
                 log::error!("Failed to create channel: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed to create channel".into());
+                    crate::helpers::show_toast(&w, "Failed to create channel", 3);
                 }
             }
         });
@@ -80,6 +81,7 @@ pub fn setup_join_channel(
                 log::error!("Failed to join channel: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed to join channel".into());
+                    crate::helpers::show_toast(&w, "Failed to join channel", 3);
                 }
             }
         });
@@ -113,6 +115,7 @@ pub fn setup_delete_channel(
                 log::error!("Failed to delete channel: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed to delete channel".into());
+                    crate::helpers::show_toast(&w, "Failed to delete channel", 3);
                 }
             }
         });
@@ -174,6 +177,7 @@ pub fn setup_leave_channel(
         ui_shell::set_participants(&w, &[]);
         w.set_room_code(slint::SharedString::default());
         w.set_active_channel_id(slint::SharedString::default());
+        w.set_channel_topic(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);
         w.set_in_space_channel(false);

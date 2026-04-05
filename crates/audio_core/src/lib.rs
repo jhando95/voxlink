@@ -1131,6 +1131,11 @@ impl AudioEngine {
         self.feedback_tone.trigger(FeedbackAction::OutputPreview);
     }
 
+    /// Set the notification sound style ("default", "subtle", "chime", "none").
+    pub fn set_notification_sound_style(&self, style: &str) {
+        self.feedback_tone.set_sound_style(style);
+    }
+
     /// Get the name of the current input device (if capturing).
     pub fn current_input_device_name(&self) -> Option<String> {
         // The device name isn't stored directly, but we can enumerate to find the default

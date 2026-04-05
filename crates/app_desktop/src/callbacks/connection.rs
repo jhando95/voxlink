@@ -71,6 +71,7 @@ pub fn setup_connect(
                             "Failed: Could not connect"
                         };
                         w.set_status_text(friendly.into());
+                        crate::helpers::show_toast(&w, friendly, 3);
                     }
                 }
             }

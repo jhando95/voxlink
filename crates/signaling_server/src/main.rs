@@ -426,6 +426,7 @@ async fn main() {
                             _ => shared_types::SpaceRole::Member,
                         },
                         position: cr.position.unwrap_or(0),
+                        auto_delete_hours: cr.auto_delete_hours.unwrap_or(0),
                     });
                     // Create room entries for voice channels
                     if ct == shared_types::ChannelType::Voice {
@@ -462,6 +463,7 @@ async fn main() {
                                     forwarded_from: None,
                                     attachment_name: None,
                                     attachment_size: None,
+                                    link_url: m.link_url,
                                 })
                                 .collect();
                             if !dq.is_empty() {
@@ -471,6 +473,7 @@ async fn main() {
                     }
                 }
 
+                let mut role_colors: HashMap<String, String> = HashMap::new();
                 let member_roles = role_rows
                     .into_iter()
                     .filter_map(|row| {
@@ -481,6 +484,9 @@ async fn main() {
                             "member" => shared_types::SpaceRole::Member,
                             _ => return None,
                         };
+                        if !row.role_color.is_empty() {
+                            role_colors.entry(row.role.clone()).or_insert(row.role_color);
+                        }
                         Some((row.user_id, role))
                     })
                     .collect::<HashMap<_, _>>();
@@ -497,20 +503,24 @@ async fn main() {
                     .collect::<VecDeque<_>>();
 
                 s.invite_index.insert(sr.invite_code.clone(), sr.id.clone());
+                let is_public = db.is_space_public(&sr.id).unwrap_or(false);
                 s.spaces.insert(
                     sr.id.clone(),
                     Space {
                         id: sr.id.clone(),
                         name: sr.name.clone(),
+                        description: String::new(),
                         invite_code: sr.invite_code.clone(),
                         owner_id: sr.owner_id.clone(),
                         channels,
                         member_ids: Vec::new(),
                         member_roles,
+                        role_colors,
                         text_messages,
                         audit_log,
                         slow_mode_timestamps: HashMap::new(),
                         created_at: Instant::now(),
+                        is_public,
                     },
                 );
             }
@@ -653,6 +663,52 @@ async fn main() {
                 let udp_removed = udp_before - s.udp_sessions.len();
                 if udp_removed > 0 {
                     log::debug!("Cleaned up {udp_removed} orphaned UDP session tokens");
+                }
+            }
+        });
+    }
+
+    // Periodic auto-delete cleanup (every 10 minutes)
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let db2 = db.clone();
+                // Delete expired messages from DB
+                let db_deleted = tokio::task::spawn_blocking(move || {
+                    db2.delete_expired_messages().unwrap_or(0)
+                })
+                .await
+                .unwrap_or(0);
+                if db_deleted > 0 {
+                    log::info!("Auto-delete: removed {db_deleted} expired message(s) from DB");
+                }
+                // Also purge from in-memory text_messages
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let mut s = state.write().await;
+                for space in s.spaces.values_mut() {
+                    for ch in &space.channels {
+                        if ch.auto_delete_hours > 0 {
+                            let cutoff = now.saturating_sub(ch.auto_delete_hours as u64 * 3600);
+                            if let Some(msgs) = space.text_messages.get_mut(&ch.id) {
+                                let before = msgs.len();
+                                msgs.retain(|m| m.timestamp >= cutoff);
+                                let removed = before - msgs.len();
+                                if removed > 0 {
+                                    log::debug!(
+                                        "Auto-delete: purged {removed} in-memory message(s) from channel {}",
+                                        ch.id
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -813,7 +869,9 @@ async fn handle_connection(
                 room_code_cache: std::sync::RwLock::new(None),
                 is_muted: AtomicBool::new(false),
                 is_deafened: AtomicBool::new(false),
+                is_server_deafened: AtomicBool::new(false),
                 status: Mutex::new(String::new()),
+                activity: Mutex::new(String::new()),
                 tx: Mutex::new(tx),
                 space_id: Mutex::new(None),
                 typing_channel_id: Mutex::new(None),
@@ -923,8 +981,22 @@ async fn handle_connection(
         // Clean up any UDP session token for this peer
         s.udp_sessions.retain(|_, pid| pid != &peer_id);
     }
-    if let Some(user_id) = disconnected_user_id {
-        handlers::presence::notify_watchers_for_user(&state, &user_id).await;
+    if let Some(ref user_id) = disconnected_user_id {
+        // Persist last-seen timestamp so offline friends see when this user was last online
+        if let Some(ref db) = db {
+            let uid = user_id.clone();
+            let db = db.clone();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = db.update_last_seen(&uid, now) {
+                    log::warn!("Failed to update last_seen for {}: {e}", uid);
+                }
+            });
+        }
+        handlers::presence::notify_watchers_for_user(&state, user_id).await;
     }
     metrics.active_connections.fetch_sub(1, Ordering::Relaxed);
     log::info!("Peer {peer_id} disconnected");
@@ -1083,6 +1155,12 @@ async fn handle_signal(
         SignalMessage::DeleteSpace => {
             handlers::space::handle_delete_space(state, peer_id, db).await;
         }
+        SignalMessage::RenameSpace { name } => {
+            handlers::space::handle_rename_space(state, peer_id, name, db).await;
+        }
+        SignalMessage::SetSpaceDescription { description } => {
+            handlers::space::handle_set_space_description(state, peer_id, description, db).await;
+        }
         SignalMessage::SelectTextChannel { channel_id } => {
             handlers::chat::handle_select_text_channel(state, peer_id, channel_id).await;
         }
@@ -1237,6 +1315,9 @@ async fn handle_signal(
         SignalMessage::MuteMember { member_id, muted } => {
             handlers::moderation::handle_mute_member(state, peer_id, member_id, muted, db).await;
         }
+        SignalMessage::ServerDeafenMember { member_id, deafened } => {
+            handlers::moderation::handle_server_deafen_member(state, peer_id, member_id, deafened, db).await;
+        }
         SignalMessage::BanMember { member_id } => {
             handlers::moderation::handle_ban_member(state, peer_id, member_id, db).await;
         }
@@ -1313,6 +1394,22 @@ async fn handle_signal(
                             rusqlite::params![role_str, cid],
                         );
                     }
+                });
+            }
+        }
+        SignalMessage::SetChannelAutoDelete {
+            channel_id,
+            auto_delete_hours,
+        } => {
+            let cid = channel_id.clone();
+            let hours = auto_delete_hours;
+            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::AutoDelete(auto_delete_hours))
+                .await;
+            // Persist to DB
+            if let Some(ref db) = db {
+                let db = db.clone();
+                tokio::task::spawn_blocking(move || {
+                    db.set_channel_auto_delete(&cid, hours);
                 });
             }
         }
@@ -1394,6 +1491,85 @@ async fn handle_signal(
         SignalMessage::RevokeAllSessions => {
             handlers::auth::handle_revoke_all_sessions(state, peer_id, db).await;
         }
+        // v0.10.0: Auto-moderation
+        SignalMessage::AddAutomodWord { word, action } => {
+            handlers::moderation::handle_add_automod_word(state, peer_id, word, action, db).await;
+        }
+        SignalMessage::RemoveAutomodWord { word } => {
+            handlers::moderation::handle_remove_automod_word(state, peer_id, word, db).await;
+        }
+        SignalMessage::ListAutomodWords => {
+            handlers::moderation::handle_list_automod_words(state, peer_id, db).await;
+        }
+        // v0.10.0: Role colors
+        SignalMessage::SetRoleColor { role, color } => {
+            handlers::space::handle_set_role_color(state, peer_id, role.clone(), color.clone(), db).await;
+        }
+        // v0.10.0: Activity status
+        SignalMessage::SetActivity { activity } => {
+            handlers::presence::handle_set_activity(state, peer_id, activity.clone()).await;
+        }
+        // DM Voice Calls
+        SignalMessage::CallUser { target_user_id } => {
+            handle_call_user(state, peer_id, target_user_id).await;
+        }
+        SignalMessage::AcceptCall { room_key } => {
+            handle_accept_call(state, peer_id, room_key).await;
+        }
+        SignalMessage::DeclineCall { room_key } => {
+            handle_decline_call(state, peer_id, room_key).await;
+        }
+        // Scheduled Events
+        SignalMessage::CreateScheduledEvent { title, description, start_time, end_time } => {
+            handle_create_event(state, peer_id, title, description, start_time, end_time, db).await;
+        }
+        SignalMessage::DeleteScheduledEvent { event_id } => {
+            handle_delete_event(state, peer_id, event_id, db).await;
+        }
+        SignalMessage::ToggleEventInterest { event_id } => {
+            handle_toggle_event_interest(state, peer_id, event_id, db).await;
+        }
+        SignalMessage::ListScheduledEvents => {
+            handle_list_events(state, peer_id, db).await;
+        }
+        // Message Scheduling
+        SignalMessage::ScheduleMessage { channel_id, content, send_at } => {
+            handle_schedule_message(state, peer_id, channel_id, content, send_at, db).await;
+        }
+        SignalMessage::CancelScheduledMessage { schedule_id } => {
+            handle_cancel_scheduled_message(state, peer_id, schedule_id, db).await;
+        }
+        // Welcome Message
+        SignalMessage::SetWelcomeMessage { message } => {
+            handle_set_welcome_message(state, peer_id, message, db).await;
+        }
+        // Voice Recording
+        SignalMessage::StartRecording { channel_id } => {
+            handle_start_recording(state, peer_id, channel_id).await;
+        }
+        SignalMessage::StopRecording { channel_id } => {
+            handle_stop_recording(state, peer_id, channel_id).await;
+        }
+        // Account management
+        SignalMessage::SetDisplayName { name } => {
+            handle_set_display_name(state, peer_id, name, db).await;
+        }
+        SignalMessage::DeleteAccount => {
+            handle_delete_account(state, peer_id, db).await;
+        }
+        // Server discovery
+        SignalMessage::SetSpacePublic { is_public } => {
+            handle_set_space_public(state, peer_id, is_public, db).await;
+        }
+        SignalMessage::BrowsePublicSpaces => {
+            handle_browse_public_spaces(state, peer_id, db).await;
+        }
+        // Favorites are client-side only (stored in config_store)
+        SignalMessage::ToggleFavoriteChannel { .. } => {}
+        // Voice notes
+        SignalMessage::SendVoiceNote { channel_id, duration_secs, data } => {
+            handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
+        }
         other => {
             log::debug!("Unhandled signal from {peer_id}: {:?}", std::mem::discriminant(&other));
         }
@@ -1411,6 +1587,514 @@ async fn send_error(state: &State, peer_id: &str, message: &str) {
             },
         )
         .await;
+    }
+}
+
+// ─── DM Voice Call Handlers ───
+
+async fn handle_call_user(state: &State, caller_peer_id: &str, target_user_id: String) {
+    let s = state.read().await;
+    let caller_peer = match s.peers.get(caller_peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let caller_user_id = match caller_peer.user_id.lock().await.clone() {
+        Some(id) => id,
+        None => {
+            drop(s);
+            send_to(
+                &caller_peer,
+                &SignalMessage::CallEnded {
+                    room_key: String::new(),
+                    reason: "not_authenticated".into(),
+                },
+            )
+            .await;
+            return;
+        }
+    };
+    let caller_name = caller_peer.name.lock().await.clone();
+
+    // Find the target peer by user_id
+    let mut target_peer = None;
+    for peer in s.peers.values() {
+        let uid = peer.user_id.lock().await;
+        if uid.as_deref() == Some(&target_user_id) {
+            target_peer = Some(peer.clone());
+            break;
+        }
+    }
+    drop(s);
+
+    let room_key = format!("dm_call:{}:{}", caller_user_id, target_user_id);
+
+    match target_peer {
+        Some(target) => {
+            send_to(
+                &target,
+                &SignalMessage::IncomingCall {
+                    caller_id: caller_user_id,
+                    caller_name,
+                    room_key,
+                },
+            )
+            .await;
+        }
+        None => {
+            send_to(
+                &caller_peer,
+                &SignalMessage::CallEnded {
+                    room_key,
+                    reason: "offline".into(),
+                },
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_accept_call(state: &State, peer_id: &str, room_key: String) {
+    // Parse the room key to find both user IDs: "dm_call:{caller_id}:{target_id}"
+    let parts: Vec<&str> = room_key.splitn(3, ':').collect();
+    if parts.len() < 3 || parts[0] != "dm_call" {
+        send_error(state, peer_id, "Invalid call room key").await;
+        return;
+    }
+    let caller_user_id = parts[1];
+    let _target_user_id = parts[2];
+
+    let s = state.read().await;
+    let accepter = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let accepter_name = accepter.name.lock().await.clone();
+
+    // Find the caller peer by user_id
+    let mut caller_peer = None;
+    for peer in s.peers.values() {
+        let uid = peer.user_id.lock().await;
+        if uid.as_deref() == Some(caller_user_id) {
+            caller_peer = Some(peer.clone());
+            break;
+        }
+    }
+    drop(s);
+
+    if let Some(caller) = caller_peer {
+        let caller_name = caller.name.lock().await.clone();
+        // Join both peers to the DM call room using existing room join logic
+        handlers::room::handle_join_room(
+            state,
+            &caller.id,
+            room_key.clone(),
+            caller_name,
+            None,
+        )
+        .await;
+        handlers::room::handle_join_room(
+            state,
+            peer_id,
+            room_key,
+            accepter_name,
+            None,
+        )
+        .await;
+    } else {
+        send_to(
+            &accepter,
+            &SignalMessage::CallEnded {
+                room_key,
+                reason: "caller_disconnected".into(),
+            },
+        )
+        .await;
+    }
+}
+
+async fn handle_decline_call(state: &State, peer_id: &str, room_key: String) {
+    let parts: Vec<&str> = room_key.splitn(3, ':').collect();
+    if parts.len() < 3 || parts[0] != "dm_call" {
+        return;
+    }
+    let caller_user_id = parts[1];
+    let target_user_id = parts[2];
+
+    let s = state.read().await;
+    let decliner = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let decliner_user_id = decliner.user_id.lock().await.clone();
+
+    // Determine who the other party is
+    let other_user_id = if decliner_user_id.as_deref() == Some(caller_user_id) {
+        target_user_id
+    } else {
+        caller_user_id
+    };
+
+    // Find the other party's peer
+    let mut other_peer = None;
+    for peer in s.peers.values() {
+        let uid = peer.user_id.lock().await;
+        if uid.as_deref() == Some(other_user_id) {
+            other_peer = Some(peer.clone());
+            break;
+        }
+    }
+    drop(s);
+
+    if let Some(other) = other_peer {
+        send_to(
+            &other,
+            &SignalMessage::CallEnded {
+                room_key,
+                reason: "declined".into(),
+            },
+        )
+        .await;
+    }
+}
+
+// ─── Scheduled Events ───
+
+async fn handle_create_event(state: &State, peer_id: &str, title: String, description: String, start_time: i64, end_time: i64, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let role = handlers::space::role_for_identity(space, &user_id);
+    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+        drop(s);
+        send_error(state, peer_id, "Moderator+ required to create events").await;
+        return;
+    }
+    let creator_name = peer.name.lock().await.clone();
+    let event_id = {
+        use rand::RngCore;
+        let mut buf = [0u8; 4];
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        format!("evt_{:08x}", u32::from_le_bytes(buf))
+    };
+    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    drop(s);
+    if let Some(db) = db {
+        let _ = db.create_scheduled_event(&event_id, &space_id, &title, &description, start_time, end_time, &user_id, &creator_name);
+    }
+    let event = shared_types::ScheduledEvent {
+        id: event_id, title, description, start_time, end_time, creator_name, interested_count: 0, is_interested: false,
+    };
+    let msg = SignalMessage::ScheduledEventCreated { event };
+    for p in &peers_map { send_to(p, &msg).await; }
+}
+
+async fn handle_delete_event(state: &State, peer_id: &str, event_id: String, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let role = handlers::space::role_for_identity(space, &user_id);
+    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+        drop(s);
+        send_error(state, peer_id, "Moderator+ required").await;
+        return;
+    }
+    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    drop(s);
+    if let Some(db) = db { let _ = db.delete_scheduled_event(&event_id); }
+    let msg = SignalMessage::ScheduledEventDeleted { event_id };
+    for p in &peers_map { send_to(p, &msg).await; }
+}
+
+async fn handle_toggle_event_interest(state: &State, peer_id: &str, event_id: String, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let db = match db { Some(db) => db, None => return };
+    drop(s);
+    let is_interested = match db.toggle_event_interest(&event_id, &user_id) { Ok(b) => b, Err(_) => return };
+    let count = db.get_event_interest_count(&event_id).unwrap_or(0);
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::EventInterestUpdated { event_id, interested_count: count, is_interested }).await;
+    }
+}
+
+async fn handle_list_events(state: &State, peer_id: &str, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let db = match db { Some(db) => db, None => return };
+    drop(s);
+    let events = db.load_scheduled_events(&space_id, &user_id).unwrap_or_default();
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::ScheduledEventList { events }).await;
+    }
+}
+
+// ─── Message Scheduling ───
+
+async fn handle_schedule_message(state: &State, peer_id: &str, channel_id: String, content: String, send_at: i64, db: &Db) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    if send_at <= now {
+        send_error(state, peer_id, "Scheduled time must be in the future").await;
+        return;
+    }
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = peer.space_id.lock().await.clone().unwrap_or_default();
+    let sender_name = peer.name.lock().await.clone();
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let db = match db { Some(db) => db, None => return };
+    let schedule_id = {
+        use rand::RngCore;
+        let mut buf = [0u8; 4];
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        format!("sched_{:08x}", u32::from_le_bytes(buf))
+    };
+    drop(s);
+    let _ = db.schedule_message(&schedule_id, &space_id, &channel_id, &user_id, &sender_name, &content, send_at);
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::MessageScheduled { schedule_id, channel_id, content, send_at }).await;
+    }
+}
+
+async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_id: String, db: &Db) {
+    let db = match db { Some(db) => db, None => return };
+    let _ = db.cancel_scheduled_message(&schedule_id);
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::ScheduledMessageCancelled { schedule_id }).await;
+    }
+}
+
+// ─── Welcome Message ───
+
+async fn handle_set_welcome_message(state: &State, peer_id: &str, message: String, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let role = handlers::space::role_for_identity(space, &user_id);
+    if !role.has_at_least(shared_types::SpaceRole::Admin) {
+        drop(s);
+        send_error(state, peer_id, "Admin+ required").await;
+        return;
+    }
+    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    drop(s);
+    if let Some(db) = db { let _ = db.set_welcome_message(&space_id, &message); }
+    let msg = SignalMessage::WelcomeMessageChanged { message };
+    for p in &peers_map { send_to(p, &msg).await; }
+}
+
+// ─── Voice Recording ───
+
+async fn handle_start_recording(state: &State, peer_id: &str, channel_id: String) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let role = handlers::space::role_for_identity(space, &user_id);
+    if !role.has_at_least(shared_types::SpaceRole::Admin) {
+        drop(s);
+        send_error(state, peer_id, "Admin+ required to record").await;
+        return;
+    }
+    let started_by = peer.name.lock().await.clone();
+    let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
+    let room_peers: Vec<_> = if let Some(room) = s.rooms.get(&room_key) {
+        room.peer_ids.iter().filter_map(|pid| s.peers.get(pid).cloned()).collect()
+    } else { Vec::new() };
+    drop(s);
+    let msg = SignalMessage::RecordingStarted { channel_id, started_by };
+    for p in &room_peers { send_to(p, &msg).await; }
+}
+
+async fn handle_stop_recording(state: &State, peer_id: &str, channel_id: String) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
+    let room_peers: Vec<_> = if let Some(room) = s.rooms.get(&room_key) {
+        room.peer_ids.iter().filter_map(|pid| s.peers.get(pid).cloned()).collect()
+    } else { Vec::new() };
+    drop(s);
+    let msg = SignalMessage::RecordingStopped { channel_id };
+    for p in &room_peers { send_to(p, &msg).await; }
+}
+
+// ─── Account Management ───
+
+async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db: &Db) {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() || trimmed.len() > 32 {
+        send_error(state, peer_id, "Name must be 1-32 characters").await;
+        return;
+    }
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    drop(s);
+    *peer.name.lock().await = trimmed.clone();
+    if let Some(db) = db { let _ = db.update_display_name(&user_id, &trimmed); }
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::DisplayNameChanged { user_id, name: trimmed }).await;
+    }
+}
+
+async fn handle_delete_account(state: &State, peer_id: &str, db: &Db) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    drop(s);
+    if let Some(db) = db { let _ = db.delete_user(&user_id); }
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        send_to(&p, &SignalMessage::AccountDeleted).await;
+    }
+}
+
+// ─── Server Discovery ───
+
+async fn handle_set_space_public(state: &State, peer_id: &str, is_public: bool, db: &Db) {
+    let (space_id, _user_id, role, member_ids) = {
+        let s = state.read().await;
+        let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+        let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+        let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
+        let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+        let role = space.member_roles.get(&user_id).copied().unwrap_or(shared_types::SpaceRole::Member);
+        let member_ids = space.member_ids.clone();
+        (space_id, user_id, role, member_ids)
+    };
+
+    if !matches!(role, shared_types::SpaceRole::Owner | shared_types::SpaceRole::Admin) {
+        send_error(state, peer_id, "Only admins can change space visibility").await;
+        return;
+    }
+    // Update in-memory state
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            space.is_public = is_public;
+        }
+    }
+    if let Some(db) = db {
+        let _ = db.set_space_public(&space_id, is_public);
+    }
+    // Broadcast to space members
+    let s = state.read().await;
+    for mid in &member_ids {
+        for (_, p) in s.peers.iter() {
+            let uid = p.user_id.lock().await.clone().unwrap_or_default();
+            if uid == *mid {
+                send_to(p, &SignalMessage::SpacePublicChanged { is_public }).await;
+            }
+        }
+    }
+}
+
+async fn handle_browse_public_spaces(state: &State, peer_id: &str, db: &Db) {
+    let mut spaces = Vec::new();
+    if let Some(db) = db {
+        if let Ok(public_rows) = db.load_public_spaces() {
+            let s = state.read().await;
+            for (id, name, desc, invite) in public_rows {
+                let (member_count, channel_count, online_count) = if let Some(sp) = s.spaces.get(&id) {
+                    let online = s.peers.values().filter(|p| {
+                        p.space_id.try_lock().map(|sid| sid.as_deref() == Some(id.as_str())).unwrap_or(false)
+                    }).count() as u32;
+                    (sp.member_ids.len() as u32, sp.channels.len() as u32, online)
+                } else {
+                    (0, 0, 0)
+                };
+                spaces.push(shared_types::PublicSpaceInfo {
+                    id, name, description: desc, invite_code: invite,
+                    member_count, channel_count, online_count,
+                });
+            }
+        }
+    }
+    let s = state.read().await;
+    if let Some(p) = s.peers.get(peer_id).cloned() {
+        drop(s);
+        send_to(&p, &SignalMessage::PublicSpaceList { spaces }).await;
+    }
+}
+
+async fn handle_send_voice_note(
+    state: &State, peer_id: &str, channel_id: String,
+    duration_secs: u32, data: Vec<u8>, _db: &Db,
+) {
+    // Voice note = special text message with voice note attachment
+    if data.len() > 512_000 { // 500KB max
+        send_error(state, peer_id, "Voice note too large (max 500KB)").await;
+        return;
+    }
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let name = peer.name.lock().await.clone();
+    let name = if name.is_empty() { "Anonymous".to_string() } else { name };
+    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
+    drop(s);
+
+    let msg_id = {
+        use rand::RngCore;
+        let mut buf = [0u8; 4];
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        format!("vn_{:08x}", u32::from_le_bytes(buf))
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let msg = shared_types::TextMessageData {
+        message_id: msg_id,
+        sender_name: name,
+        sender_id: user_id,
+        content: format!("\u{1F3A4} Voice note ({duration_secs}s)"),
+        timestamp: now,
+        reply_to_message_id: None,
+        reply_to_sender_name: None,
+        reply_preview: None,
+        edited: false,
+        pinned: false,
+        reactions: vec![],
+        forwarded_from: None,
+        attachment_name: Some(format!("voice_note_{duration_secs}s.opus")),
+        attachment_size: Some(data.len() as u32),
+        link_url: None,
+    };
+
+    // Broadcast to all peers in the same space (they filter by selected channel client-side)
+    let s = state.read().await;
+    if let Some(space) = s.spaces.get(&space_id) {
+        for mid in &space.member_ids {
+            for (_, p) in s.peers.iter() {
+                let uid = p.user_id.lock().await.clone().unwrap_or_default();
+                if uid == *mid {
+                    send_to(p, &SignalMessage::TextMessage {
+                        channel_id: channel_id.clone(),
+                        message: msg.clone(),
+                    }).await;
+                }
+            }
+        }
     }
 }
 
@@ -1484,6 +2168,8 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
                             true // No user_id = guest, can't be blocked
                         }
                     })
+                    // Server-deafen: skip recipients who are server-deafened
+                    .filter(|peer| !peer.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed))
                     .collect()
             })
             .unwrap_or_default();
@@ -1856,6 +2542,8 @@ async fn relay_audio_udp(
                             true
                         }
                     })
+                    // Server-deafen: skip recipients who are server-deafened
+                    .filter(|peer| !peer.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed))
                     .collect()
             })
             .unwrap_or_default();
@@ -2164,6 +2852,7 @@ enum ChannelSetting {
     Category(String),
     Status(String),
     MinRole(shared_types::SpaceRole),
+    AutoDelete(u32),
 }
 
 async fn handle_channel_setting(
@@ -2229,6 +2918,13 @@ async fn handle_channel_setting(
                 SignalMessage::ChannelPermissionsChanged {
                     channel_id: channel_id.clone(),
                     min_role: role_str.to_string(),
+                }
+            }
+            ChannelSetting::AutoDelete(hours) => {
+                channel.auto_delete_hours = hours;
+                SignalMessage::ChannelAutoDeleteChanged {
+                    channel_id: channel_id.clone(),
+                    auto_delete_hours: hours,
                 }
             }
         }

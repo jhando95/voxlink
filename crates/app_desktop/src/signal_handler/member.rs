@@ -167,3 +167,38 @@ pub fn handle_space_audit_appended(
     }
     ui_shell::set_space_audit_log(w, &entries);
 }
+
+pub fn handle_role_color_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    role: shared_types::SpaceRole,
+    color: &str,
+) {
+    // Update the role_color for all members with this role
+    let mut s = state.borrow_mut();
+    if let Some(ref mut space) = s.space {
+        for member in &mut space.members {
+            if member.role == role {
+                member.role_color = color.to_string();
+            }
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}
+
+pub fn handle_activity_changed(
+    w: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    member_id: &str,
+    activity: &str,
+) {
+    let mut s = state.borrow_mut();
+    if let Some(ref mut space) = s.space {
+        if let Some(member) = space.members.iter_mut().find(|m| m.id == member_id) {
+            member.activity = activity.to_string();
+        }
+    }
+    drop(s);
+    crate::friends::sync_ui(w, state);
+}

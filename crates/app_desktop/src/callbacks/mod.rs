@@ -93,6 +93,8 @@ pub fn setup(
     space::setup_set_member_role(window, network, rt_handle);
     space::setup_set_user_status(window, network, rt_handle);
     space::setup_set_channel_topic(window, network, rt_handle);
+    space::setup_set_role_color(window, network, rt_handle);
+    space::setup_set_activity(window, network, rt_handle);
 
     // Channel
     channel::setup_create_channel(window, network, rt_handle);
@@ -138,8 +140,14 @@ pub fn setup(
     ui::setup_toggle_show_spoilers(window);
     ui::setup_toggle_compact_chat(window);
     ui::setup_toggle_category_collapse(window, state);
+    ui::setup_set_channel_notification(window, state);
     ui::setup_toggle_streamer_mode(window);
+    ui::setup_toggle_desktop_notifications(window);
     ui::setup_quick_switcher(window, state, network, rt_handle);
+    ui::setup_move_channel(window, state, network, rt_handle);
+    ui::setup_set_status_preset(window, network, rt_handle);
+    ui::setup_set_notification_sound(window);
+    ui::setup_set_idle_timeout(window);
     ui::setup_toggle_neural_noise_suppression(window, audio, rt_handle);
     ui::setup_toggle_echo_cancellation(window, audio, rt_handle);
     ui::setup_noise_suppression(window, audio, rt_handle);
@@ -147,9 +155,15 @@ pub fn setup(
     ui::setup_create_account(window, network, rt_handle);
     ui::setup_logout(window, network, rt_handle);
     ui::setup_revoke_all_sessions(window, network, rt_handle);
+    ui::setup_change_display_name(window, network, rt_handle);
+    ui::setup_delete_account(window, network, rt_handle);
+
+    // Welcome / onboarding
+    ui::setup_dismiss_welcome(window);
 
     // Chat
     chat::setup_open_direct_message(window, network, rt_handle);
+    chat::setup_close_direct_message(window, state);
     chat::setup_select_text_channel(window, network, rt_handle);
     chat::setup_chat_typing_activity(window, network, rt_handle);
     chat::setup_send_text_message(window, network, rt_handle);
@@ -157,22 +171,40 @@ pub fn setup(
     chat::setup_delete_text_message(window, network, rt_handle);
     chat::setup_react_to_message(window, network, rt_handle);
     chat::setup_toggle_pin_message(window, network, rt_handle);
+    chat::setup_forward_message(window, state, network, rt_handle);
+    chat::setup_copy_message_text(window);
     chat::setup_search_messages(window, network, rt_handle);
     chat::setup_open_thread(window, network, rt_handle);
     chat::setup_close_thread(window);
+    chat::setup_mention_input_changed(window, state);
+    chat::setup_mention_selected(window);
     space::setup_set_profile(window, network, rt_handle);
 
     // v0.7 features
     space::setup_set_channel_user_limit(window, network, rt_handle);
     space::setup_set_channel_slow_mode(window, network, rt_handle);
+    space::setup_set_channel_auto_delete(window, network, rt_handle);
     space::setup_set_channel_category(window, network, rt_handle);
     space::setup_set_channel_status(window, network, rt_handle);
     space::setup_timeout_member(window, network, rt_handle);
     space::setup_set_priority_speaker(window, network, rt_handle);
     space::setup_whisper(window, network, rt_handle);
     space::setup_save_user_note(window);
+    space::setup_rename_space(window, network, rt_handle);
+    space::setup_set_space_description(window, network, rt_handle);
+    space::setup_create_event(window, network, rt_handle);
+    space::setup_delete_event(window, network, rt_handle);
+    space::setup_toggle_event_interest(window, network, rt_handle);
+    space::setup_list_events(window, network, rt_handle);
+    space::setup_browse_public_spaces(window, network, rt_handle);
+    space::setup_join_public_space(window, network, rt_handle);
+    space::setup_set_space_public(window, network, rt_handle);
+    space::setup_add_automod_word(window, network, rt_handle);
+    space::setup_remove_automod_word(window, network, rt_handle);
+    space::setup_list_automod_words(window, network, rt_handle);
 
     // Soundboard
     soundboard::setup_play_clip(window, audio, rt_handle);
     soundboard::setup_remove_clip(window, audio, rt_handle);
+    soundboard::setup_add_clip(window, audio, rt_handle);
 }

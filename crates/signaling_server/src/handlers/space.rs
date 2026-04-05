@@ -65,16 +65,25 @@ pub fn role_for_identity(space: &Space, user_id: &str) -> SpaceRole {
     }
 }
 
+/// Look up the role color for a user in a space based on their role.
+pub fn role_color_for_identity(space: &Space, user_id: &str) -> String {
+    let role = role_for_identity(space, user_id);
+    let key = role_storage_key(role);
+    space.role_colors.get(key).cloned().unwrap_or_default()
+}
+
 pub fn space_info_for_identity(space: &Space, user_id: &str) -> SpaceInfo {
     let self_role = role_for_identity(space, user_id);
     SpaceInfo {
         id: space.id.clone(),
         name: space.name.clone(),
+        description: space.description.clone(),
         invite_code: space.invite_code.clone(),
         member_count: space.member_ids.len() as u32,
         channel_count: space.channels.len() as u32,
         is_owner: self_role == SpaceRole::Owner,
         self_role,
+        is_public: space.is_public,
     }
 }
 
@@ -282,21 +291,25 @@ pub async fn handle_create_space(
         status: String::new(),
         slow_mode_secs: 0,
         min_role: shared_types::SpaceRole::Member,
-            position: 0,
+        position: 0,
+        auto_delete_hours: 0,
     };
 
     let space = Space {
         id: space_id.clone(),
         name: name.clone(),
+        description: String::new(),
         invite_code: invite_code.clone(),
         owner_id: owner_id.clone(),
         channels: vec![channel_meta],
         member_ids: vec![peer_id.to_string()],
         member_roles: std::collections::HashMap::from([(owner_id.clone(), SpaceRole::Owner)]),
+        role_colors: std::collections::HashMap::new(),
         text_messages: std::collections::HashMap::new(),
         audit_log: std::collections::VecDeque::new(),
         slow_mode_timestamps: std::collections::HashMap::new(),
         created_at: Instant::now(),
+        is_public: false,
     };
 
     s.invite_index.insert(invite_code.clone(), space_id.clone());
@@ -305,11 +318,13 @@ pub async fn handle_create_space(
     let space_info = SpaceInfo {
         id: space_id.clone(),
         name: name.clone(),
+        description: String::new(),
         invite_code: invite_code.clone(),
         member_count: 1,
         channel_count: 1,
         is_owner: true,
         self_role: SpaceRole::Owner,
+        is_public: false,
     };
 
     let channels = vec![ChannelInfo {
@@ -324,6 +339,7 @@ pub async fn handle_create_space(
         status: String::new(),
         slow_mode_secs: 0,
         position: 0,
+        auto_delete_hours: 0,
     }];
 
     log::info!("Space {} created by {peer_id}", space_id);
@@ -372,6 +388,7 @@ pub async fn handle_create_space(
                 voice_quality: Some(2),
                 min_role: None,
                 position: None,
+                auto_delete_hours: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
@@ -380,6 +397,7 @@ pub async fn handle_create_space(
                 user_id: sowner,
                 role: role_storage_key(SpaceRole::Owner).into(),
                 assigned_at,
+                role_color: String::new(),
             }) {
                 log::error!("Failed to persist owner role: {e}");
             }
@@ -561,6 +579,7 @@ pub async fn handle_join_space(
                     status: ch.status.clone(),
                     slow_mode_secs: ch.slow_mode_secs,
                     position: ch.position,
+                    auto_delete_hours: ch.auto_delete_hours,
                 }
             })
             .collect();
@@ -597,6 +616,8 @@ pub async fn handle_join_space(
                     bio: String::new(),
                     nickname: None,
                     status_preset: shared_types::UserStatus::Online,
+                    role_color: role_color_for_identity(space, &stable_id),
+                    activity: p.activity.lock().await.clone(),
                 });
             }
         }
@@ -625,6 +646,8 @@ pub async fn handle_join_space(
                 bio: String::new(),
                 nickname: None,
                 status_preset: shared_types::UserStatus::Online,
+                role_color: role_color_for_identity(space, &user_id),
+                activity: p.activity.lock().await.clone(),
             })
         } else {
             None
@@ -640,6 +663,19 @@ pub async fn handle_join_space(
         )
     };
 
+    // Fetch welcome message from DB (if any)
+    let welcome_message = if let Some(ref db) = db {
+        let db_clone = db.clone();
+        let sid = space_id.clone();
+        tokio::task::spawn_blocking(move || db_clone.get_welcome_message(&sid).ok())
+            .await
+            .ok()
+            .flatten()
+            .filter(|m| !m.is_empty())
+    } else {
+        None
+    };
+
     if let Some(peer) = joiner_peer {
         send_to(
             &peer,
@@ -647,6 +683,7 @@ pub async fn handle_join_space(
                 space: space_info,
                 channels,
                 members,
+                welcome_message,
             },
         )
         .await;
@@ -898,6 +935,7 @@ pub async fn handle_set_member_role(
                     user_id: target_user_id,
                     role: role_storage_key(role).into(),
                     assigned_at: now_secs(),
+                    role_color: String::new(),
                 })
             };
             if let Err(err) = result {
@@ -1012,4 +1050,154 @@ pub async fn handle_set_nickname(
         nickname: nick_opt,
     };
     broadcast_to_space(state, &space_id, "", &notify).await;
+}
+
+pub async fn handle_rename_space(
+    state: &State,
+    peer_id: &str,
+    name: String,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
+    else {
+        crate::send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(shared_types::SpaceRole::Admin) {
+        crate::send_error(state, peer_id, "Admin role required to rename space").await;
+        return;
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() || name.len() > 64 {
+        crate::send_error(state, peer_id, "Space name must be 1-64 characters").await;
+        return;
+    }
+
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            space.name = name.clone();
+        }
+    }
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let n = name.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            db.rename_space(&sid, &n);
+        })
+        .await;
+    }
+
+    let notify = SignalMessage::SpaceRenamed { name };
+    broadcast_to_space(state, &space_id, "", &notify).await;
+}
+
+pub async fn handle_set_space_description(
+    state: &State,
+    peer_id: &str,
+    description: String,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
+    else {
+        crate::send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(shared_types::SpaceRole::Admin) {
+        crate::send_error(state, peer_id, "Admin role required").await;
+        return;
+    }
+    let description = description.trim().to_string();
+    if description.len() > 256 {
+        crate::send_error(state, peer_id, "Description too long (max 256 characters)").await;
+        return;
+    }
+
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            space.description = description.clone();
+        }
+    }
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let d = description.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            db.set_space_description(&sid, &d);
+        })
+        .await;
+    }
+
+    let notify = SignalMessage::SpaceDescriptionChanged { description };
+    broadcast_to_space(state, &space_id, "", &notify).await;
+}
+
+pub async fn handle_set_role_color(
+    state: &State,
+    peer_id: &str,
+    role: SpaceRole,
+    color: String,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
+    else {
+        crate::send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(SpaceRole::Admin) {
+        crate::send_error(state, peer_id, "Admin role required to change role colors").await;
+        return;
+    }
+
+    // Validate color: must be empty (to clear) or a hex color like "#rrggbb"
+    let color = color.trim().to_string();
+    if !color.is_empty() && !is_valid_hex_color(&color) {
+        crate::send_error(state, peer_id, "Invalid color format (use #rrggbb)").await;
+        return;
+    }
+
+    let role_key = role_storage_key(role).to_string();
+
+    {
+        let mut s = state.write().await;
+        if let Some(space) = s.spaces.get_mut(&space_id) {
+            if color.is_empty() {
+                space.role_colors.remove(&role_key);
+            } else {
+                space.role_colors.insert(role_key.clone(), color.clone());
+            }
+        }
+    }
+
+    if let Some(ref db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let rk = role_key;
+        let c = color.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = db.set_role_color(&sid, &rk, &c);
+        })
+        .await;
+    }
+
+    let notify = SignalMessage::RoleColorChanged {
+        role,
+        color,
+    };
+    broadcast_to_space(state, &space_id, "", &notify).await;
+}
+
+fn is_valid_hex_color(s: &str) -> bool {
+    if s.len() != 7 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if bytes[0] != b'#' {
+        return false;
+    }
+    bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
 }

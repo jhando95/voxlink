@@ -791,25 +791,123 @@ pub fn setup_quick_switcher(
     rt_handle: &tokio::runtime::Handle,
 ) {
     let window_weak = window.as_weak();
-    let _state_ref = state.clone();
+    let state_ref = state.clone();
+
+    // Filter callback: populate quick-switcher-items from channels + DM threads
+    window.on_quick_switcher_filter({
+        let window_weak = window_weak.clone();
+        let state_ref = state_ref.clone();
+        move |query| {
+            let Some(w) = window_weak.upgrade() else { return };
+            let q = query.to_string().trim().to_lowercase();
+            let state = state_ref.borrow();
+
+            let mut items: Vec<ui_shell::ChannelData> = Vec::new();
+
+            // Add space channels (text and voice)
+            if let Some(space) = &state.space {
+                for ch in &space.channels {
+                    if !q.is_empty() && !ch.name.to_lowercase().contains(&q) {
+                        continue;
+                    }
+                    items.push(ui_shell::ChannelData {
+                        id: ch.id.clone().into(),
+                        name: ch.name.clone().into(),
+                        is_voice: ch.channel_type == shared_types::ChannelType::Voice,
+                        peer_count: ch.peer_count as i32,
+                        category: if ch.category.is_empty() {
+                            space.name.clone().into()
+                        } else {
+                            ch.category.clone().into()
+                        },
+                        ..Default::default()
+                    });
+                }
+            }
+
+            // Add DM threads
+            for dm in &state.direct_message_threads {
+                if !q.is_empty() && !dm.user_name.to_lowercase().contains(&q) {
+                    continue;
+                }
+                items.push(ui_shell::ChannelData {
+                    id: dm.user_id.clone().into(),
+                    name: dm.user_name.clone().into(),
+                    status: "dm".into(),
+                    ..Default::default()
+                });
+            }
+
+            let model = std::rc::Rc::new(slint::VecModel::from(items));
+            w.set_quick_switcher_items(model.into());
+            w.set_quick_switcher_index(0);
+        }
+    });
+
+    // Select callback: navigate to the selected item
     window.on_quick_switcher_select({
         let window_weak = window_weak.clone();
+        let state_ref = state_ref.clone();
         let network = network.clone();
         let rt_handle = rt_handle.clone();
         move |item_id| {
             let Some(w) = window_weak.upgrade() else { return };
             let item_id_str = item_id.to_string();
-            // Try to select as text channel
-            let network = network.clone();
-            rt_handle.spawn(async move {
-                let net = network.lock().await;
-                let _ = net
-                    .send_signal(&shared_types::SignalMessage::SelectTextChannel {
-                        channel_id: item_id_str,
+
+            // Check if item_id matches a DM thread user_id
+            let is_dm = {
+                let state = state_ref.borrow();
+                state.direct_message_threads.iter().any(|dm| dm.user_id == item_id_str)
+            };
+
+            // Check if item_id matches a voice channel
+            let is_voice = {
+                let state = state_ref.borrow();
+                state.space.as_ref().map_or(false, |space| {
+                    space.channels.iter().any(|ch| {
+                        ch.id == item_id_str
+                            && ch.channel_type == shared_types::ChannelType::Voice
                     })
-                    .await;
-            });
-            w.set_current_view(5);
+                })
+            };
+
+            if is_dm {
+                // Navigate to DM view
+                let network = network.clone();
+                let id = item_id_str.clone();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = net
+                        .send_signal(&shared_types::SignalMessage::SelectDirectMessage {
+                            user_id: id,
+                        })
+                        .await;
+                });
+                w.set_current_view(5);
+            } else if is_voice {
+                // Join voice channel
+                let network = network.clone();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = net
+                        .send_signal(&shared_types::SignalMessage::JoinChannel {
+                            channel_id: item_id_str,
+                        })
+                        .await;
+                });
+            } else {
+                // Navigate to text channel
+                let network = network.clone();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = net
+                        .send_signal(&shared_types::SignalMessage::SelectTextChannel {
+                            channel_id: item_id_str,
+                        })
+                        .await;
+                });
+                w.set_current_view(5);
+            }
         }
     });
 }
@@ -877,6 +975,130 @@ pub fn setup_toggle_streamer_mode(window: &MainWindow) {
         crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
             cfg.streamer_mode = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_toggle_desktop_notifications(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_toggle_desktop_notifications(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let new_val = !w.get_desktop_notifications();
+        w.set_desktop_notifications(new_val);
+
+        crate::helpers::spawn_config_save(move || {
+            let mut cfg = config_store::load_config();
+            cfg.desktop_notifications = new_val;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_move_channel(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    // Move channel up
+    window.on_move_channel_up({
+        let state = state.clone();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        move |channel_id| {
+            let channel_id = channel_id.to_string();
+            let ids = {
+                let s = state.borrow();
+                let Some(space) = &s.space else { return };
+                let mut ids: Vec<String> = space.channels.iter().map(|c| c.id.clone()).collect();
+                if let Some(pos) = ids.iter().position(|id| id == &channel_id) {
+                    if pos == 0 { return; }
+                    ids.swap(pos, pos - 1);
+                } else {
+                    return;
+                }
+                ids
+            };
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net.send_signal(&shared_types::SignalMessage::ReorderChannels {
+                    channel_ids: ids,
+                }).await;
+            });
+        }
+    });
+
+    // Move channel down
+    window.on_move_channel_down({
+        let state = state.clone();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        move |channel_id| {
+            let channel_id = channel_id.to_string();
+            let ids = {
+                let s = state.borrow();
+                let Some(space) = &s.space else { return };
+                let mut ids: Vec<String> = space.channels.iter().map(|c| c.id.clone()).collect();
+                if let Some(pos) = ids.iter().position(|id| id == &channel_id) {
+                    if pos >= ids.len() - 1 { return; }
+                    ids.swap(pos, pos + 1);
+                } else {
+                    return;
+                }
+                ids
+            };
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net.send_signal(&shared_types::SignalMessage::ReorderChannels {
+                    channel_ids: ids,
+                }).await;
+            });
+        }
+    });
+}
+
+pub fn setup_set_status_preset(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_status_preset(move |preset_index| {
+        let preset = match preset_index {
+            0 => shared_types::UserStatus::Online,
+            1 => shared_types::UserStatus::Idle,
+            2 => shared_types::UserStatus::DoNotDisturb,
+            3 => shared_types::UserStatus::Invisible,
+            _ => return,
+        };
+        if let Some(w) = window_weak.upgrade() {
+            w.set_status_preset(preset_index);
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net.send_signal(&shared_types::SignalMessage::SetStatusPreset { preset }).await;
+        });
+
+        // Persist to config
+        let preset_str = match preset_index {
+            0 => "online",
+            1 => "idle",
+            2 => "dnd",
+            3 => "invisible",
+            _ => "online",
+        };
+        let preset_owned = preset_str.to_string();
+        crate::helpers::spawn_config_save(move || {
+            let mut cfg = config_store::load_config();
+            cfg.status_preset = preset_owned;
             let _ = config_store::save_config(&cfg);
         });
     });
@@ -981,6 +1203,46 @@ pub fn setup_revoke_all_sessions(
     });
 }
 
+pub fn setup_change_display_name(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_change_display_name(move |name| {
+        let name = name.to_string().trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::SetDisplayName { name })
+                .await;
+        });
+    });
+}
+
+pub fn setup_delete_account(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_delete_account(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::DeleteAccount)
+                .await;
+        });
+    });
+}
+
 pub fn setup_toggle_category_collapse(
     window: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
@@ -1007,6 +1269,7 @@ pub fn setup_toggle_category_collapse(
         let s = state.borrow();
         if let Some(ref space) = s.space {
             let query = w.get_space_search_query().to_string();
+            let cfg = config_store::load_config();
             ui_shell::render_space(
                 &w,
                 space,
@@ -1015,8 +1278,112 @@ pub fn setup_toggle_category_collapse(
                 &s.incoming_friend_requests,
                 &s.outgoing_friend_requests,
                 s.self_user_id.as_deref(),
-                &config_store::load_config().collapsed_categories,
+                &cfg.collapsed_categories,
+                &cfg.user_notes,
+                &cfg.channel_notification_overrides,
+                &cfg.favorite_channels,
             );
+        }
+    });
+}
+
+pub fn setup_set_notification_sound(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_set_notification_sound(move |index| {
+        if !(0..=3).contains(&index) {
+            return;
+        }
+        if let Some(w) = window_weak.upgrade() {
+            w.set_notification_sound_index(index);
+        }
+        let key = match index {
+            1 => "subtle",
+            2 => "chime",
+            3 => "none",
+            _ => "default",
+        };
+        let key_owned = key.to_string();
+        crate::helpers::spawn_config_save(move || {
+            let mut cfg = config_store::load_config();
+            cfg.notification_sound = key_owned;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_set_idle_timeout(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_set_idle_timeout(move |mins| {
+        let mins = mins.max(0) as u32;
+        if let Some(w) = window_weak.upgrade() {
+            w.set_idle_timeout_mins(mins as i32);
+        }
+        crate::helpers::spawn_config_save(move || {
+            let mut cfg = config_store::load_config();
+            cfg.idle_timeout_mins = mins;
+            let _ = config_store::save_config(&cfg);
+        });
+    });
+}
+
+pub fn setup_set_channel_notification(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+) {
+    let window_weak = window.as_weak();
+    let state = state.clone();
+    window.on_set_channel_notification(move |channel_id, setting| {
+        let channel_id = channel_id.to_string();
+        let setting = setting.to_string();
+        if channel_id.is_empty() {
+            return;
+        }
+        // Update config
+        let mut cfg = config_store::load_config();
+        if setting == "all" || setting.is_empty() {
+            // "all" is the default — remove override to keep config clean
+            cfg.channel_notification_overrides.remove(&channel_id);
+        } else {
+            cfg.channel_notification_overrides
+                .insert(channel_id, setting);
+        }
+        let _ = config_store::save_config(&cfg);
+        // Re-render space view to reflect the change
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let s = state.borrow();
+        if let Some(ref space) = s.space {
+            let query = w.get_space_search_query().to_string();
+            let cfg = config_store::load_config();
+            ui_shell::render_space(
+                &w,
+                space,
+                &query,
+                &s.favorite_friends,
+                &s.incoming_friend_requests,
+                &s.outgoing_friend_requests,
+                s.self_user_id.as_deref(),
+                &cfg.collapsed_categories,
+                &cfg.user_notes,
+                &cfg.channel_notification_overrides,
+                &cfg.favorite_channels,
+            );
+        }
+    });
+}
+
+pub fn setup_dismiss_welcome(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_dismiss_welcome(move || {
+        if let Some(w) = window_weak.upgrade() {
+            w.set_first_run(false);
+        }
+        // Persist the dismissal so the welcome card never shows again
+        let mut cfg = config_store::load_config();
+        cfg.first_run_completed = true;
+        if let Err(e) = config_store::save_config(&cfg) {
+            log::warn!("Failed to save first_run_completed: {e}");
         }
     });
 }

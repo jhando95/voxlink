@@ -194,3 +194,26 @@ pub async fn handle_set_status_preset(state: &State, peer_id: &str, preset: User
 
     notify_watchers_for_peer(state, peer_id).await;
 }
+
+pub async fn handle_set_activity(state: &State, peer_id: &str, activity: String) {
+    let activity = activity.chars().take(128).collect::<String>();
+
+    let space_id = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
+        *peer.activity.lock().await = activity.clone();
+        let sid = peer.space_id.lock().await.clone();
+        sid
+    };
+
+    // Broadcast to space members
+    if let Some(space_id) = space_id {
+        let notify = SignalMessage::ActivityChanged {
+            member_id: peer_id.to_string(),
+            activity,
+        };
+        super::space::broadcast_to_space(state, &space_id, peer_id, &notify).await;
+    }
+}

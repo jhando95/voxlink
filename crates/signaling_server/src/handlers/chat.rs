@@ -166,6 +166,7 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    link_url: None,
                 })
                 .collect();
             Ok((target_name, history))
@@ -449,6 +450,25 @@ pub async fn handle_send_text_message(
         }
     }
 
+    // Auto-moderation filter check
+    if let Some((matched_word, action)) =
+        super::moderation::check_automod(db, &space_id, &content).await
+    {
+        if action == "block" {
+            send_error(
+                state,
+                peer_id,
+                &format!("Message blocked by auto-moderation (matched: {matched_word})"),
+            )
+            .await;
+            return;
+        }
+        // action == "warn": allow the message through but log it
+        log::info!(
+            "Automod warn in space {space_id}: peer {peer_id} used filtered word '{matched_word}'"
+        );
+    }
+
     let reply_metadata =
         match resolve_reply_metadata(state, &space_id, &channel_id, reply_to_message_id).await {
             Ok(metadata) => metadata,
@@ -465,6 +485,9 @@ pub async fn handle_send_text_message(
 
     // Use stable identity so the sender can edit/delete after reconnecting
     let stable_sender = super::space::stable_peer_id(state, peer_id).await;
+
+    // Extract first URL from content for link preview
+    let link_url = shared_types::extract_first_url(&content);
 
     let msg_data = shared_types::TextMessageData {
         sender_id: stable_sender,
@@ -490,6 +513,7 @@ pub async fn handle_send_text_message(
         forwarded_from: None,
         attachment_name: None,
         attachment_size: None,
+        link_url,
     };
 
     // Store message in memory
@@ -516,6 +540,7 @@ pub async fn handle_send_text_message(
         let reply_to_message_id = msg_data.reply_to_message_id.clone();
         let reply_to_sender_name = msg_data.reply_to_sender_name.clone();
         let reply_preview = msg_data.reply_preview.clone();
+        let persist_link_url = msg_data.link_url.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = db.save_message(&crate::persistence::MessageRow {
                 id: mid,
@@ -529,6 +554,7 @@ pub async fn handle_send_text_message(
                 reply_to_sender_name,
                 reply_preview,
                 pinned: false,
+                link_url: persist_link_url,
             }) {
                 log::error!("Failed to persist message: {e}");
             }
@@ -575,15 +601,28 @@ pub async fn handle_send_text_message(
         }
 
         // Send MentionNotification to mentioned users who are not the sender
-        if !mentioned_names.is_empty() {
+        let content_lower = msg_data.content.to_lowercase();
+        let is_everyone_mention =
+            content_lower.contains("@everyone") || content_lower.contains("@here");
+
+        if !mentioned_names.is_empty() || is_everyone_mention {
             let preview = if msg_data.content.len() > 100 {
                 format!("{}...", &msg_data.content[..97])
             } else {
                 msg_data.content.clone()
             };
             for peer in &members {
-                let peer_name = peer.name.try_lock().map(|n| n.to_lowercase()).unwrap_or_default();
-                if mentioned_names.contains(&peer_name) && peer.id != peer_id {
+                if peer.id == peer_id {
+                    continue;
+                }
+                let should_notify = if is_everyone_mention {
+                    true
+                } else {
+                    let peer_name =
+                        peer.name.try_lock().map(|n| n.to_lowercase()).unwrap_or_default();
+                    mentioned_names.contains(&peer_name)
+                };
+                if should_notify {
                     send_to(
                         peer,
                         &SignalMessage::MentionNotification {
@@ -699,6 +738,7 @@ pub async fn handle_send_direct_message(
                 forwarded_from: None,
                 attachment_name: None,
                 attachment_size: None,
+                link_url: None,
             })
         })
         .await
@@ -1370,6 +1410,7 @@ pub async fn handle_search_messages(
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    link_url: None,
                 })
                 .collect();
             let resp = SignalMessage::SearchResults {
@@ -1483,6 +1524,7 @@ pub async fn handle_search_space_messages(
                         forwarded_from: None,
                         attachment_name: None,
                         attachment_size: None,
+                        link_url: None,
                     },
                 })
                 .collect();
@@ -1614,6 +1656,7 @@ pub async fn handle_select_group_dm(
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    link_url: None,
                 })
                 .collect();
             if let Some(peer) = peer_for_id(state, peer_id).await {
@@ -1715,6 +1758,7 @@ pub async fn handle_send_group_message(
                 forwarded_from: None,
                 attachment_name: None,
                 attachment_size: None,
+                link_url: None,
             };
             let notify = SignalMessage::GroupMessage {
                 group_id,
@@ -1875,6 +1919,7 @@ pub async fn handle_forward_message(
         forwarded_from: Some(format!("#{source_channel_name}")),
         attachment_name: None,
         attachment_size: None,
+        link_url: None,
     };
 
     // Store in memory
@@ -1914,6 +1959,7 @@ pub async fn handle_forward_message(
                 reply_to_sender_name: None,
                 reply_preview: None,
                 pinned: false,
+                link_url: None,
             }) {
                 log::error!("Failed to persist forwarded message: {e}");
             }

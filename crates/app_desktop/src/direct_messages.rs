@@ -5,14 +5,31 @@ use std::rc::Rc;
 use shared_types::{AppState, DirectMessageThread, FavoriteFriend, TextMessageData};
 use ui_shell::MainWindow;
 
+#[allow(dead_code)]
 pub fn load_from_config(
     window: &MainWindow,
     state: &Rc<RefCell<AppState>>,
     threads: Vec<DirectMessageThread>,
 ) {
+    load_from_config_filtered(window, state, threads, &[]);
+}
+
+pub fn load_from_config_filtered(
+    window: &MainWindow,
+    state: &Rc<RefCell<AppState>>,
+    threads: Vec<DirectMessageThread>,
+    closed_dm_user_ids: &[String],
+) {
     {
         let mut app = state.borrow_mut();
-        app.direct_message_threads = threads;
+        app.direct_message_threads = if closed_dm_user_ids.is_empty() {
+            threads
+        } else {
+            threads
+                .into_iter()
+                .filter(|t| !closed_dm_user_ids.contains(&t.user_id))
+                .collect()
+        };
         sync_threads_with_friends(&mut app);
     }
     sync_ui(window, state);

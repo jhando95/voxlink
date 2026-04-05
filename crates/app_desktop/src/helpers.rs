@@ -119,6 +119,14 @@ pub fn auto_save_settings(
             streamer_mode: existing.streamer_mode,
             account_email: existing.account_email,
             collapsed_categories: existing.collapsed_categories,
+            closed_dm_user_ids: existing.closed_dm_user_ids,
+            activity: existing.activity,
+            notification_sound: existing.notification_sound,
+            desktop_notifications: existing.desktop_notifications,
+            last_read_messages: existing.last_read_messages,
+            favorite_channels: existing.favorite_channels,
+            recent_reactions: existing.recent_reactions,
+            first_run_completed: existing.first_run_completed,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
@@ -234,6 +242,14 @@ pub fn send_notification(title: &str, body: &str) {
     });
 }
 
+/// Show an in-app toast notification.
+/// `toast_type`: 0=info, 1=success, 2=warning, 3=error
+pub fn show_toast(window: &MainWindow, message: &str, toast_type: i32) {
+    window.set_toast_message(message.into());
+    window.set_toast_type(toast_type);
+    window.set_toast_visible(true);
+}
+
 /// Save auth token to config in background.
 pub fn save_auth_token_async(token: String) {
     crate::helpers::spawn_config_save(move || {
@@ -301,11 +317,13 @@ pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo
         .map(|saved| shared_types::SpaceInfo {
             id: saved.id.clone(),
             name: saved.name.clone(),
+            description: String::new(),
             invite_code: saved.invite_code.clone(),
             member_count: 0,
             channel_count: 0,
             is_owner: false,
             self_role: shared_types::SpaceRole::Member,
+            is_public: false,
         })
         .collect::<Vec<_>>();
     ui_shell::set_spaces(window, &spaces);
@@ -352,11 +370,13 @@ pub fn sync_saved_spaces_ui(window: &MainWindow, exclude_space_id: Option<&str>)
         .map(|space| shared_types::SpaceInfo {
             id: space.id.clone(),
             name: space.name.clone(),
+            description: String::new(),
             invite_code: space.invite_code.clone(),
             member_count: 0,
             channel_count: 0,
             is_owner: false,
             self_role: shared_types::SpaceRole::Member,
+            is_public: false,
         })
         .collect::<Vec<_>>();
     ui_shell::set_spaces(window, &spaces);
@@ -389,6 +409,28 @@ pub fn save_recent_direct_messages_async(threads: Vec<shared_types::DirectMessag
         let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         cfg.recent_direct_messages = threads;
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+/// Add a user_id to the closed DM list (hides from DM thread list, preserves messages).
+pub fn close_dm_async(user_id: String) {
+    crate::helpers::spawn_config_save(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        if !cfg.closed_dm_user_ids.contains(&user_id) {
+            cfg.closed_dm_user_ids.push(user_id);
+        }
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+/// Remove a user_id from the closed DM list (reopen/unhide the DM thread).
+pub fn reopen_dm_async(user_id: String) {
+    crate::helpers::spawn_config_save(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        cfg.closed_dm_user_ids.retain(|id| id != &user_id);
         let _ = config_store::save_config(&cfg);
     });
 }

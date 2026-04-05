@@ -53,6 +53,7 @@ pub fn setup_create_room(
                 log::error!("Failed to create room: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed: Not connected".into());
+                    crate::helpers::show_toast(&w, "Failed to create room", 3);
                 }
             }
         });
@@ -99,6 +100,7 @@ pub fn setup_join_room(
                 log::error!("Failed to join room: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed: Not connected".into());
+                    crate::helpers::show_toast(&w, "Failed to join room", 3);
                 }
             }
         });
@@ -152,6 +154,7 @@ pub fn setup_leave_room(
         }
         ui_shell::set_participants(&w, &[]);
         w.set_room_code(slint::SharedString::default());
+        w.set_channel_topic(slint::SharedString::default());
         w.set_is_muted(false);
         w.set_is_deafened(false);
         w.set_status_text("Connected".into());
@@ -237,6 +240,7 @@ pub fn setup_toggle_screen_share(
                 log::error!("Failed to toggle screen share: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_room_status("Screen share request failed".into());
+                    crate::helpers::show_toast(&w, "Screen share request failed", 3);
                 }
             }
         });

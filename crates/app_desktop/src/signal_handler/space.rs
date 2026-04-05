@@ -17,6 +17,7 @@ pub fn handle_space_created(
     let space_state = SpaceState {
         id: space.id.clone(),
         name: space.name.clone(),
+        description: space.description.clone(),
         invite_code: space.invite_code.clone(),
         channels: channels.to_vec(),
         members: Vec::new(),
@@ -40,6 +41,7 @@ pub fn handle_space_created(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_space_description(space.description.clone().into());
     w.set_space_search_query(slint::SharedString::default());
     w.set_confirm_delete_channel_id(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
@@ -58,8 +60,10 @@ pub fn handle_space_created(
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
+    w.set_is_space_public(space.is_public);
     apply_space_permissions(w, space.self_role);
     ui_shell::set_space_audit_log(w, &[]);
+    ui_shell::set_automod_words(w, &[]);
     {
         let mut s = state.borrow_mut();
         let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
@@ -82,12 +86,14 @@ pub fn handle_space_joined(
     space: &shared_types::SpaceInfo,
     channels: &[shared_types::ChannelInfo],
     members: &[shared_types::MemberInfo],
+    welcome_message: &Option<String>,
 ) {
     log::info!("Joined space: {} ({})", space.name, space.id);
 
     let space_state = SpaceState {
         id: space.id.clone(),
         name: space.name.clone(),
+        description: space.description.clone(),
         invite_code: space.invite_code.clone(),
         channels: channels.to_vec(),
         members: members.to_vec(),
@@ -111,6 +117,7 @@ pub fn handle_space_joined(
     w.set_current_space_id(space.id.clone().into());
     w.set_current_space_name(space.name.clone().into());
     w.set_current_space_invite(space.invite_code.clone().into());
+    w.set_space_description(space.description.clone().into());
     w.set_space_search_query(slint::SharedString::default());
     w.set_confirm_delete_channel_id(slint::SharedString::default());
     w.set_chat_channel_id(slint::SharedString::default());
@@ -129,8 +136,10 @@ pub fn handle_space_joined(
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
     w.set_is_space_owner(space.is_owner);
+    w.set_is_space_public(space.is_public);
     apply_space_permissions(w, space.self_role);
     ui_shell::set_space_audit_log(w, &[]);
+    ui_shell::set_automod_words(w, &[]);
     {
         let mut s = state.borrow_mut();
         let favorites_changed = crate::friends::refresh_metadata_in_place(&mut s);
@@ -143,6 +152,14 @@ pub fn handle_space_joined(
     w.set_current_view(ui_shell::view_to_index(AppView::Space));
     w.set_space_invite_code(slint::SharedString::default());
     w.set_status_text("Joined space".into());
+
+    // Show welcome overlay if the space has a welcome message
+    if let Some(msg) = welcome_message {
+        if !msg.is_empty() {
+            w.set_welcome_message(msg.as_str().into());
+            w.set_show_welcome_overlay(true);
+        }
+    }
 
     crate::helpers::remember_saved_space(w, space);
 }
@@ -203,6 +220,7 @@ pub fn handle_space_deleted(
     w.set_mic_level(0.0);
     w.set_window_title("Voxlink".into());
     w.set_status_text("Space was deleted".into());
+    crate::helpers::show_toast(w, "Space was deleted by owner", 2);
     ui_shell::set_channels(w, &[]);
     ui_shell::set_members(w, &[]);
     ui_shell::set_space_audit_log(w, &[]);

@@ -55,6 +55,8 @@ pub struct RoomState {
 pub struct SpaceInfo {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub invite_code: String,
     pub member_count: u32,
     pub channel_count: u32,
@@ -62,6 +64,8 @@ pub struct SpaceInfo {
     pub is_owner: bool,
     #[serde(default)]
     pub self_role: SpaceRole,
+    #[serde(default)]
+    pub is_public: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +144,9 @@ pub struct ChannelInfo {
     /// Channel display position (lower = higher in list). Default 0 = insertion order.
     #[serde(default)]
     pub position: u32,
+    /// Auto-delete messages after N hours (0 = disabled)
+    #[serde(default)]
+    pub auto_delete_hours: u32,
 }
 
 fn default_voice_quality() -> u8 {
@@ -190,6 +197,12 @@ pub struct MemberInfo {
     pub nickname: Option<String>,
     #[serde(default)]
     pub status_preset: UserStatus,
+    /// Hex color for the member's role (e.g. "#ff5555"), empty for default
+    #[serde(default)]
+    pub role_color: String,
+    /// Activity status text (e.g. "Playing Valorant"), empty if none
+    #[serde(default)]
+    pub activity: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -279,6 +292,7 @@ pub struct DirectMessageThread {
 pub struct SpaceState {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub invite_code: String,
     pub channels: Vec<ChannelInfo>,
     pub members: Vec<MemberInfo>,
@@ -407,6 +421,18 @@ pub enum SignalMessage {
     },
     LeaveSpace,
     DeleteSpace,
+    RenameSpace {
+        name: String,
+    },
+    SetSpaceDescription {
+        description: String,
+    },
+    SpaceRenamed {
+        name: String,
+    },
+    SpaceDescriptionChanged {
+        description: String,
+    },
     CreateChannel {
         channel_name: String,
         #[serde(default)]
@@ -495,6 +521,8 @@ pub enum SignalMessage {
         space: SpaceInfo,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
+        #[serde(default)]
+        welcome_message: Option<String>,
     },
     SpaceDeleted,
     ChannelCreated {
@@ -703,6 +731,16 @@ pub enum SignalMessage {
         member_id: String,
         muted: bool,
     },
+    /// Moderator -> Server: server-deafen or undeafen a member (stops audio relay TO them).
+    ServerDeafenMember {
+        member_id: String,
+        deafened: bool,
+    },
+    /// Server -> All in space: a member has been server-deafened or undeafened.
+    MemberServerDeafened {
+        member_id: String,
+        deafened: bool,
+    },
     MemberRoleChanged {
         user_id: String,
         role: SpaceRole,
@@ -776,6 +814,17 @@ pub enum SignalMessage {
     ChannelPermissionsChanged {
         channel_id: String,
         min_role: String,
+    },
+
+    // Channel auto-delete
+    /// Set auto-delete interval for a text channel. 0 = disabled.
+    SetChannelAutoDelete {
+        channel_id: String,
+        auto_delete_hours: u32,
+    },
+    ChannelAutoDeleteChanged {
+        channel_id: String,
+        auto_delete_hours: u32,
     },
 
     // Channel ordering (v0.9.0)
@@ -955,6 +1004,235 @@ pub enum SignalMessage {
         message_id: String,
         target_channel_id: String,
     },
+
+    // v0.10.0: Auto-moderation word filter
+    AddAutomodWord {
+        word: String,
+        action: String,
+    },
+    RemoveAutomodWord {
+        word: String,
+    },
+    AutomodWordAdded {
+        word: String,
+        action: String,
+    },
+    AutomodWordRemoved {
+        word: String,
+    },
+    ListAutomodWords,
+    AutomodWordList {
+        words: Vec<AutomodWord>,
+    },
+
+    // v0.10.0: Role colors
+    /// Set the display color for a role in the current space.
+    /// Requires Admin+ permissions. `color` is a hex string like "#ff5555" or empty to clear.
+    SetRoleColor {
+        role: SpaceRole,
+        color: String,
+    },
+    /// Server broadcasts that a role's color was changed.
+    RoleColorChanged {
+        role: SpaceRole,
+        color: String,
+    },
+
+    // v0.10.0: Activity status
+    /// Set the user's activity text (e.g. "Playing Valorant"). Empty to clear.
+    SetActivity {
+        activity: String,
+    },
+    /// Server broadcasts that a member's activity changed.
+    ActivityChanged {
+        member_id: String,
+        activity: String,
+    },
+
+    // DM Voice Calls
+    /// Initiate a voice call with a DM partner.
+    CallUser {
+        target_user_id: String,
+    },
+    /// Server notifies the target of an incoming call.
+    IncomingCall {
+        caller_id: String,
+        caller_name: String,
+        room_key: String,
+    },
+    /// Accept an incoming call — both peers join the room.
+    AcceptCall {
+        room_key: String,
+    },
+    /// Decline or cancel a call.
+    DeclineCall {
+        room_key: String,
+    },
+    /// Server notifies that the call was declined, cancelled, or failed.
+    CallEnded {
+        room_key: String,
+        reason: String,
+    },
+
+    // v0.10.0: Scheduled Events
+    CreateScheduledEvent {
+        title: String,
+        description: String,
+        start_time: i64,
+        end_time: i64,
+    },
+    ScheduledEventCreated {
+        event: ScheduledEvent,
+    },
+    DeleteScheduledEvent {
+        event_id: String,
+    },
+    ScheduledEventDeleted {
+        event_id: String,
+    },
+    ToggleEventInterest {
+        event_id: String,
+    },
+    EventInterestUpdated {
+        event_id: String,
+        interested_count: u32,
+        is_interested: bool,
+    },
+    ListScheduledEvents,
+    ScheduledEventList {
+        events: Vec<ScheduledEvent>,
+    },
+
+    // v0.10.0: Voice Recording (scaffolding)
+    StartRecording {
+        channel_id: String,
+    },
+    StopRecording {
+        channel_id: String,
+    },
+    RecordingStarted {
+        channel_id: String,
+        started_by: String,
+    },
+    RecordingStopped {
+        channel_id: String,
+    },
+
+    // v0.10.0: Message Scheduling (send later)
+    ScheduleMessage {
+        channel_id: String,
+        content: String,
+        send_at: i64,
+    },
+    MessageScheduled {
+        schedule_id: String,
+        channel_id: String,
+        content: String,
+        send_at: i64,
+    },
+    CancelScheduledMessage {
+        schedule_id: String,
+    },
+    ScheduledMessageCancelled {
+        schedule_id: String,
+    },
+
+    // v0.10.0: Welcome Message
+    SetWelcomeMessage {
+        message: String,
+    },
+    WelcomeMessageChanged {
+        message: String,
+    },
+
+    // v0.10.0: Account management
+    DeleteAccount,
+    AccountDeleted,
+    SetDisplayName {
+        name: String,
+    },
+    DisplayNameChanged {
+        user_id: String,
+        name: String,
+    },
+
+    // Server discovery
+    SetSpacePublic {
+        is_public: bool,
+    },
+    SpacePublicChanged {
+        is_public: bool,
+    },
+    BrowsePublicSpaces,
+    PublicSpaceList {
+        spaces: Vec<PublicSpaceInfo>,
+    },
+
+    // Favorite channels
+    ToggleFavoriteChannel {
+        channel_id: String,
+    },
+
+    // Voice notes (async voice messages)
+    SendVoiceNote {
+        channel_id: String,
+        #[serde(default)]
+        duration_secs: u32,
+        data: Vec<u8>,
+    },
+    VoiceNote {
+        channel_id: String,
+        message: TextMessageData,
+        #[serde(default)]
+        duration_secs: u32,
+    },
+
+    // Reactions with user info
+    MessageReacted {
+        channel_id: String,
+        message_id: String,
+        emoji: String,
+        reactor_name: String,
+        count: u32,
+    },
+}
+
+/// Public space info for the discovery/browse listing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicSpaceInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub invite_code: String,
+    pub member_count: u32,
+    pub channel_count: u32,
+    #[serde(default)]
+    pub online_count: u32,
+}
+
+/// Auto-moderation filter word entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomodWord {
+    pub word: String,
+    pub action: String,
+}
+
+/// A scheduled event in a space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledEvent {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub start_time: i64,
+    #[serde(default)]
+    pub end_time: i64,
+    pub creator_name: String,
+    #[serde(default)]
+    pub interested_count: u32,
+    #[serde(default)]
+    pub is_interested: bool,
 }
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
@@ -1009,6 +1287,9 @@ pub struct TextMessageData {
     pub attachment_name: Option<String>,
     #[serde(default)]
     pub attachment_size: Option<u32>,
+    /// First URL found in message content (for link preview card)
+    #[serde(default)]
+    pub link_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1028,6 +1309,18 @@ pub struct SpaceSearchResult {
 pub const SAMPLE_RATE: u32 = 48000;
 pub const CHANNELS: u16 = 1;
 pub const FRAME_SIZE: usize = 960; // 20ms at 48kHz
+
+/// Extract the first URL (http:// or https://) from message content.
+pub fn extract_first_url(content: &str) -> Option<String> {
+    for word in content.split_whitespace() {
+        if word.starts_with("http://") || word.starts_with("https://") {
+            // Strip trailing punctuation that's likely not part of the URL
+            let trimmed = word.trim_end_matches(|c: char| matches!(c, ',' | '.' | ')' | ']' | '>' | ';'));
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
 
 #[cfg(test)]
 mod tests {
@@ -1313,11 +1606,13 @@ mod tests {
             space: SpaceInfo {
                 id: "s1".into(),
                 name: "Test Space".into(),
+                description: String::new(),
                 invite_code: "XyZ12345".into(),
                 member_count: 1,
                 channel_count: 1,
                 is_owner: true,
                 self_role: SpaceRole::Owner,
+                is_public: false,
             },
             channels: vec![ChannelInfo {
                 id: "c1".into(),
@@ -1329,7 +1624,7 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0, position: 0,
+                slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1352,11 +1647,13 @@ mod tests {
             space: SpaceInfo {
                 id: "s2".into(),
                 name: "Fun Space".into(),
+                description: String::new(),
                 invite_code: "Abc12345".into(),
                 member_count: 2,
                 channel_count: 1,
                 is_owner: false,
                 self_role: SpaceRole::Member,
+                is_public: false,
             },
             channels: vec![ChannelInfo {
                 id: "c1".into(),
@@ -1368,7 +1665,7 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0, position: 0,
+                slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
             }],
             members: vec![MemberInfo {
                 id: "p1".into(),
@@ -1381,7 +1678,10 @@ mod tests {
                 bio: String::new(),
                 nickname: None,
                 status_preset: UserStatus::Online,
+                role_color: String::new(),
+                activity: String::new(),
             }],
+            welcome_message: Some("Welcome to the space!".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
@@ -1390,12 +1690,14 @@ mod tests {
                 space,
                 channels,
                 members,
+                welcome_message,
             } => {
                 assert_eq!(space.id, "s2");
                 assert_eq!(space.member_count, 2);
                 assert_eq!(channels.len(), 1);
                 assert_eq!(members.len(), 1);
                 assert_eq!(members[0].channel_id.as_deref(), Some("c1"));
+                assert_eq!(welcome_message.as_deref(), Some("Welcome to the space!"));
             }
             _ => panic!("Wrong variant"),
         }
@@ -1548,6 +1850,7 @@ mod tests {
                 forwarded_from: None,
                 attachment_name: None,
                 attachment_size: None,
+                link_url: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -1837,6 +2140,7 @@ mod tests {
             forwarded_from: Some("general".into()),
             attachment_name: None,
             attachment_size: None,
+            link_url: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: TextMessageData = serde_json::from_str(&json).unwrap();
@@ -1861,6 +2165,8 @@ mod tests {
             bio: "hello world".into(),
             nickname: Some("Ally".into()),
             status_preset: UserStatus::DoNotDisturb,
+            role_color: String::new(),
+            activity: String::new(),
         };
         let json = serde_json::to_string(&member).unwrap();
         let decoded: MemberInfo = serde_json::from_str(&json).unwrap();

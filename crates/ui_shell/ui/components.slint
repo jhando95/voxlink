@@ -130,6 +130,7 @@ export component VxInput inherits Rectangle {
     in-out property <string> text <=> inner.text;
     in property <string> placeholder: "";
     in property <InputType> input-type: InputType.text;
+    in property <bool> enabled: true;
     callback accepted();
 
     height: 36px;
@@ -138,6 +139,7 @@ export component VxInput inherits Rectangle {
     border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
     border-width: inner.has-focus ? 2px : 1px;
     clip: true;
+    opacity: root.enabled ? 1.0 : 0.5;
 
     animate border-color { duration: 100ms; easing: ease-out; }
     animate border-width { duration: 100ms; easing: ease-out; }
@@ -155,6 +157,7 @@ export component VxInput inherits Rectangle {
         height: parent.height - 14px;
         placeholder-text: root.placeholder;
         input-type: root.input-type;
+        enabled: root.enabled;
         accepted => { root.accepted(); }
     }
 }
@@ -236,8 +239,12 @@ export component AccentBar inherits Rectangle {
 
 export component VxStatusPill inherits Rectangle {
     in property <string> label: "";
-    in property <color> tone: VxTheme.accent;
-    in property <color> fill: VxTheme.accent-subtle;
+    /// Semantic kind: "warning", "danger", "success", or default (accent).
+    in property <string> kind: "";
+    in property <color> tone: kind == "warning" ? VxTheme.warning :
+                               kind == "danger"  ? VxTheme.danger  :
+                               kind == "success" ? VxTheme.success : VxTheme.accent;
+    in property <color> fill: root.tone.transparentize(0.82);
 
     height: 24px;
     border-radius: VxTheme.radius-pill;
@@ -930,7 +937,7 @@ export component VxAvatar inherits Rectangle {
     border-radius: root.avatar-size * VxTheme.avatar-roundness;
     background: VxTheme.avatar-color(root.color-index);
     border-color: root.is-speaking ? VxTheme.speaking-border : VxTheme.bg-panel;
-    border-width: root.is-speaking ? (VxTheme.btn-border-width + 1px) : 1px;
+    border-width: root.is-speaking ? (VxTheme.btn-border-width + 2px) : 1px;
     clip: true;
 
     animate border-color { duration: 180ms; }

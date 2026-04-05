@@ -438,6 +438,21 @@ export component SystemView inherits Rectangle {
                                     fill: root.live-friends-count > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
                                 }
                             }
+                            if root.favorite-friends.length == 0 : VerticalLayout {
+                                spacing: 4px;
+                                padding-top: 4px;
+                                Text {
+                                    text: "No friends yet";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: "Add a friend to get started.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                }
+                            }
                             if root.favorite-friends.length > 0 : VerticalLayout {
                                 spacing: 8px;
                                 for friend in root.favorite-friends : Rectangle {
@@ -475,6 +490,11 @@ export component SystemView inherits Rectangle {
                                                     color: VxTheme.text-muted;
                                                     font-size: 9px;
                                                     overflow: elide;
+                                                }
+                                                if !friend.is-online && friend.last-seen != "" : Text {
+                                                    text: friend.last-seen;
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 8px;
                                                 }
                                             }
                                             VxStatusPill {
@@ -915,6 +935,21 @@ export component SystemView inherits Rectangle {
                                 fill: root.incoming-friend-requests.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
                             }
                         }
+                        if root.favorite-friends.length == 0 : VerticalLayout {
+                            spacing: 4px;
+                            padding-top: 4px;
+                            Text {
+                                text: "No friends yet";
+                                color: VxTheme.text-secondary;
+                                font-size: 11px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "Add a friend to get started.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+                        }
                         if root.favorite-friends.length > 0 : VerticalLayout {
                             spacing: 6px;
                             for friend in root.favorite-friends : Rectangle {
@@ -970,6 +1005,11 @@ export component SystemView inherits Rectangle {
                                             color: friend.is-in-voice ? VxTheme.speaking-border :
                                                    friend.is-online ? VxTheme.accent : VxTheme.text-muted;
                                             font-size: 9px;
+                                        }
+                                        if !friend.is-online && friend.last-seen != "" : Text {
+                                            text: friend.last-seen;
+                                            color: VxTheme.text-muted;
+                                            font-size: 8px;
                                         }
                                     }
 

@@ -51,8 +51,10 @@ pub fn process_signals(
             }
             SignalMessage::PeerJoined { peer } => {
                 room::handle_peer_joined(w, state, peer, &ctx.audio);
-                // Desktop notification for peer join
-                if w.get_notifications_enabled() {
+                // Notify only when not viewing the room; suppress in DND mode
+                let in_room_view = w.get_current_view() == ui_shell::view_to_index(shared_types::AppView::Room);
+                let is_dnd = w.get_status_preset() == 2;
+                if w.get_notifications_enabled() && !in_room_view && !is_dnd {
                     crate::helpers::send_notification("Voxlink", &format!("{} joined", peer.name));
                 }
             }
@@ -100,6 +102,7 @@ pub fn process_signals(
                     ui_shell::set_members(w, &[]);
                     ui_shell::set_space_audit_log(w, &[]);
                     w.set_status_text("Saved space no longer exists on the server".into());
+                    crate::helpers::show_toast(w, "Space no longer exists on the server", 2);
                     // Stop audio if it was running (user may have been in a channel)
                     if *ctx.audio_started.borrow() {
                         *ctx.audio_started.borrow_mut() = false;
@@ -114,7 +117,7 @@ pub fn process_signals(
                     continue;
                 }
                 log::error!("Server error: {message}");
-                w.set_status_text(format!("Error: {message}").into());
+                crate::helpers::show_toast(w, &format!("Error: {message}"), 3);
             }
             SignalMessage::SpaceCreated { space, channels } => {
                 space::handle_space_created(w, state, space, channels);
@@ -123,8 +126,9 @@ pub fn process_signals(
                 space,
                 channels,
                 members,
+                welcome_message,
             } => {
-                space::handle_space_joined(w, state, space, channels, members);
+                space::handle_space_joined(w, state, space, channels, members, welcome_message);
             }
             SignalMessage::ChannelCreated { channel } => {
                 channel::handle_channel_created(w, state, channel);
@@ -187,6 +191,20 @@ pub fn process_signals(
             }
             SignalMessage::SpaceDeleted => {
                 space::handle_space_deleted(w, state, ctx);
+            }
+            SignalMessage::SpaceRenamed { name } => {
+                let mut s = state.borrow_mut();
+                if let Some(ref mut space) = s.space {
+                    space.name = name.clone();
+                }
+                w.set_current_space_name(name.into());
+            }
+            SignalMessage::SpaceDescriptionChanged { description } => {
+                let mut s = state.borrow_mut();
+                if let Some(ref mut space) = s.space {
+                    space.description = description.clone();
+                }
+                w.set_space_description(description.into());
             }
             SignalMessage::TextChannelSelected {
                 channel_id,
@@ -318,6 +336,7 @@ pub fn process_signals(
             // Moderation (Milestone 6)
             SignalMessage::Kicked { reason } => {
                 log::warn!("Kicked: {reason}");
+                crate::helpers::show_toast(w, &format!("Kicked: {reason}"), 3);
                 // Clean up space/room state
                 {
                     let mut s = state.borrow_mut();
@@ -365,6 +384,8 @@ pub fn process_signals(
                 w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
                     slint::Rgba8Pixel,
                 >::new(1, 1)));
+                w.set_recording_active(false);
+                w.set_recording_user(slint::SharedString::default());
                 ui_shell::set_channels(w, &[]);
                 ui_shell::set_members(w, &[]);
                 ui_shell::set_space_audit_log(w, &[]);
@@ -379,17 +400,29 @@ pub fn process_signals(
                     aud.stop_capture();
                     aud.stop_playback();
                 });
-                if w.get_notifications_enabled() {
+                if w.get_notifications_enabled() && w.get_status_preset() != 2 {
                     crate::helpers::send_notification("Voxlink", reason);
                 }
             }
             SignalMessage::MemberMuted { member_id, muted } => {
                 room::handle_peer_mute_changed(w, state, member_id, *muted);
             }
+            SignalMessage::MemberServerDeafened { member_id, deafened } => {
+                log::info!("Member {member_id} server-deafened: {deafened}");
+                w.set_status_text(
+                    if *deafened {
+                        format!("Member server-deafened")
+                    } else {
+                        format!("Member server-undeafened")
+                    }
+                    .into(),
+                );
+            }
             SignalMessage::ServerShutdown => {
                 log::info!("Server is shutting down");
                 w.set_status_text("Server restarting, reconnecting...".into());
                 w.set_room_status("Server restarting...".into());
+                crate::helpers::show_toast(w, "Server restarting, reconnecting...", 2);
             }
             SignalMessage::SearchResults {
                 channel_id,
@@ -433,6 +466,10 @@ pub fn process_signals(
                 channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
                     ch.slow_mode_secs = *slow_mode_secs;
                 });
+                // Update live countdown if viewing this channel
+                if w.get_chat_channel_id() == channel_id.as_str() && !w.get_chat_is_direct_message() {
+                    w.set_slow_mode_secs(*slow_mode_secs as i32);
+                }
             }
             SignalMessage::ChannelCategoryChanged {
                 channel_id,
@@ -448,6 +485,14 @@ pub fn process_signals(
             } => {
                 channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
                     ch.status = status.clone();
+                });
+            }
+            SignalMessage::ChannelAutoDeleteChanged {
+                channel_id,
+                auto_delete_hours,
+            } => {
+                channel::handle_channel_setting_changed(w, state, channel_id, |ch| {
+                    ch.auto_delete_hours = *auto_delete_hours;
                 });
             }
             SignalMessage::PrioritySpeakerChanged { peer_id, enabled } => {
@@ -469,10 +514,12 @@ pub fn process_signals(
             SignalMessage::UserBlocked { user_id } => {
                 log::info!("Blocked user: {user_id}");
                 w.set_status_text("Blocked user".to_string().into());
+                crate::helpers::show_toast(w, "User blocked", 1);
             }
             SignalMessage::UserUnblocked { user_id } => {
                 log::info!("Unblocked user: {user_id}");
                 w.set_status_text("Unblocked user".to_string().into());
+                crate::helpers::show_toast(w, "User unblocked", 1);
             }
             // v0.8.0: Ban list
             SignalMessage::BanList { bans } => {
@@ -490,7 +537,7 @@ pub fn process_signals(
                 sender_name,
                 preview,
             } => {
-                if w.get_notifications_enabled() {
+                if w.get_notifications_enabled() && w.get_status_preset() != 2 {
                     crate::helpers::send_notification(
                         &format!("{sender_name} in #{channel_name}"),
                         preview,
@@ -591,6 +638,7 @@ pub fn process_signals(
                 w.set_is_logged_in(true);
                 w.set_show_login_view(false);
                 w.set_auth_error(slint::SharedString::default());
+                crate::helpers::show_toast(w, "Account created", 1);
                 if !token.is_empty() {
                     crate::helpers::save_auth_token_async(token.clone());
                 }
@@ -614,6 +662,7 @@ pub fn process_signals(
                 w.set_show_login_view(false);
                 w.set_auth_error(slint::SharedString::default());
                 w.set_user_name(display_name.as_str().into());
+                crate::helpers::show_toast(w, &format!("Welcome back, {display_name}"), 1);
                 if !token.is_empty() {
                     crate::helpers::save_auth_token_async(token.clone());
                 }
@@ -634,6 +683,7 @@ pub fn process_signals(
             SignalMessage::AuthError { message } => {
                 log::warn!("Auth error: {message}");
                 w.set_auth_error(message.as_str().into());
+                crate::helpers::show_toast(w, &format!("Auth error: {message}"), 3);
             }
             SignalMessage::LoggedOut => {
                 log::info!("Logged out");
@@ -641,12 +691,15 @@ pub fn process_signals(
                 w.set_is_logged_in(false);
                 w.set_account_email(slint::SharedString::default());
                 crate::helpers::clear_auth_token_async();
+                crate::helpers::show_toast(w, "Logged out", 0);
             }
             SignalMessage::PasswordChanged => {
                 log::info!("Password changed successfully");
+                crate::helpers::show_toast(w, "Password changed", 1);
             }
             SignalMessage::AllSessionsRevoked => {
                 log::info!("All sessions revoked — current session re-authenticated");
+                crate::helpers::show_toast(w, "All other sessions revoked", 1);
             }
             SignalMessage::ChannelsReordered { channel_ids } => {
                 let mut s = state.borrow_mut();
@@ -670,6 +723,193 @@ pub fn process_signals(
                     let s = state.borrow();
                     if let Some(ref space) = s.space {
                         ui_shell::set_channels(w, &space.channels);
+                    }
+                }
+            }
+            // v0.10.0: Role colors
+            SignalMessage::RoleColorChanged { role, color } => {
+                member::handle_role_color_changed(w, state, *role, color);
+            }
+            // v0.10.0: Activity status
+            SignalMessage::ActivityChanged { member_id, activity } => {
+                member::handle_activity_changed(w, state, member_id, activity);
+            }
+            // v0.10.0: Display name / account management
+            SignalMessage::DisplayNameChanged { user_id, name } => {
+                log::info!("Display name changed for {user_id}: {name}");
+                // Show toast if it's our own display name change
+                if state.borrow().self_user_id.as_deref() == Some(user_id.as_str()) {
+                    w.set_user_name(name.as_str().into());
+                    crate::helpers::show_toast(w, "Display name updated", 1);
+                }
+            }
+            SignalMessage::AccountDeleted => {
+                log::info!("Account deleted");
+                state.borrow_mut().self_user_id = None;
+                w.set_is_logged_in(false);
+                crate::helpers::clear_auth_token_async();
+                crate::helpers::show_toast(w, "Account deleted", 1);
+            }
+            // v0.10.0: Scheduled events
+            SignalMessage::ScheduledEventCreated { event } => {
+                log::info!("Scheduled event created: {} ({})", event.title, event.id);
+                let new_data = ui_shell::scheduled_event_to_data(event);
+                let model: slint::ModelRc<ui_shell::ScheduledEventData> =
+                    w.get_scheduled_events();
+                if let Some(vec_model) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::ScheduledEventData>>()
+                {
+                    vec_model.push(new_data);
+                } else {
+                    // Model is empty default — replace with a new VecModel
+                    let vm = slint::VecModel::from(vec![new_data]);
+                    w.set_scheduled_events(
+                        std::rc::Rc::new(vm).into(),
+                    );
+                }
+            }
+            SignalMessage::ScheduledEventDeleted { event_id } => {
+                log::info!("Scheduled event deleted: {event_id}");
+                let model: slint::ModelRc<ui_shell::ScheduledEventData> =
+                    w.get_scheduled_events();
+                if let Some(vec_model) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::ScheduledEventData>>()
+                {
+                    for i in 0..vec_model.row_count() {
+                        if vec_model.row_data(i).map_or(false, |e| e.id == event_id.as_str()) {
+                            vec_model.remove(i);
+                            break;
+                        }
+                    }
+                }
+            }
+            SignalMessage::EventInterestUpdated {
+                event_id,
+                interested_count,
+                is_interested,
+            } => {
+                log::info!(
+                    "Event interest updated: {event_id} — count={interested_count}, self={is_interested}"
+                );
+                let model: slint::ModelRc<ui_shell::ScheduledEventData> =
+                    w.get_scheduled_events();
+                if let Some(vec_model) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::ScheduledEventData>>()
+                {
+                    for i in 0..vec_model.row_count() {
+                        if let Some(mut evt) = vec_model.row_data(i) {
+                            if evt.id == event_id.as_str() {
+                                evt.interested_count = *interested_count as i32;
+                                evt.is_interested = *is_interested;
+                                vec_model.set_row_data(i, evt);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            SignalMessage::ScheduledEventList { events } => {
+                log::info!("Received scheduled event list: {} events", events.len());
+                ui_shell::set_scheduled_events(w, events);
+            }
+            // v0.10.0: Recording
+            SignalMessage::RecordingStarted {
+                channel_id,
+                started_by,
+            } => {
+                log::info!("Recording started in channel {channel_id} by {started_by}");
+                w.set_recording_active(true);
+                w.set_recording_user(started_by.as_str().into());
+            }
+            SignalMessage::RecordingStopped { channel_id } => {
+                log::info!("Recording stopped in channel {channel_id}");
+                w.set_recording_active(false);
+                w.set_recording_user(slint::SharedString::default());
+            }
+            // v0.10.0: Welcome message
+            SignalMessage::WelcomeMessageChanged { message } => {
+                log::info!("Welcome message updated: {message}");
+                w.set_welcome_message(message.as_str().into());
+            }
+            // v0.10.0: Message scheduling
+            SignalMessage::MessageScheduled {
+                schedule_id,
+                channel_id,
+                content,
+                send_at,
+            } => {
+                log::info!(
+                    "Message scheduled: {schedule_id} in {channel_id} at {send_at} — {content}"
+                );
+            }
+            SignalMessage::ScheduledMessageCancelled { schedule_id } => {
+                log::info!("Scheduled message cancelled: {schedule_id}");
+            }
+            // Server discovery
+            SignalMessage::PublicSpaceList { spaces } => {
+                log::info!("Received {} public spaces", spaces.len());
+                let items: Vec<ui_shell::PublicSpaceData> = spaces.iter().map(|s| {
+                    let initial = s.name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                    let ci = s.name.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32)) % 8;
+                    ui_shell::PublicSpaceData {
+                        id: s.id.clone().into(),
+                        name: s.name.clone().into(),
+                        description: s.description.clone().into(),
+                        invite_code: s.invite_code.clone().into(),
+                        member_count: s.member_count as i32,
+                        channel_count: s.channel_count as i32,
+                        online_count: s.online_count as i32,
+                        initial: initial.into(),
+                        color_index: ci as i32,
+                    }
+                }).collect();
+                let model = Rc::new(slint::VecModel::from(items));
+                w.set_public_spaces(slint::ModelRc::from(model));
+            }
+            SignalMessage::SpacePublicChanged { is_public } => {
+                log::info!("Space public status changed: {is_public}");
+                w.set_is_space_public(*is_public);
+            }
+            SignalMessage::MessageReacted { channel_id, message_id, emoji, reactor_name, count } => {
+                log::info!("Reaction {emoji} on {message_id} in {channel_id} by {reactor_name} (count: {count})");
+            }
+            // Auto-moderation word filter
+            SignalMessage::AutomodWordList { words } => {
+                log::info!("Received automod word list: {} entries", words.len());
+                ui_shell::set_automod_words(w, words);
+            }
+            SignalMessage::AutomodWordAdded { word, action } => {
+                log::info!("Automod word added: {word} (action: {action})");
+                let model: slint::ModelRc<ui_shell::AutomodWordData> = w.get_automod_words();
+                let new_item = ui_shell::AutomodWordData {
+                    word: word.as_str().into(),
+                    action: action.as_str().into(),
+                };
+                if let Some(vec_model) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::AutomodWordData>>()
+                {
+                    vec_model.push(new_item);
+                } else {
+                    let vm = slint::VecModel::from(vec![new_item]);
+                    w.set_automod_words(Rc::new(vm).into());
+                }
+            }
+            SignalMessage::AutomodWordRemoved { word } => {
+                log::info!("Automod word removed: {word}");
+                let model: slint::ModelRc<ui_shell::AutomodWordData> = w.get_automod_words();
+                if let Some(vec_model) = model
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<ui_shell::AutomodWordData>>()
+                {
+                    for i in 0..vec_model.row_count() {
+                        if vec_model.row_data(i).map_or(false, |e| e.word == word.as_str()) {
+                            vec_model.remove(i);
+                            break;
+                        }
                     }
                 }
             }

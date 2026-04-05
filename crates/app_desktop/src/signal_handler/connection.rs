@@ -162,6 +162,7 @@ pub fn check_connection(
 
         w.set_status_text("Reconnecting...".into());
         w.set_room_status("Connection lost, reconnecting...".into());
+        crate::helpers::show_toast(w, "Connection lost \u{2014} reconnecting...", 2);
         w.set_has_screen_share(false);
         w.set_is_sharing_screen(false);
         w.set_screen_share_owner_name(slint::SharedString::default());
@@ -177,6 +178,7 @@ pub fn check_connection(
     if connected && !prev_connected {
         w.set_status_text("Connected".into());
         w.set_room_status(slint::SharedString::default());
+        crate::helpers::show_toast(w, "Reconnected", 1);
 
         // Snapshot all UI state atomically before spawning async task.
         // This prevents the race where user navigates away between snapshot

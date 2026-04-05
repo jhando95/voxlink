@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use device_query::Keycode;
 use shared_types::MicMode;
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
@@ -130,7 +131,12 @@ fn main() {
         config.member_widget_x.zip(config.member_widget_y),
     );
     friends::load_from_config(&window, &state, config.favorite_friends.clone());
-    direct_messages::load_from_config(&window, &state, config.recent_direct_messages.clone());
+    direct_messages::load_from_config_filtered(
+        &window,
+        &state,
+        config.recent_direct_messages.clone(),
+        &config.closed_dm_user_ids,
+    );
     if config.member_widget_visible {
         let _ = ui_shell::ensure_member_widget();
         {
@@ -173,6 +179,22 @@ fn main() {
     let mute_key = Rc::new(RefCell::new(resolve_combo(&config.mute_key, "m")));
     let deafen_key = Rc::new(RefCell::new(resolve_combo(&config.deafen_key, "d")));
 
+    // Pre-parse soundboard keybinds: Vec<(clip_index, combo)>
+    let soundboard_combos: Rc<RefCell<Vec<(usize, Vec<Keycode>)>>> = {
+        let combos: Vec<(usize, Vec<Keycode>)> = config
+            .soundboard_clips
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, clip)| {
+                clip.keybind.as_ref().and_then(|kb| {
+                    let combo = tick_loop::keys::parse_combo(kb);
+                    if combo.is_empty() { None } else { Some((idx, combo)) }
+                })
+            })
+            .collect();
+        Rc::new(RefCell::new(combos))
+    };
+
     // Set keybind display names on UI
     set_key_display(&window, &ptt_key, &mute_key, &deafen_key);
 
@@ -189,7 +211,21 @@ fn main() {
     window.set_show_spoilers(config.show_spoilers);
     window.set_compact_chat(config.compact_chat);
     window.set_streamer_mode(config.streamer_mode);
-    window.set_first_run(config.auth_token.is_none());
+    window.set_desktop_notifications(config.desktop_notifications);
+    window.set_status_preset(match config.status_preset.as_str() {
+        "idle" => 1,
+        "dnd" => 2,
+        "invisible" => 3,
+        _ => 0,
+    });
+    window.set_notification_sound_index(match config.notification_sound.as_str() {
+        "subtle" => 1,
+        "chime" => 2,
+        "none" => 3,
+        _ => 0,
+    });
+    window.set_idle_timeout_mins(config.idle_timeout_mins as i32);
+    window.set_first_run(config.auth_token.is_none() && !config.first_run_completed);
     if let Some(ref email) = config.account_email {
         window.set_is_logged_in(true);
         window.set_account_email(email.as_str().into());
@@ -240,6 +276,7 @@ fn main() {
         ptt_key,
         mute_key,
         deafen_key,
+        soundboard_combos,
     );
 
     // M7B: Check for updates in background
@@ -514,11 +551,13 @@ fn apply_config(
             .map(|s| shared_types::SpaceInfo {
                 id: s.id.clone(),
                 name: s.name.clone(),
+                description: String::new(),
                 invite_code: s.invite_code.clone(),
                 member_count: 0,
                 channel_count: 0,
                 is_owner: false,
                 self_role: shared_types::SpaceRole::Member,
+                is_public: false,
             })
             .collect();
         ui_shell::set_spaces(window, &space_infos);
@@ -532,6 +571,11 @@ fn apply_config(
             .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
             .collect();
         ui_shell::set_soundboard_clips(window, &clip_tuples);
+    }
+
+    // Load recent reactions into the emoji picker quick-access
+    if !config.recent_reactions.is_empty() {
+        ui_shell::set_recent_reactions(window, &config.recent_reactions);
     }
 }
 

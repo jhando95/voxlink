@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { AuditEntryData, ChannelData, MemberData, VxTheme } from "../theme.slint";
+import { AuditEntryData, AutomodWordData, ChannelData, MemberData, ScheduledEventData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
 
 export component SpaceView inherits Rectangle {
@@ -18,6 +18,7 @@ export component SpaceView inherits Rectangle {
     in-out property <string> search-query: "";
     in property <int> visible-text-channels: 0;
     in property <int> visible-voice-channels: 0;
+    in property <int> visible-favorite-channels: 0;
     in property <int> visible-members: 0;
     in-out property <string> new-channel-name: "";
     in-out property <bool> new-channel-is-voice: true;
@@ -34,8 +35,13 @@ export component SpaceView inherits Rectangle {
     callback join-channel(string);
     callback create-channel();
     callback delete-channel(string);
+    callback move-channel-up(string);
+    callback move-channel-down(string);
     callback leave-space();
     callback delete-space();
+    callback rename-space(string);
+    callback set-space-description(string);
+    in property <string> space-description: "";
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
@@ -46,6 +52,7 @@ export component SpaceView inherits Rectangle {
     callback timeout-member(string, int);
     callback set-channel-user-limit(string, int);
     callback set-channel-slow-mode(string, int);
+    callback set-channel-auto-delete(string, int);
     callback set-channel-category(string, string);
     callback set-channel-status(string, string);
     callback save-user-note(string, string);
@@ -60,7 +67,29 @@ export component SpaceView inherits Rectangle {
     callback remove-friend(string);
     callback open-direct-message(string);
     callback toggle-category-collapse(string);
+    callback toggle-favorite-channel(string);
+    callback set-channel-notification(/* channel_id */ string, /* setting: "all"/"mentions"/"none" */ string);
+    in-out property <string> notification-popup-channel-id: "";
     in property <bool> unread-pulse: false;
+    in property <bool> streamer-mode: false;
+    in-out property <string> expanded-member-id: "";
+    in property <int> focused-channel-index: -1;
+    // Scheduled events
+    in property <[ScheduledEventData]> scheduled-events: [];
+    callback create-event(string, string, int);
+    callback delete-event(string);
+    callback toggle-event-interest(string);
+    callback list-events();
+    in-out property <bool> show-events-panel: false;
+    // Auto-moderation word filter
+    in property <[AutomodWordData]> automod-words: [];
+    callback add-automod-word(string, string);
+    callback remove-automod-word(string);
+    callback list-automod-words();
+    in-out property <string> automod-word-input: "";
+    in-out property <int> automod-action-index: 0; // 0=delete, 1=warn
+    in property <bool> is-space-public: false;
+    callback set-space-public(bool);
 
     background: transparent;
 
@@ -85,65 +114,23 @@ export component SpaceView inherits Rectangle {
                         font-weight: 700;
                     }
                     Text {
-                        text: "Channels, members, and chat in one focused workspace.";
+                        text: root.space-description != ""
+                            ? root.space-description
+                            : "Channels, members, and chat in one focused workspace.";
                         color: VxTheme.text-muted;
                         font-size: 10px;
                     }
-                    VxStatusPill {
-                        label: root.space-role-label + " access";
-                        tone: VxTheme.accent;
-                        fill: VxTheme.accent-subtle;
-                    }
                     HorizontalLayout {
                         spacing: 8px;
-                        VxInput {
-                            text <=> root.user-status-input;
-                            placeholder: "Set your status";
-                            horizontal-stretch: 1;
-                            accepted => {
-                                if root.user-status-input != "" {
-                                    root.set-user-status(root.user-status-input);
-                                    root.user-status-input = "";
-                                }
-                            }
+                        VxStatusPill {
+                            label: root.space-role-label;
+                            tone: VxTheme.accent;
+                            fill: VxTheme.accent-subtle;
                         }
-                        VxButton {
-                            label: "Set";
-                            small: true;
-                            soft: true;
-                            enabled: root.user-status-input != "";
-                            clicked => {
-                                if root.user-status-input != "" {
-                                    root.set-user-status(root.user-status-input);
-                                    root.user-status-input = "";
-                                }
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        VxInput {
-                            text <=> root.user-bio-input;
-                            placeholder: "Set your bio";
-                            horizontal-stretch: 1;
-                            accepted => {
-                                if root.user-bio-input != "" {
-                                    root.set-profile(root.user-bio-input);
-                                    root.user-bio-input = "";
-                                }
-                            }
-                        }
-                        VxButton {
-                            label: "Save";
-                            small: true;
-                            soft: true;
-                            enabled: root.user-bio-input != "";
-                            clicked => {
-                                if root.user-bio-input != "" {
-                                    root.set-profile(root.user-bio-input);
-                                    root.user-bio-input = "";
-                                }
-                            }
+                        VxStatusPill {
+                            label: root.visible-members + " online";
+                            tone: VxTheme.success;
+                            fill: VxTheme.success-dim;
                         }
                     }
                 }
@@ -166,45 +153,22 @@ export component SpaceView inherits Rectangle {
                 }
             }
 
-            VxCard {
-                VerticalLayout {
-                    padding: 18px;
-                    spacing: 12px;
-                    SectionLabel { text: "DISCOVER"; }
-
-                    VxInput {
-                        text <=> root.search-query;
-                        placeholder: "Filter channels or members";
-                        horizontal-stretch: 1;
-                    }
-
-                    HorizontalLayout {
-                        spacing: 8px;
-                        VxStatusPill {
-                            label: root.visible-text-channels + " text";
-                            tone: VxTheme.accent;
-                            fill: VxTheme.accent-subtle;
-                        }
-                        VxStatusPill {
-                            label: root.visible-voice-channels + " voice";
-                            tone: VxTheme.success;
-                            fill: VxTheme.success-dim;
-                        }
-                        VxStatusPill {
-                            label: root.visible-members + " members";
-                            tone: VxTheme.warning;
-                            fill: VxTheme.warning-soft;
-                        }
-                    }
-
-                    Text {
-                        text: root.search-query == ""
-                            ? "Use filters to jump straight to the right channel or teammate."
-                            : "Results update instantly without reloading the space.";
-                        color: VxTheme.text-muted;
-                        font-size: 10px;
-                        wrap: word-wrap;
-                    }
+            HorizontalLayout {
+                spacing: 8px;
+                VxInput {
+                    text <=> root.search-query;
+                    placeholder: "Search channels and members...";
+                    horizontal-stretch: 1;
+                }
+                VxStatusPill {
+                    label: root.visible-text-channels + " text";
+                    tone: VxTheme.accent;
+                    fill: VxTheme.accent-subtle;
+                }
+                VxStatusPill {
+                    label: root.visible-voice-channels + " voice";
+                    tone: VxTheme.success;
+                    fill: VxTheme.success-dim;
                 }
             }
 
@@ -215,21 +179,102 @@ export component SpaceView inherits Rectangle {
                     horizontal-stretch: 1;
                     spacing: 12px;
 
+                    // ── Favorite channels (wide) ──
+                    if root.visible-favorite-channels > 0 : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 12px;
+                            SectionLabel { text: "FAVORITES"; }
+
+                            for channel in root.channels : Rectangle {
+                                visible: channel.is-favorite && !channel.is-category-header;
+                                height: channel.is-favorite && !channel.is-category-header ? 48px : 0px;
+                                border-radius: VxTheme.radius-card;
+                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                            fav-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: channel.is-active ? VxTheme.accent-border : VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                fav-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if channel.is-voice {
+                                            root.join-channel(channel.id);
+                                        } else {
+                                            root.select-text-channel(channel.id);
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    height: 48px;
+                                    spacing: 10px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "\u{2605}";
+                                        color: #f5c842;
+                                        font-size: 14px;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: channel.is-voice ? "\u{1F50A}" : "#";
+                                        color: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                                        font-size: 12px;
+                                        font-weight: 800;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: channel.name;
+                                        color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    if channel.unread-count > 0 : VxStatusPill {
+                                        label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                    if channel.is-voice && channel.peer-count > 0 : VxStatusPill {
+                                        label: channel.peer-count + " live";
+                                        tone: VxTheme.success;
+                                        fill: VxTheme.success-dim;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
                             SectionLabel { text: "TEXT CHANNELS"; }
 
-                            if root.visible-text-channels == 0 : Text {
-                                text: root.search-query == ""
-                                    ? "Create the first text channel to shape the space."
-                                    : "No text channels match this filter.";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
+                            if root.visible-text-channels == 0 : VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: root.search-query == ""
+                                        ? "No text channels yet"
+                                        : "No text channels match this filter.";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                if root.search-query == "" : Text {
+                                    text: "Create a channel to get started.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                }
                             }
 
-                            for channel in root.channels : Rectangle {
+                            for channel[idx] in root.channels : Rectangle {
+                                property <bool> is-focused: idx == root.focused-channel-index;
                                 height: channel.is-category-header ? 28px :
                                     channel.is-voice ? 0px :
                                     channel.category-collapsed ? 0px :
@@ -238,11 +283,12 @@ export component SpaceView inherits Rectangle {
                                     channel.category-collapsed ? false : !channel.is-voice;
                                 border-radius: channel.is-category-header ? 0px : VxTheme.radius-card;
                                 background: channel.is-category-header ? transparent :
+                                            is-focused ? VxTheme.surface-active :
                                             channel.is-active ? VxTheme.tab-active-bg :
                                             channel.unread-count > 0 ? VxTheme.accent-subtle :
                                             text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
                                 border-color: channel.is-category-header ? transparent :
-                                    channel.is-active || channel.unread-count > 0
+                                    is-focused || channel.is-active || channel.unread-count > 0
                                     ? VxTheme.accent-border
                                     : VxTheme.border-subtle;
                                 border-width: channel.is-category-header ? 0px : 1px;
@@ -263,6 +309,7 @@ export component SpaceView inherits Rectangle {
                                         font-size: 10px;
                                         font-weight: 800;
                                         letter-spacing: 0.5px;
+                                        overflow: elide;
                                     }
                                 }
 
@@ -279,11 +326,24 @@ export component SpaceView inherits Rectangle {
 
                                 if !channel.is-category-header : VerticalLayout {
                                     HorizontalLayout {
-                                        padding-left: 14px;
+                                        padding-left: 10px;
                                         padding-right: 14px;
                                         height: 58px;
-                                        spacing: 12px;
+                                        spacing: 8px;
                                         alignment: center;
+
+                                        TouchArea {
+                                            width: 18px;
+                                            mouse-cursor: pointer;
+                                            clicked => { root.toggle-favorite-channel(channel.id); }
+                                            Text {
+                                                text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
+                                                color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                                font-size: 14px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
 
                                         Rectangle {
                                             width: 36px;
@@ -297,11 +357,11 @@ export component SpaceView inherits Rectangle {
                                                 : VxTheme.border-subtle;
                                             border-width: 1px;
                                             Text {
-                                                text: "TXT";
+                                                text: "#";
                                                 color: channel.is-active || channel.unread-count > 0
                                                     ? VxTheme.accent
                                                     : VxTheme.text-secondary;
-                                                font-size: 10px;
+                                                font-size: 16px;
                                                 font-weight: 800;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
@@ -312,18 +372,39 @@ export component SpaceView inherits Rectangle {
                                             alignment: center;
                                             horizontal-stretch: 1;
                                             spacing: 2px;
-                                            Text {
-                                                text: channel.name;
-                                                color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
-                                                font-size: 12px;
-                                                font-weight: 700;
+                                            HorizontalLayout {
+                                                spacing: 4px;
+                                                alignment: start;
+                                                Text {
+                                                    text: channel.name;
+                                                    color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                                    font-size: 12px;
+                                                    font-weight: 700;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                    max-width: 180px;
+                                                }
+                                                // Notification override indicator
+                                                if channel.notification-setting == "none" : Text {
+                                                    text: "\u{00D7}";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 10px;
+                                                    vertical-alignment: center;
+                                                }
+                                                if channel.notification-setting == "mentions" : Text {
+                                                    text: "@";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                    font-weight: 700;
+                                                    vertical-alignment: center;
+                                                }
                                             }
                                             Text {
                                                 text: channel.topic != ""
                                                     ? channel.topic
                                                     : channel.unread-count > 0
                                                         ? channel.unread-count + " new messages"
-                                                        : channel.is-active ? "Recent conversation" : "Persistent text channel";
+                                                        : "";
                                                 color: VxTheme.text-muted;
                                                 font-size: 9px;
                                                 overflow: elide;
@@ -342,11 +423,138 @@ export component SpaceView inherits Rectangle {
                                             opacity: root.unread-pulse ? 0.6 : 1.0;
                                             animate opacity { duration: 600ms; easing: ease-in-out; }
                                         }
-                                        if channel.unread-count == 0 && channel.mention-count == 0 : VxStatusPill {
-                                            label: channel.is-active ? "Recent" : "Open";
-                                            tone: channel.is-active ? VxTheme.success : VxTheme.accent;
-                                            fill: channel.is-active ? VxTheme.success-dim : VxTheme.accent-subtle;
+                                        if channel.auto-delete-hours > 0 : VxStatusPill {
+                                            label: channel.auto-delete-hours + "h";
+                                            tone: VxTheme.warning;
+                                            fill: VxTheme.bg-soft;
                                         }
+
+                                        // ── Notification bell ──
+                                        Rectangle {
+                                            width: 22px;
+                                            height: 22px;
+                                            border-radius: 6px;
+                                            background: notif-bell-touch.has-hover ? VxTheme.btn-hover-bg : transparent;
+                                            notif-bell-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    if root.notification-popup-channel-id == channel.id {
+                                                        root.notification-popup-channel-id = "";
+                                                    } else {
+                                                        root.notification-popup-channel-id = channel.id;
+                                                    }
+                                                }
+                                            }
+                                            Text {
+                                                text: channel.notification-setting == "none" ? "\u{1F6AB}"
+                                                    : channel.notification-setting == "mentions" ? "\u{1F515}"
+                                                    : "\u{1F514}";
+                                                font-size: 12px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                color: channel.notification-setting == "none" ? VxTheme.text-muted
+                                                     : channel.notification-setting == "mentions" ? VxTheme.warning
+                                                     : VxTheme.text-secondary;
+                                            }
+                                        }
+                                        // Notification setting popup
+                                        if root.notification-popup-channel-id == channel.id : Rectangle {
+                                            width: 130px;
+                                            height: 84px;
+                                            border-radius: VxTheme.radius-card;
+                                            background: VxTheme.bg-card;
+                                            border-color: VxTheme.border-strong;
+                                            border-width: 1px;
+                                            VerticalLayout {
+                                                padding: 4px;
+                                                spacing: 2px;
+                                                // All
+                                                Rectangle {
+                                                    height: 24px;
+                                                    border-radius: 4px;
+                                                    background: (channel.notification-setting == "" || channel.notification-setting == "all")
+                                                        ? VxTheme.accent-subtle : notif-all-ta.has-hover ? VxTheme.row-hover-bg : transparent;
+                                                    notif-all-ta := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.set-channel-notification(channel.id, "all");
+                                                            root.notification-popup-channel-id = "";
+                                                        }
+                                                    }
+                                                    HorizontalLayout {
+                                                        padding-left: 8px;
+                                                        spacing: 6px;
+                                                        alignment: start;
+                                                        Text { text: "\u{1F514}"; font-size: 11px; vertical-alignment: center; }
+                                                        Text {
+                                                            text: "All";
+                                                            color: (channel.notification-setting == "" || channel.notification-setting == "all")
+                                                                ? VxTheme.accent : VxTheme.text-primary;
+                                                            font-size: 11px;
+                                                            font-weight: 600;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // Mentions only
+                                                Rectangle {
+                                                    height: 24px;
+                                                    border-radius: 4px;
+                                                    background: channel.notification-setting == "mentions"
+                                                        ? VxTheme.accent-subtle : notif-mentions-ta.has-hover ? VxTheme.row-hover-bg : transparent;
+                                                    notif-mentions-ta := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.set-channel-notification(channel.id, "mentions");
+                                                            root.notification-popup-channel-id = "";
+                                                        }
+                                                    }
+                                                    HorizontalLayout {
+                                                        padding-left: 8px;
+                                                        spacing: 6px;
+                                                        alignment: start;
+                                                        Text { text: "\u{1F515}"; font-size: 11px; vertical-alignment: center; }
+                                                        Text {
+                                                            text: "Mentions only";
+                                                            color: channel.notification-setting == "mentions"
+                                                                ? VxTheme.accent : VxTheme.text-primary;
+                                                            font-size: 11px;
+                                                            font-weight: 600;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                // None
+                                                Rectangle {
+                                                    height: 24px;
+                                                    border-radius: 4px;
+                                                    background: channel.notification-setting == "none"
+                                                        ? VxTheme.accent-subtle : notif-none-ta.has-hover ? VxTheme.row-hover-bg : transparent;
+                                                    notif-none-ta := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.set-channel-notification(channel.id, "none");
+                                                            root.notification-popup-channel-id = "";
+                                                        }
+                                                    }
+                                                    HorizontalLayout {
+                                                        padding-left: 8px;
+                                                        spacing: 6px;
+                                                        alignment: start;
+                                                        Text { text: "\u{1F6AB}"; font-size: 11px; vertical-alignment: center; }
+                                                        Text {
+                                                            text: "None";
+                                                            color: channel.notification-setting == "none"
+                                                                ? VxTheme.accent : VxTheme.text-primary;
+                                                            font-size: 11px;
+                                                            font-weight: 600;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         if root.can-manage-space-channels : VxButton {
                                             label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
                                             small: true;
@@ -360,6 +568,29 @@ export component SpaceView inherits Rectangle {
                                                 } else {
                                                     root.topic-edit-channel-id = channel.id;
                                                     root.topic-edit-value = channel.topic;
+                                                }
+                                            }
+                                        }
+                                        if root.can-manage-space-channels : VxButton {
+                                            label: channel.auto-delete-hours == 0 ? "Expire"
+                                                 : channel.auto-delete-hours <= 1 ? "1h"
+                                                 : channel.auto-delete-hours <= 6 ? "6h"
+                                                 : channel.auto-delete-hours <= 24 ? "24h"
+                                                 : "7d";
+                                            small: true;
+                                            ghost: channel.auto-delete-hours == 0;
+                                            accent: channel.auto-delete-hours > 0;
+                                            clicked => {
+                                                if channel.auto-delete-hours == 0 {
+                                                    root.set-channel-auto-delete(channel.id, 1);
+                                                } else if channel.auto-delete-hours <= 1 {
+                                                    root.set-channel-auto-delete(channel.id, 6);
+                                                } else if channel.auto-delete-hours <= 6 {
+                                                    root.set-channel-auto-delete(channel.id, 24);
+                                                } else if channel.auto-delete-hours <= 24 {
+                                                    root.set-channel-auto-delete(channel.id, 168);
+                                                } else {
+                                                    root.set-channel-auto-delete(channel.id, 0);
                                                 }
                                             }
                                         }
@@ -476,34 +707,146 @@ export component SpaceView inherits Rectangle {
                         }
                     }
 
+                    // ── Scheduled Events ──
+                    if root.scheduled-events.length > 0 || root.can-manage-space-channels : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 8px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "EVENTS"; }
+                                Text {
+                                    text: root.scheduled-events.length > 0 ? root.scheduled-events.length + " upcoming" : "";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+                            for evt in root.scheduled-events : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: evt.is-interested ? VxTheme.accent-border : VxTheme.border-subtle;
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 4px;
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        Text {
+                                            text: evt.title;
+                                            color: VxTheme.text-primary;
+                                            font-size: 12px;
+                                            font-weight: 700;
+                                        }
+                                        VxStatusPill {
+                                            label: evt.start-time;
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                    }
+                                    if evt.description != "" : Text {
+                                        text: evt.description;
+                                        color: VxTheme.text-secondary;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Text {
+                                            text: "by " + evt.creator-name;
+                                            color: VxTheme.text-muted;
+                                            font-size: 9px;
+                                        }
+                                        evt-interest-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            width: 80px;
+                                            clicked => { root.toggle-event-interest(evt.id); }
+                                            VxStatusPill {
+                                                label: (evt.is-interested ? "★ " : "☆ ") + evt.interested-count;
+                                                tone: evt.is-interested ? VxTheme.accent : VxTheme.text-muted;
+                                                fill: evt.is-interested ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                            }
+                                        }
+                                        if root.can-manage-space-channels : TouchArea {
+                                            mouse-cursor: pointer;
+                                            width: 30px;
+                                            clicked => { root.delete-event(evt.id); }
+                                            Text {
+                                                text: "✕";
+                                                color: VxTheme.danger;
+                                                font-size: 10px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if root.scheduled-events.length == 0 : Text {
+                                text: "No upcoming events.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+                        }
+                    }
+
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
                             SectionLabel { text: "VOICE CHANNELS"; }
 
-                            if root.visible-voice-channels == 0 : Text {
-                                text: root.search-query == ""
-                                    ? "Voice channels appear here as soon as you add them."
-                                    : "No voice channels match this filter.";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
+                            if root.visible-voice-channels == 0 : VerticalLayout {
+                                spacing: 4px;
+                                Text {
+                                    text: root.search-query == ""
+                                        ? "No voice channels yet"
+                                        : "No voice channels match this filter.";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                if root.search-query == "" : Text {
+                                    text: "Add a voice channel and hop in.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                }
                             }
 
-                            for channel in root.channels : Rectangle {
+                            for channel[idx] in root.channels : Rectangle {
+                                property <bool> is-focused: idx == root.focused-channel-index;
                                 height: channel.is-voice ? 62px : 0px;
                                 visible: channel.is-voice;
                                 border-radius: VxTheme.radius-card;
-                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                background: is-focused ? VxTheme.surface-active :
+                                            channel.is-active ? VxTheme.tab-active-bg :
                                             channel.peer-count > 0 ? VxTheme.speaking-row-bg :
                                             voice-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: channel.is-active ? VxTheme.accent-border :
+                                border-color: is-focused || channel.is-active ? VxTheme.accent-border :
                                               channel.peer-count > 0 ? VxTheme.speaking-border : VxTheme.border-subtle;
                                 border-width: 1px;
 
                                 voice-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.join-channel(channel.id); }
+                                }
+
+                                // Favorite star overlay (top-left of voice channel row)
+                                TouchArea {
+                                    x: 4px;
+                                    y: (parent.height - 18px) / 2;
+                                    width: 18px;
+                                    height: 18px;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle-favorite-channel(channel.id); }
+                                    Text {
+                                        text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
+                                        color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                        font-size: 14px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
                                 }
 
                                 HorizontalLayout {
@@ -524,12 +867,11 @@ export component SpaceView inherits Rectangle {
                                             : VxTheme.border-subtle;
                                         border-width: 1px;
                                         Text {
-                                            text: "VC";
+                                            text: "\u{1F50A}";
                                             color: channel.is-active || channel.peer-count > 0
                                                 ? VxTheme.accent
                                                 : VxTheme.text-secondary;
-                                            font-size: 10px;
-                                            font-weight: 800;
+                                            font-size: 14px;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
@@ -544,6 +886,7 @@ export component SpaceView inherits Rectangle {
                                             color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
                                             font-size: 12px;
                                             font-weight: 700;
+                                            overflow: elide;
                                         }
                                         Text {
                                             text: channel.status != "" ? channel.status
@@ -559,8 +902,12 @@ export component SpaceView inherits Rectangle {
 
                                     if channel.user-limit > 0 : VxStatusPill {
                                         label: channel.peer-count + "/" + channel.user-limit;
-                                        tone: channel.peer-count >= channel.user-limit ? VxTheme.danger : VxTheme.text-secondary;
-                                        fill: VxTheme.bg-soft;
+                                        tone: channel.peer-count >= channel.user-limit ? VxTheme.danger
+                                            : channel.peer-count * 100 >= channel.user-limit * 80 ? VxTheme.warning
+                                            : VxTheme.text-secondary;
+                                        fill: channel.peer-count >= channel.user-limit ? VxTheme.danger.transparentize(0.85)
+                                            : channel.peer-count * 100 >= channel.user-limit * 80 ? VxTheme.warning-soft
+                                            : VxTheme.bg-soft;
                                     }
                                     if channel.slow-mode-secs > 0 : VxStatusPill {
                                         label: "Slow";
@@ -613,7 +960,35 @@ export component SpaceView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
+
+                            // Empty-space guidance — prominent when no channels exist yet
+                            if root.channels.length == 0 && root.is-space-owner : VerticalLayout {
+                                spacing: 8px;
+                                padding-bottom: 4px;
+                                Text {
+                                    text: "Your space is empty!";
+                                    color: VxTheme.accent;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: "Create your first channel to get started. Voice channels are great for talking, text channels for chat.";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
+                                Divider {}
+                            }
                             SectionLabel { text: "NEW CHANNEL"; }
+
+                            Text {
+                                text: root.new-channel-is-voice
+                                    ? "Voice channels let members join and talk in real time."
+                                    : "Text channels are for messages, reactions, and threads.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
 
                             HorizontalLayout {
                                 spacing: 10px;
@@ -690,79 +1065,94 @@ export component SpaceView inherits Rectangle {
                     width: 304px;
                     spacing: 12px;
 
+                    // Compact profile card — status + bio
                     VxCard {
                         VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
-                            SectionLabel { text: "SPACE INVITE"; }
-                            Text {
-                                text: root.current-space-invite;
-                                color: VxTheme.text-primary;
-                                font-size: 18px;
-                                font-weight: 700;
-                                letter-spacing: 1.5px;
-                            }
+                            padding: 14px;
+                            spacing: 8px;
+                            SectionLabel { text: "YOUR PROFILE"; }
                             HorizontalLayout {
-                                spacing: 8px;
-                                VxStatusPill {
-                                    label: "Paste to join";
-                                    tone: VxTheme.accent;
-                                    fill: VxTheme.accent-subtle;
-                                }
-                                VxStatusPill {
-                                    label: "No account wall";
-                                    tone: VxTheme.success;
-                                    fill: VxTheme.success-dim;
-                                }
-                            }
-                            Text {
-                                text: "Share this invite to grow the room without making anyone create an account.";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
-                                wrap: word-wrap;
-                            }
-                            Rectangle {
-                                border-radius: VxTheme.radius-card;
-                                background: VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
-                                border-width: 1px;
-
-                                VerticalLayout {
-                                    padding: 12px;
-                                    spacing: 4px;
-                                    Text {
-                                        text: "Join " + (root.current-space-name != "" ? root.current-space-name : "this space") + " on Voxlink";
-                                        color: VxTheme.text-primary;
-                                        font-size: 11px;
-                                        font-weight: 700;
-                                        wrap: word-wrap;
-                                    }
-                                    Text {
-                                        text: "Invite code: " + root.current-space-invite;
-                                        color: VxTheme.text-muted;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
-                                    }
-                                    Text {
-                                        text: "Open Voxlink and paste the invite code to jump straight in.";
-                                        color: VxTheme.text-muted;
-                                        font-size: 9px;
-                                        wrap: word-wrap;
-                                    }
-                                }
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                VxButton {
-                                    label: "Copy invite";
-                                    accent: true;
+                                spacing: 6px;
+                                VxInput {
+                                    text <=> root.user-status-input;
+                                    placeholder: "Set status";
                                     horizontal-stretch: 1;
+                                    accepted => {
+                                        if root.user-status-input != "" {
+                                            root.set-user-status(root.user-status-input);
+                                            root.user-status-input = "";
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Set";
+                                    small: true;
+                                    soft: true;
+                                    enabled: root.user-status-input != "";
+                                    clicked => {
+                                        if root.user-status-input != "" {
+                                            root.set-user-status(root.user-status-input);
+                                            root.user-status-input = "";
+                                        }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                VxInput {
+                                    text <=> root.user-bio-input;
+                                    placeholder: "Set bio";
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if root.user-bio-input != "" {
+                                            root.set-profile(root.user-bio-input);
+                                            root.user-bio-input = "";
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Save";
+                                    small: true;
+                                    soft: true;
+                                    enabled: root.user-bio-input != "";
+                                    clicked => {
+                                        if root.user-bio-input != "" {
+                                            root.set-profile(root.user-bio-input);
+                                            root.user-bio-input = "";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 10px;
+                            SectionLabel { text: "INVITE"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: root.streamer-mode ? "********" : root.current-space-invite;
+                                    color: VxTheme.text-primary;
+                                    font-size: 16px;
+                                    font-weight: 700;
+                                    letter-spacing: 1.5px;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                }
+                                VxButton {
+                                    label: "Copy";
+                                    small: true;
+                                    accent: true;
                                     clicked => { root.copy-invite-code(); }
                                 }
                                 VxButton {
-                                    label: "Copy share";
+                                    label: "Share";
+                                    small: true;
                                     soft: true;
-                                    horizontal-stretch: 1;
                                     clicked => { root.copy-share-message(); }
                                 }
                             }
@@ -794,11 +1184,21 @@ export component SpaceView inherits Rectangle {
 
                             for member in root.members : Rectangle {
                                 border-radius: VxTheme.radius-card;
-                                background: member-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
+                                background: root.expanded-member-id == member.id ? VxTheme.tab-active-bg :
+                                            member-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-color: root.expanded-member-id == member.id ? VxTheme.accent-border : VxTheme.border-subtle;
                                 border-width: 1px;
 
-                                member-touch := TouchArea { }
+                                member-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.expanded-member-id == member.id {
+                                            root.expanded-member-id = "";
+                                        } else {
+                                            root.expanded-member-id = member.id;
+                                        }
+                                    }
+                                }
 
                                 VerticalLayout {
                                     padding: 12px;
@@ -823,9 +1223,19 @@ export component SpaceView inherits Rectangle {
                                             spacing: 2px;
                                             Text {
                                                 text: member.name;
-                                                color: VxTheme.text-primary;
+                                                color: member.role-color-index > 0
+                                                    ? VxTheme.role-color(member.role-color-index)
+                                                    : VxTheme.text-primary;
                                                 font-size: 11px;
                                                 font-weight: 700;
+                                                overflow: elide;
+                                            }
+                                            if member.activity != "" : Text {
+                                                text: member.activity;
+                                                color: VxTheme.accent;
+                                                font-size: 9px;
+                                                overflow: elide;
+                                                font-weight: 500;
                                             }
                                             Text {
                                                 text: member.status != ""
@@ -873,8 +1283,30 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
 
-                                    if !member.is-self : HorizontalLayout {
-                                        spacing: 8px;
+                                    // Expanded details — click member row to toggle
+                                    if root.expanded-member-id == member.id && member.nickname != "" : Text {
+                                        text: "aka \"" + member.nickname + "\"";
+                                        color: VxTheme.text-secondary;
+                                        font-size: 9px;
+                                    }
+                                    if root.expanded-member-id == member.id && member.bio != "" : Rectangle {
+                                        border-radius: VxTheme.radius-card;
+                                        background: VxTheme.bg-panel;
+                                        border-color: VxTheme.border-subtle;
+                                        border-width: 1px;
+                                        VerticalLayout {
+                                            padding: 6px;
+                                            Text {
+                                                text: member.bio;
+                                                color: VxTheme.text-secondary;
+                                                font-size: 9px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+
+                                    if root.expanded-member-id == member.id && !member.is-self : HorizontalLayout {
+                                        spacing: 6px;
                                         if member.is-friend : VxButton {
                                             label: "Message";
                                             small: true;
@@ -894,13 +1326,13 @@ export component SpaceView inherits Rectangle {
                                             clicked => { root.decline-friend-request(member.user-id); }
                                         }
                                         if !member.has-incoming-request && member.has-outgoing-request : VxButton {
-                                            label: "Cancel request";
+                                            label: "Cancel";
                                             small: true;
                                             soft: true;
                                             clicked => { root.cancel-friend-request(member.user-id); }
                                         }
                                         if !member.has-incoming-request && !member.has-outgoing-request && member.is-friend : VxButton {
-                                            label: "Remove friend";
+                                            label: "Unfriend";
                                             small: true;
                                             soft: true;
                                             clicked => { root.remove-friend(member.user-id); }
@@ -913,10 +1345,18 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
 
-                                    if root.can-manage-space-roles && !member.is-self && member.role-tier < 3 : HorizontalLayout {
-                                        spacing: 8px;
+                                    if root.expanded-member-id == member.id && !member.is-self : VxInput {
+                                        placeholder: "Private note...";
+                                        text: member.user-note;
+                                        accepted => {
+                                            root.save-user-note(member.user-id, self.text);
+                                        }
+                                    }
+
+                                    if root.expanded-member-id == member.id && root.can-manage-space-roles && !member.is-self && member.role-tier < 3 : HorizontalLayout {
+                                        spacing: 6px;
                                         if member.role-tier == 0 : VxButton {
-                                            label: "Promote mod";
+                                            label: "Mod";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -930,14 +1370,14 @@ export component SpaceView inherits Rectangle {
                                             clicked => { root.set-member-role(member.user-id, 0); }
                                         }
                                         if root.is-space-owner && member.role-tier < 2 : VxButton {
-                                            label: "Promote admin";
+                                            label: "Admin";
                                             small: true;
                                             accent: true;
                                             horizontal-stretch: 1;
                                             clicked => { root.set-member-role(member.user-id, 2); }
                                         }
                                         if root.is-space-owner && member.role-tier == 2 : VxButton {
-                                            label: "Demote admin";
+                                            label: "Remove admin";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -945,17 +1385,17 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
 
-                                    if root.can-manage-space-members && !member.is-self : HorizontalLayout {
-                                        spacing: 8px;
+                                    if root.expanded-member-id == member.id && root.can-manage-space-members && !member.is-self : HorizontalLayout {
+                                        spacing: 6px;
                                         VxButton {
-                                            label: member.is-server-muted ? "Unmute" : "Server mute";
+                                            label: member.is-server-muted ? "Unmute" : "Mute";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
                                             clicked => { root.server-mute-member(member.id, !member.is-server-muted); }
                                         }
                                         VxButton {
-                                            label: "Timeout 5m";
+                                            label: "Timeout";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1019,43 +1459,297 @@ export component SpaceView inherits Rectangle {
                             }
                         }
                     }
+
+                    if root.can-manage-space-channels : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "SPACE SETTINGS"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                rename-input := VxInput {
+                                    placeholder: "New space name";
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if self.text != "" {
+                                            root.rename-space(self.text);
+                                            self.text = "";
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: "Rename";
+                                    small: true;
+                                    accent: true;
+                                    clicked => {
+                                        if rename-input.text != "" {
+                                            root.rename-space(rename-input.text);
+                                            rename-input.text = "";
+                                        }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                desc-input := VxInput {
+                                    placeholder: "Space description (optional)";
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        root.set-space-description(self.text);
+                                        self.text = "";
+                                    }
+                                }
+                                VxButton {
+                                    label: "Save";
+                                    small: true;
+                                    soft: true;
+                                    clicked => {
+                                        root.set-space-description(desc-input.text);
+                                        desc-input.text = "";
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: space-between;
+                                Text {
+                                    text: "Make Public";
+                                    color: VxTheme.text-primary;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                                VxButton {
+                                    label: root.is-space-public ? "Public" : "Private";
+                                    small: true;
+                                    accent: root.is-space-public;
+                                    soft: !root.is-space-public;
+                                    clicked => {
+                                        root.set-space-public(!root.is-space-public);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.can-manage-space-channels : VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "AUTO-MODERATION"; }
+                            Text {
+                                text: "Filtered words are automatically removed or trigger a warning.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                wide-automod-word-input := VxInput {
+                                    text <=> root.automod-word-input;
+                                    placeholder: "Word or phrase";
+                                    horizontal-stretch: 1;
+                                    accepted => {
+                                        if root.automod-word-input != "" {
+                                            root.add-automod-word(
+                                                root.automod-word-input,
+                                                root.automod-action-index == 0 ? "delete" : "warn",
+                                            );
+                                            root.automod-word-input = "";
+                                        }
+                                    }
+                                }
+                                VxButton {
+                                    label: root.automod-action-index == 0 ? "Delete" : "Warn";
+                                    small: true;
+                                    soft: true;
+                                    clicked => {
+                                        root.automod-action-index = root.automod-action-index == 0 ? 1 : 0;
+                                    }
+                                }
+                                VxButton {
+                                    label: "Add";
+                                    small: true;
+                                    accent: true;
+                                    enabled: root.automod-word-input != "";
+                                    clicked => {
+                                        if root.automod-word-input != "" {
+                                            root.add-automod-word(
+                                                root.automod-word-input,
+                                                root.automod-action-index == 0 ? "delete" : "warn",
+                                            );
+                                            root.automod-word-input = "";
+                                        }
+                                    }
+                                }
+                            }
+                            if root.automod-words.length == 0 : Text {
+                                text: "No filtered words yet.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                            }
+                            for entry in root.automod-words : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                HorizontalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+                                    alignment: center;
+                                    Text {
+                                        text: entry.word;
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    VxStatusPill {
+                                        label: entry.action == "delete" ? "Delete" : "Warn";
+                                        tone: entry.action == "delete" ? VxTheme.danger : VxTheme.warning;
+                                        fill: entry.action == "delete" ? VxTheme.danger.transparentize(0.85) : VxTheme.warning.transparentize(0.85);
+                                    }
+                                    VxButton {
+                                        label: "Remove";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => { root.remove-automod-word(entry.word); }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             if !root.wide : VerticalLayout {
                 spacing: 12px;
 
+                // Profile + invite in one compact row
+                HorizontalLayout {
+                    spacing: 6px;
+                    VxInput {
+                        text <=> root.user-status-input;
+                        placeholder: "Status";
+                        horizontal-stretch: 1;
+                        accepted => {
+                            if root.user-status-input != "" {
+                                root.set-user-status(root.user-status-input);
+                                root.user-status-input = "";
+                            }
+                        }
+                    }
+                    VxButton {
+                        label: "Set";
+                        small: true;
+                        soft: true;
+                        enabled: root.user-status-input != "";
+                        clicked => {
+                            if root.user-status-input != "" {
+                                root.set-user-status(root.user-status-input);
+                                root.user-status-input = "";
+                            }
+                        }
+                    }
+                }
+
                 VxCard {
                     VerticalLayout {
-                        padding: 18px;
-                        spacing: 12px;
-                        SectionLabel { text: "SPACE INVITE"; }
-                        Text {
-                            text: root.current-space-invite;
-                            color: VxTheme.text-primary;
-                            font-size: 18px;
-                            font-weight: 700;
-                            letter-spacing: 1.5px;
-                        }
-                        Text {
-                            text: "Share the code directly or copy a ready-to-send invite note.";
-                            color: VxTheme.text-muted;
-                            font-size: 10px;
-                            wrap: word-wrap;
-                        }
+                        padding: 14px;
+                        spacing: 8px;
                         HorizontalLayout {
                             spacing: 8px;
-                            VxButton {
-                                label: "Copy invite";
-                                accent: true;
+                            alignment: center;
+                            Text {
+                                text: root.streamer-mode ? "Invite: ********" : "Invite: " + root.current-space-invite;
+                                color: VxTheme.text-primary;
+                                font-size: 13px;
+                                font-weight: 700;
+                                letter-spacing: 1px;
                                 horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            VxButton {
+                                label: "Copy";
+                                small: true;
+                                accent: true;
                                 clicked => { root.copy-invite-code(); }
                             }
                             VxButton {
-                                label: "Copy share";
+                                label: "Share";
+                                small: true;
                                 soft: true;
-                                horizontal-stretch: 1;
                                 clicked => { root.copy-share-message(); }
+                            }
+                        }
+                    }
+                }
+
+                // ── Favorite channels (compact) ──
+                if root.visible-favorite-channels > 0 : VxCard {
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        SectionLabel { text: "FAVORITES"; }
+
+                        for channel in root.channels : Rectangle {
+                            visible: channel.is-favorite && !channel.is-category-header;
+                            height: channel.is-favorite && !channel.is-category-header ? 44px : 0px;
+                            border-radius: VxTheme.radius-card;
+                            background: channel.is-active ? VxTheme.tab-active-bg :
+                                        compact-fav-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-color: channel.is-active ? VxTheme.accent-border : VxTheme.border-subtle;
+                            border-width: 1px;
+
+                            compact-fav-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if channel.is-voice {
+                                        root.join-channel(channel.id);
+                                    } else {
+                                        root.select-text-channel(channel.id);
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                height: 44px;
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "\u{2605}";
+                                    color: #f5c842;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: channel.is-voice ? "VC" : "TXT";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    font-weight: 800;
+                                }
+                                Text {
+                                    text: channel.name;
+                                    color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                if channel.unread-count > 0 : Text {
+                                    text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                if channel.is-voice && channel.peer-count > 0 : Text {
+                                    text: channel.peer-count + " live";
+                                    color: VxTheme.success;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
                             }
                         }
                     }
@@ -1066,12 +1760,24 @@ export component SpaceView inherits Rectangle {
                         padding: 18px;
                         spacing: 12px;
                         SectionLabel { text: "CHANNELS"; }
-                        if root.channels.length == 0 : Text {
-                            text: root.search-query == ""
-                                ? "Channels appear here when the space has activity."
-                                : "No channels match this filter.";
-                            color: VxTheme.text-muted;
-                            font-size: 10px;
+                        if root.channels.length == 0 : VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: root.search-query == ""
+                                    ? (root.is-space-owner ? "Your space is empty!" : "No channels yet")
+                                    : "No channels match this filter.";
+                                color: root.search-query == "" && root.is-space-owner ? VxTheme.accent : VxTheme.text-secondary;
+                                font-size: root.is-space-owner && root.search-query == "" ? 14px : 11px;
+                                font-weight: root.is-space-owner && root.search-query == "" ? 700 : 600;
+                            }
+                            if root.search-query == "" : Text {
+                                text: root.is-space-owner
+                                    ? "Create your first channel to get started. Voice channels are great for talking, text channels for chat."
+                                    : "The space owner hasn't created any channels yet.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                            }
                         }
                         for channel in root.channels : Rectangle {
                             height: !channel.is-voice && root.topic-edit-channel-id == channel.id ? 96px : 56px;
@@ -1097,11 +1803,23 @@ export component SpaceView inherits Rectangle {
 
                             VerticalLayout {
                                 HorizontalLayout {
-                                    padding-left: 12px;
+                                    padding-left: 6px;
                                     padding-right: 12px;
                                     height: 56px;
-                                    spacing: 10px;
+                                    spacing: 6px;
                                     alignment: center;
+                                    TouchArea {
+                                        width: 18px;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.toggle-favorite-channel(channel.id); }
+                                        Text {
+                                            text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
+                                            color: channel.is-favorite ? #f5c842 : VxTheme.text-muted;
+                                            font-size: 13px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
                                     Text {
                                         text: channel.is-voice ? "VC" : "TXT";
                                         color: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
@@ -1114,6 +1832,19 @@ export component SpaceView inherits Rectangle {
                                         font-size: 12px;
                                         font-weight: 700;
                                         horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    // Notification override indicator (compact)
+                                    if channel.notification-setting == "none" : Text {
+                                        text: "\u{00D7}";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                    }
+                                    if channel.notification-setting == "mentions" : Text {
+                                        text: "@";
+                                        color: VxTheme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 700;
                                     }
                                     if channel.unread-count > 0 : Text {
                                         text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
@@ -1121,11 +1852,50 @@ export component SpaceView inherits Rectangle {
                                         font-size: 10px;
                                         font-weight: 700;
                                     }
-                                    if channel.peer-count > 0 : Text {
+                                    if channel.is-voice && channel.user-limit > 0 : Text {
+                                        text: channel.peer-count + "/" + channel.user-limit;
+                                        color: channel.peer-count >= channel.user-limit ? VxTheme.danger
+                                            : channel.peer-count * 100 >= channel.user-limit * 80 ? VxTheme.warning
+                                            : VxTheme.text-muted;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                    }
+                                    if channel.peer-count > 0 && (!channel.is-voice || channel.user-limit <= 0) : Text {
                                         text: channel.peer-count + "";
                                         color: VxTheme.text-muted;
                                         font-size: 10px;
                                         font-weight: 700;
+                                    }
+                                    // Compact notification bell (text channels only)
+                                    if !channel.is-voice : Rectangle {
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: 5px;
+                                        background: compact-notif-ta.has-hover ? VxTheme.btn-hover-bg : transparent;
+                                        compact-notif-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                // Cycle: all -> mentions -> none -> all
+                                                if channel.notification-setting == "mentions" {
+                                                    root.set-channel-notification(channel.id, "none");
+                                                } else if channel.notification-setting == "none" {
+                                                    root.set-channel-notification(channel.id, "all");
+                                                } else {
+                                                    root.set-channel-notification(channel.id, "mentions");
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            text: channel.notification-setting == "none" ? "\u{1F6AB}"
+                                                : channel.notification-setting == "mentions" ? "\u{1F515}"
+                                                : "\u{1F514}";
+                                            font-size: 11px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            color: channel.notification-setting == "none" ? VxTheme.text-muted
+                                                 : channel.notification-setting == "mentions" ? VxTheme.warning
+                                                 : VxTheme.text-secondary;
+                                        }
                                     }
                                     if root.can-manage-space-channels && !channel.is-voice : VxButton {
                                         label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
@@ -1142,6 +1912,18 @@ export component SpaceView inherits Rectangle {
                                                 root.topic-edit-value = channel.topic;
                                             }
                                         }
+                                    }
+                                    if root.can-manage-space-channels : VxButton {
+                                        label: "\u{25B2}";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => { root.move-channel-up(channel.id); }
+                                    }
+                                    if root.can-manage-space-channels : VxButton {
+                                        label: "\u{25BC}";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => { root.move-channel-down(channel.id); }
                                     }
                                     if root.can-manage-space-channels : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
@@ -1225,6 +2007,95 @@ export component SpaceView inherits Rectangle {
                                     text: entry.timestamp;
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.can-manage-space-channels : VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        SectionLabel { text: "AUTO-MODERATION"; }
+                        Text {
+                            text: "Filtered words are automatically removed or trigger a warning.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            compact-automod-word-input := VxInput {
+                                text <=> root.automod-word-input;
+                                placeholder: "Word or phrase";
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if root.automod-word-input != "" {
+                                        root.add-automod-word(
+                                            root.automod-word-input,
+                                            root.automod-action-index == 0 ? "delete" : "warn",
+                                        );
+                                        root.automod-word-input = "";
+                                    }
+                                }
+                            }
+                            VxButton {
+                                label: root.automod-action-index == 0 ? "Delete" : "Warn";
+                                small: true;
+                                soft: true;
+                                clicked => {
+                                    root.automod-action-index = root.automod-action-index == 0 ? 1 : 0;
+                                }
+                            }
+                            VxButton {
+                                label: "Add";
+                                small: true;
+                                accent: true;
+                                enabled: root.automod-word-input != "";
+                                clicked => {
+                                    if root.automod-word-input != "" {
+                                        root.add-automod-word(
+                                            root.automod-word-input,
+                                            root.automod-action-index == 0 ? "delete" : "warn",
+                                        );
+                                        root.automod-word-input = "";
+                                    }
+                                }
+                            }
+                        }
+                        if root.automod-words.length == 0 : Text {
+                            text: "No filtered words yet.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                        }
+                        for entry in root.automod-words : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-soft;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: entry.word;
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                VxStatusPill {
+                                    label: entry.action == "delete" ? "Delete" : "Warn";
+                                    tone: entry.action == "delete" ? VxTheme.danger : VxTheme.warning;
+                                    fill: entry.action == "delete" ? VxTheme.danger.transparentize(0.85) : VxTheme.warning.transparentize(0.85);
+                                }
+                                VxButton {
+                                    label: "Remove";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.remove-automod-word(entry.word); }
                                 }
                             }
                         }

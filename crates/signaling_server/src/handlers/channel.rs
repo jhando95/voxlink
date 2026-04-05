@@ -86,6 +86,7 @@ pub async fn handle_create_channel(
             slow_mode_secs: 0,
             min_role: shared_types::SpaceRole::Member,
             position: 0,
+            auto_delete_hours: 0,
         };
 
         if let Some(space) = s.spaces.get_mut(&space_id) {
@@ -104,6 +105,7 @@ pub async fn handle_create_channel(
             status: String::new(),
             slow_mode_secs: 0,
             position: 0,
+            auto_delete_hours: 0,
         }
     };
 
@@ -144,6 +146,7 @@ pub async fn handle_create_channel(
                 voice_quality: Some(vq),
                 min_role: None,
                 position: None,
+                auto_delete_hours: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }

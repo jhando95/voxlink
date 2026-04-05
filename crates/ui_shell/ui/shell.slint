@@ -174,8 +174,13 @@ export component WorkspaceRail inherits Rectangle {
     in property <int> unread-direct-messages-count: 0;
     in property <int> favorite-friends-count: 0;
     in property <int> online-friends-count: 0;
+    in property <string> user-name: "";
+    in property <string> user-status: "";
+    in property <bool> is-muted: false;
+    in property <bool> is-deafened: false;
     callback navigate(int);
     callback select-space(string);
+    callback show-shortcuts();
 
     width: root.compact ? 220px : 240px;
     background: VxTheme.bg-rail;
@@ -715,6 +720,92 @@ export component WorkspaceRail inherits Rectangle {
 
             }
         }
+
+        // User identity footer (Discord-style)
+        Rectangle {
+            height: 1px;
+            background: VxTheme.border-subtle;
+        }
+
+        Rectangle {
+            height: 48px;
+            background: VxTheme.bg-panel;
+
+            user-footer-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.navigate(2); }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                alignment: center;
+
+                VxAvatar {
+                    avatar-size: 28px;
+                    initial: root.user-name != "" ? root.user-name : "?";
+                    color-index: 0;
+                    show-status: true;
+                    is-online: true;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 1px;
+                    Text {
+                        text: root.user-name != "" ? root.user-name : "Not signed in";
+                        color: VxTheme.text-primary;
+                        font-size: 11px;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.user-status != "" ? root.user-status : "Online";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
+                        overflow: elide;
+                    }
+                }
+
+                if root.is-muted : VxStatusPill {
+                    label: "M";
+                    tone: VxTheme.danger;
+                    fill: VxTheme.mute-badge-bg;
+                }
+                if root.is-deafened : VxStatusPill {
+                    label: "D";
+                    tone: VxTheme.warning;
+                    fill: VxTheme.deafen-badge-bg;
+                }
+
+                // Help button — opens keyboard shortcuts overlay
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: help-touch.has-hover ? VxTheme.btn-hover-bg : transparent;
+                    border-color: help-touch.has-hover ? VxTheme.border-subtle : transparent;
+                    border-width: 1px;
+                    animate background { duration: 80ms; }
+
+                    help-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-shortcuts(); }
+                    }
+                    Text {
+                        text: "?";
+                        color: VxTheme.text-muted;
+                        font-size: 12px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
     }
 }
 

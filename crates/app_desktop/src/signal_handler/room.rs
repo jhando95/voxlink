@@ -122,8 +122,8 @@ pub fn handle_peer_joined(
         }
     }
 
-    // Play join notification sound
-    if w.get_join_leave_sounds() {
+    // Play join notification sound; suppress in DND mode
+    if w.get_join_leave_sounds() && w.get_status_preset() != 2 {
         if let Ok(aud) = audio.try_lock() {
             aud.play_notification(true);
         }
@@ -144,8 +144,8 @@ pub fn handle_peer_left(
     let code = &s.room.room_code;
     w.set_window_title(format!("Voxlink — {code} ({count})").into());
     if let Ok(aud) = audio.try_lock() {
-        // Play leave notification sound
-        if w.get_join_leave_sounds() {
+        // Play leave notification sound; suppress in DND mode
+        if w.get_join_leave_sounds() && w.get_status_preset() != 2 {
             aud.play_notification(false);
         }
         aud.remove_peer(peer_id);

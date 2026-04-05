@@ -40,6 +40,7 @@ export struct SpaceData {
 export struct ChatMessage {
     sender-name: string,
     sender-initial: string,
+    sender-id: string,
     content: string,
     timestamp: string,
     is-self: bool,
@@ -58,6 +59,9 @@ export struct ChatMessage {
     channel-name: string,
     show-header: bool,
     date-separator: string,
+    reply-count: int,
+    link-url: string,
+    is-new-separator: bool,
 }
 
 export struct ChannelData {
@@ -76,6 +80,9 @@ export struct ChannelData {
     is-category-header: bool,
     category-collapsed: bool,
     mention-count: int,
+    auto-delete-hours: int,
+    is-favorite: bool,
+    notification-setting: string, // "all" (default), "mentions", "none"
 }
 
 export struct MemberData {
@@ -96,6 +103,13 @@ export struct MemberData {
     has-incoming-request: bool,
     has-outgoing-request: bool,
     is-self: bool,
+    bio: string,
+    nickname: string,
+    user-note: string,
+    // Role color index: 0=default, 1=red, 2=blue, 3=green, 4=gold, 5=purple, 6=orange, 7=pink, 8=cyan
+    role-color-index: int,
+    // Activity status (e.g. "Playing Valorant"), empty if none
+    activity: string,
 }
 
 export struct AuditEntryData {
@@ -104,6 +118,16 @@ export struct AuditEntryData {
     target-name: string,
     detail: string,
     timestamp: string,
+}
+
+export struct ScheduledEventData {
+    id: string,
+    title: string,
+    description: string,
+    start-time: string,
+    creator-name: string,
+    interested-count: int,
+    is-interested: bool,
 }
 
 export struct FriendData {
@@ -116,6 +140,7 @@ export struct FriendData {
     is-in-voice: bool,
     color-index: int,
     is-friend: bool,
+    last-seen: string,
 }
 
 export struct FriendRequestData {
@@ -154,6 +179,23 @@ export struct SoundboardClipData {
     name: string,
     path: string,
     keybind: string,
+}
+
+export struct AutomodWordData {
+    word: string,
+    action: string,
+}
+
+export struct PublicSpaceData {
+    id: string,
+    name: string,
+    description: string,
+    invite-code: string,
+    member-count: int,
+    channel-count: int,
+    online-count: int,
+    initial: string,
+    color-index: int,
 }
 
 // ─── Design Tokens — Voxlink ───
@@ -429,13 +471,13 @@ export global VxTheme {
         is-arctic ? (dark-mode ? #5fdaf418 : #159db912) :
         dark-mode ? #54d2ff18 : #1686c512;
     out property <color> speaking-border:
-        is-party ? (dark-mode ? #8be14f62 : #5cad2c4a) :
-        is-space ? (dark-mode ? #6cc9ff6a : #4d8fd94a) :
-        is-retro ? (dark-mode ? #5cf3a65a : #289a6748) :
-        is-amber ? (dark-mode ? #ffbe4f60 : #cb7d1248) :
-        is-noir ? (dark-mode ? #90a8ff60 : #5670cb48) :
-        is-arctic ? (dark-mode ? #5fdaf460 : #159db948) :
-        dark-mode ? #54d2ff6a : #1686c54a;
+        is-party ? (dark-mode ? #8be14f90 : #5cad2c78) :
+        is-space ? (dark-mode ? #6cc9ff95 : #4d8fd978) :
+        is-retro ? (dark-mode ? #5cf3a688 : #289a6770) :
+        is-amber ? (dark-mode ? #ffbe4f90 : #cb7d1270) :
+        is-noir ? (dark-mode ? #90a8ff90 : #5670cb70) :
+        is-arctic ? (dark-mode ? #5fdaf490 : #159db970) :
+        dark-mode ? #54d2ff95 : #1686c578;
     out property <color> mute-badge-bg:     dark-mode ? #321a1d : #fff0f0;
     out property <color> deafen-badge-bg:   dark-mode ? #2e2617 : #fff7e9;
     out property <color> connection-lost-bg:dark-mode ? #31191d : #fff0f0;
@@ -466,6 +508,9 @@ export global VxTheme {
         is-noir ? (dark-mode ? #1c2942 : #dde5f4) :
         is-arctic ? (dark-mode ? #1a3942 : #dceff4) :
         dark-mode ? #153043 : #dff1fb;
+
+    // ── Chat density ──
+    in-out property <bool> compact-chat: false;
 
     // ── Responsive scaling ──
     // Set this from the window's width; everything else derives from it.
@@ -590,5 +635,19 @@ export global VxTheme {
         if idx == 5 { return #ff9bbd; }
         if idx == 6 { return #a8e65d; }
         return #8bd7ff;
+    }
+
+    // Role color palette: 0=default (text-primary), 1=red, 2=blue, 3=green,
+    // 4=gold, 5=purple, 6=orange, 7=pink, 8=cyan
+    public pure function role-color(idx: int) -> color {
+        if idx == 1 { return #ff5555; }
+        if idx == 2 { return #5599ff; }
+        if idx == 3 { return #55ff55; }
+        if idx == 4 { return #ffd700; }
+        if idx == 5 { return #b366ff; }
+        if idx == 6 { return #ff9944; }
+        if idx == 7 { return #ff77aa; }
+        if idx == 8 { return #44dddd; }
+        return #00000000; // transparent = use default
     }
 }

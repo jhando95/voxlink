@@ -1,10 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { SoundboardClipData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxInput, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
 component ThemePresetCard inherits Rectangle {
     in property <string> label: "";
-    in property <string> detail: "";
     in property <bool> selected: false;
     in property <color> tone: VxTheme.accent;
     in property <color> swatch-a: VxTheme.accent;
@@ -12,12 +11,14 @@ component ThemePresetCard inherits Rectangle {
     in property <color> swatch-c: VxTheme.bg-raised;
     callback clicked();
 
+    horizontal-stretch: 1;
     border-radius: VxTheme.radius-card;
     background: root.selected ? root.tone.transparentize(0.88) :
                 touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
     border-color: root.selected ? root.tone.transparentize(0.42) : VxTheme.border-subtle;
     border-width: 1px;
     clip: true;
+    height: 38px;
 
     animate background { duration: 90ms; easing: ease-out; }
     animate border-color { duration: 90ms; easing: ease-out; }
@@ -33,50 +34,24 @@ component ThemePresetCard inherits Rectangle {
         clicked => { root.clicked(); }
     }
 
-    VerticalLayout {
-        padding: 14px;
-        spacing: 8px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 0;
+        padding-bottom: 0;
+        spacing: 6px;
+        alignment: center;
 
-        HorizontalLayout {
-            spacing: 6px;
-            Rectangle {
-                width: 24px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.swatch-a;
-            }
-            Rectangle {
-                width: 24px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.swatch-b;
-            }
-            Rectangle {
-                width: 24px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.swatch-c;
-            }
-        }
+        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-a; }
+        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-b; }
+        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-c; }
 
         Text {
             text: root.label;
             color: root.selected ? root.tone : VxTheme.text-primary;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        Text {
-            text: root.detail;
-            color: VxTheme.text-muted;
-            font-size: 9px;
-            wrap: word-wrap;
-        }
-
-        if root.selected : VxStatusPill {
-            label: "Active";
-            tone: root.tone;
-            fill: root.tone.transparentize(0.84);
+            font-size: 11px;
+            font-weight: root.selected ? 700 : 500;
+            overflow: elide;
         }
     }
 }
@@ -106,7 +81,9 @@ export component SettingsView inherits Rectangle {
     in property <bool> show-spoilers: false;
     in property <bool> compact-chat: false;
     in property <bool> streamer-mode: false;
+    in property <bool> desktop-notifications: true;
     callback toggle-streamer-mode();
+    callback toggle-desktop-notifications();
     in-out property <string> listening-keybind: "";
     in property <string> ptt-key-display: "";
     in property <string> mute-key-display: "";
@@ -130,16 +107,37 @@ export component SettingsView inherits Rectangle {
     callback toggle-show-spoilers();
     callback toggle-compact-chat();
     callback clear-keybind(string);
+    // Notification sound style
+    in property <int> notification-sound-index: 0; // 0=Default, 1=Subtle, 2=Chime, 3=None
+    callback set-notification-sound(int);
+    // Status preset
+    in property <int> status-preset: 0;
+    callback set-status-preset(int);
+    // Idle timeout
+    in property <int> idle-timeout-mins: 5;
+    callback set-idle-timeout(int);
     // Account
     in property <bool> is-logged-in: false;
     in property <string> account-email: "";
     callback logout();
     callback show-login();
+    callback show-about();
     callback revoke-all-sessions();
+    callback change-password(string, string);
+    callback change-display-name(string);
+    callback delete-account();
+    in-out property <string> acct-old-pw: "";
+    in-out property <string> acct-new-pw: "";
+    in-out property <string> acct-new-name: "";
+    in-out property <string> acct-delete-confirm: "";
     // Soundboard
     in property <[SoundboardClipData]> soundboard-clips: [];
     callback play-soundboard-clip(int);
     callback remove-soundboard-clip(int);
+    callback add-soundboard-clip(string, string, string); // name, path, keybind
+    in-out property <string> new-clip-name: "";
+    in-out property <string> new-clip-path: "";
+    in-out property <string> new-clip-keybind: "";
 
     background: transparent;
 
@@ -218,15 +216,13 @@ export component SettingsView inherits Rectangle {
                             Divider {}
 
                             VerticalLayout {
-                                spacing: 10px;
+                                spacing: 8px;
                                 FieldLabel { text: "Theme preset"; }
 
                                 HorizontalLayout {
-                                    spacing: 10px;
+                                    spacing: 8px;
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Voxlink";
-                                        detail: "Default premium broadcast shell.";
                                         selected: root.theme-preset == 0;
                                         tone: #54d2ff;
                                         swatch-a: #54d2ff;
@@ -235,9 +231,7 @@ export component SettingsView inherits Rectangle {
                                         clicked => { root.select-theme-preset(0); }
                                     }
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "360 Party";
-                                        detail: "Green-room glow with retro console energy.";
                                         selected: root.theme-preset == 1;
                                         tone: #8be14f;
                                         swatch-a: #8be14f;
@@ -245,14 +239,8 @@ export component SettingsView inherits Rectangle {
                                         swatch-c: #192715;
                                         clicked => { root.select-theme-preset(1); }
                                     }
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 10px;
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Deep Space";
-                                        detail: "Orbital blues, violet trims, calmer contrast.";
                                         selected: root.theme-preset == 2;
                                         tone: #6cc9ff;
                                         swatch-a: #6cc9ff;
@@ -261,9 +249,7 @@ export component SettingsView inherits Rectangle {
                                         clicked => { root.select-theme-preset(2); }
                                     }
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Retro Tech";
-                                        detail: "Old-school control console with phosphor edges.";
                                         selected: root.theme-preset == 3;
                                         tone: #5cf3a6;
                                         swatch-a: #5cf3a6;
@@ -274,11 +260,9 @@ export component SettingsView inherits Rectangle {
                                 }
 
                                 HorizontalLayout {
-                                    spacing: 10px;
+                                    spacing: 8px;
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Amber CRT";
-                                        detail: "Warm phosphor amber with old-school monitor depth.";
                                         selected: root.theme-preset == 4;
                                         tone: #ffbe4f;
                                         swatch-a: #ffbe4f;
@@ -287,9 +271,7 @@ export component SettingsView inherits Rectangle {
                                         clicked => { root.select-theme-preset(4); }
                                     }
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Midnight Noir";
-                                        detail: "Minimal graphite shell with cool blue edge lighting.";
                                         selected: root.theme-preset == 5;
                                         tone: #90a8ff;
                                         swatch-a: #90a8ff;
@@ -297,24 +279,14 @@ export component SettingsView inherits Rectangle {
                                         swatch-c: #151921;
                                         clicked => { root.select-theme-preset(5); }
                                     }
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 10px;
                                     ThemePresetCard {
-                                        horizontal-stretch: 1;
                                         label: "Arctic Glass";
-                                        detail: "Frosted cyan surfaces with airy contrast and clean edges.";
                                         selected: root.theme-preset == 6;
                                         tone: #5fdaf4;
                                         swatch-a: #5fdaf4;
                                         swatch-b: #c8f6ff;
                                         swatch-c: #13292f;
                                         clicked => { root.select-theme-preset(6); }
-                                    }
-                                    Rectangle {
-                                        horizontal-stretch: 1;
-                                        background: transparent;
                                     }
                                 }
                             }
@@ -780,6 +752,70 @@ export component SettingsView inherits Rectangle {
                                     toggled => { root.toggle-join-leave-sounds(); }
                                 }
                             }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "OS desktop notifications";
+                                        color: VxTheme.text-primary;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Show system notifications for mentions and DMs when unfocused";
+                                        color: VxTheme.text-muted;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                VxToggle {
+                                    checked: root.desktop-notifications;
+                                    toggled => { root.toggle-desktop-notifications(); }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: "Notification sound style";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    for item[idx] in [
+                                        { label: "Default" },
+                                        { label: "Subtle" },
+                                        { label: "Chime" },
+                                        { label: "None" },
+                                    ] : Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 30px;
+                                        border-radius: VxTheme.radius-control;
+                                        background: root.notification-sound-index == idx ? VxTheme.accent.transparentize(0.85) :
+                                                    ns-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                        border-color: root.notification-sound-index == idx ? VxTheme.accent.transparentize(0.5) : VxTheme.border-subtle;
+                                        border-width: 1px;
+
+                                        ns-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.set-notification-sound(idx); }
+                                        }
+
+                                        Text {
+                                            text: item.label;
+                                            color: root.notification-sound-index == idx ? VxTheme.accent : VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            font-weight: root.notification-sound-index == idx ? 700 : 500;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -844,6 +880,102 @@ export component SettingsView inherits Rectangle {
                                 color: VxTheme.text-muted;
                                 font-size: 9px;
                                 wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            SectionLabel { text: "STATUS"; }
+                            Text {
+                                text: "Set your presence so others know your availability.";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                VxButton {
+                                    label: "Online";
+                                    small: true;
+                                    accent: root.status-preset == 0;
+                                    soft: root.status-preset != 0;
+                                    clicked => { root.set-status-preset(0); }
+                                }
+                                VxButton {
+                                    label: "Idle";
+                                    small: true;
+                                    accent: root.status-preset == 1;
+                                    soft: root.status-preset != 1;
+                                    clicked => { root.set-status-preset(1); }
+                                }
+                                VxButton {
+                                    label: "DND";
+                                    small: true;
+                                    accent: root.status-preset == 2;
+                                    soft: root.status-preset != 2;
+                                    clicked => { root.set-status-preset(2); }
+                                }
+                                VxButton {
+                                    label: "Invisible";
+                                    small: true;
+                                    accent: root.status-preset == 3;
+                                    soft: root.status-preset != 3;
+                                    clicked => { root.set-status-preset(3); }
+                                }
+                            }
+
+                            Divider {}
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: "Auto-idle timeout";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: root.idle-timeout-mins == 0
+                                        ? "Disabled — status will not change automatically."
+                                        : "Switch to idle after " + root.idle-timeout-mins + " minutes of inactivity.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 9px;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    for item[idx] in [
+                                        { label: "Off", mins: 0 },
+                                        { label: "2m", mins: 2 },
+                                        { label: "5m", mins: 5 },
+                                        { label: "10m", mins: 10 },
+                                        { label: "30m", mins: 30 },
+                                    ] : Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 30px;
+                                        border-radius: VxTheme.radius-control;
+                                        background: root.idle-timeout-mins == item.mins ? VxTheme.accent.transparentize(0.85) :
+                                                    idle-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                        border-color: root.idle-timeout-mins == item.mins ? VxTheme.accent.transparentize(0.5) : VxTheme.border-subtle;
+                                        border-width: 1px;
+
+                                        idle-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.set-idle-timeout(item.mins); }
+                                        }
+
+                                        Text {
+                                            text: item.label;
+                                            color: root.idle-timeout-mins == item.mins ? VxTheme.accent : VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            font-weight: root.idle-timeout-mins == item.mins ? 700 : 500;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -999,76 +1131,82 @@ export component SettingsView inherits Rectangle {
                         Divider {}
 
                         VerticalLayout {
-                            spacing: 8px;
-                            ThemePresetCard {
-                                label: "Voxlink";
-                                detail: "Default premium broadcast shell.";
-                                selected: root.theme-preset == 0;
-                                tone: #54d2ff;
-                                swatch-a: #54d2ff;
-                                swatch-b: #7ce5c8;
-                                swatch-c: #13202d;
-                                clicked => { root.select-theme-preset(0); }
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                ThemePresetCard {
+                                    label: "Voxlink";
+                                    selected: root.theme-preset == 0;
+                                    tone: #54d2ff;
+                                    swatch-a: #54d2ff;
+                                    swatch-b: #7ce5c8;
+                                    swatch-c: #13202d;
+                                    clicked => { root.select-theme-preset(0); }
+                                }
+                                ThemePresetCard {
+                                    label: "360 Party";
+                                    selected: root.theme-preset == 1;
+                                    tone: #8be14f;
+                                    swatch-a: #8be14f;
+                                    swatch-b: #f3c65d;
+                                    swatch-c: #192715;
+                                    clicked => { root.select-theme-preset(1); }
+                                }
                             }
-                            ThemePresetCard {
-                                label: "360 Party";
-                                detail: "Green-room glow with retro console energy.";
-                                selected: root.theme-preset == 1;
-                                tone: #8be14f;
-                                swatch-a: #8be14f;
-                                swatch-b: #f3c65d;
-                                swatch-c: #192715;
-                                clicked => { root.select-theme-preset(1); }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                ThemePresetCard {
+                                    label: "Deep Space";
+                                    selected: root.theme-preset == 2;
+                                    tone: #6cc9ff;
+                                    swatch-a: #6cc9ff;
+                                    swatch-b: #bb8cff;
+                                    swatch-c: #141c3a;
+                                    clicked => { root.select-theme-preset(2); }
+                                }
+                                ThemePresetCard {
+                                    label: "Retro Tech";
+                                    selected: root.theme-preset == 3;
+                                    tone: #5cf3a6;
+                                    swatch-a: #5cf3a6;
+                                    swatch-b: #ffca5c;
+                                    swatch-c: #111d18;
+                                    clicked => { root.select-theme-preset(3); }
+                                }
                             }
-                            ThemePresetCard {
-                                label: "Deep Space";
-                                detail: "Orbital blues, violet trims, calmer contrast.";
-                                selected: root.theme-preset == 2;
-                                tone: #6cc9ff;
-                                swatch-a: #6cc9ff;
-                                swatch-b: #bb8cff;
-                                swatch-c: #141c3a;
-                                clicked => { root.select-theme-preset(2); }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                ThemePresetCard {
+                                    label: "Amber CRT";
+                                    selected: root.theme-preset == 4;
+                                    tone: #ffbe4f;
+                                    swatch-a: #ffbe4f;
+                                    swatch-b: #fff0b2;
+                                    swatch-c: #291c0f;
+                                    clicked => { root.select-theme-preset(4); }
+                                }
+                                ThemePresetCard {
+                                    label: "Noir";
+                                    selected: root.theme-preset == 5;
+                                    tone: #90a8ff;
+                                    swatch-a: #90a8ff;
+                                    swatch-b: #cfd8f4;
+                                    swatch-c: #151921;
+                                    clicked => { root.select-theme-preset(5); }
+                                }
                             }
-                            ThemePresetCard {
-                                label: "Retro Tech";
-                                detail: "Old-school control console with phosphor edges.";
-                                selected: root.theme-preset == 3;
-                                tone: #5cf3a6;
-                                swatch-a: #5cf3a6;
-                                swatch-b: #ffca5c;
-                                swatch-c: #111d18;
-                                clicked => { root.select-theme-preset(3); }
-                            }
-                            ThemePresetCard {
-                                label: "Amber CRT";
-                                detail: "Warm phosphor amber with old-school monitor depth.";
-                                selected: root.theme-preset == 4;
-                                tone: #ffbe4f;
-                                swatch-a: #ffbe4f;
-                                swatch-b: #fff0b2;
-                                swatch-c: #291c0f;
-                                clicked => { root.select-theme-preset(4); }
-                            }
-                            ThemePresetCard {
-                                label: "Midnight Noir";
-                                detail: "Minimal graphite shell with cool blue edge lighting.";
-                                selected: root.theme-preset == 5;
-                                tone: #90a8ff;
-                                swatch-a: #90a8ff;
-                                swatch-b: #cfd8f4;
-                                swatch-c: #151921;
-                                clicked => { root.select-theme-preset(5); }
-                            }
-                            ThemePresetCard {
-                                label: "Arctic Glass";
-                                detail: "Frosted cyan surfaces with airy contrast and clean edges.";
-                                selected: root.theme-preset == 6;
-                                tone: #5fdaf4;
-                                swatch-a: #5fdaf4;
-                                swatch-b: #c8f6ff;
-                                swatch-c: #13292f;
-                                clicked => { root.select-theme-preset(6); }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                ThemePresetCard {
+                                    label: "Arctic Glass";
+                                    selected: root.theme-preset == 6;
+                                    tone: #5fdaf4;
+                                    swatch-a: #5fdaf4;
+                                    swatch-b: #c8f6ff;
+                                    swatch-c: #13292f;
+                                    clicked => { root.select-theme-preset(6); }
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
                             }
                         }
                     }
@@ -1222,7 +1360,7 @@ export component SettingsView inherits Rectangle {
                             VerticalLayout {
                                 alignment: center;
                                 Text {
-                                    text: root.account-email;
+                                    text: root.streamer-mode ? "****@****.***" : root.account-email;
                                     color: VxTheme.text-primary;
                                     font-size: 12px;
                                     font-weight: 600;
@@ -1247,6 +1385,78 @@ export component SettingsView inherits Rectangle {
                                 soft: true;
                                 horizontal-stretch: 1;
                                 clicked => { root.revoke-all-sessions(); }
+                            }
+                        }
+                        Divider { }
+                        // Change display name
+                        FieldLabel { text: "Display Name"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VxInput {
+                                horizontal-stretch: 1;
+                                text <=> root.acct-new-name;
+                                placeholder: "New display name";
+                            }
+                            VxButton {
+                                label: "Save";
+                                accent: true;
+                                clicked => {
+                                    if root.acct-new-name != "" {
+                                        root.change-display-name(root.acct-new-name);
+                                        root.acct-new-name = "";
+                                    }
+                                }
+                            }
+                        }
+                        // Change password
+                        FieldLabel { text: "Change Password"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VxInput {
+                                horizontal-stretch: 1;
+                                text <=> root.acct-old-pw;
+                                placeholder: "Current password";
+                            }
+                            VxInput {
+                                horizontal-stretch: 1;
+                                text <=> root.acct-new-pw;
+                                placeholder: "New password";
+                            }
+                            VxButton {
+                                label: "Change";
+                                accent: true;
+                                clicked => {
+                                    if root.acct-old-pw != "" && root.acct-new-pw != "" {
+                                        root.change-password(root.acct-old-pw, root.acct-new-pw);
+                                        root.acct-old-pw = "";
+                                        root.acct-new-pw = "";
+                                    }
+                                }
+                            }
+                        }
+                        Divider { }
+                        // Delete account
+                        FieldLabel { text: "Danger Zone"; }
+                        Text {
+                            text: "Type DELETE to confirm account deletion.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VxInput {
+                                horizontal-stretch: 1;
+                                text <=> root.acct-delete-confirm;
+                                placeholder: "Type DELETE";
+                            }
+                            VxButton {
+                                label: "Delete Account";
+                                soft: true;
+                                enabled: root.acct-delete-confirm == "DELETE";
+                                clicked => {
+                                    root.delete-account();
+                                    root.acct-delete-confirm = "";
+                                }
                             }
                         }
                     }
@@ -1329,10 +1539,54 @@ export component SettingsView inherits Rectangle {
                         }
                     }
 
-                    Text {
-                        text: "Add WAV files via config. Max 16 clips.";
-                        color: VxTheme.text-muted;
-                        font-size: 9px;
+                    if root.soundboard-clips.length < 16 : VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "ADD CLIP"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VxInput {
+                                text <=> root.new-clip-name;
+                                placeholder: "Clip name";
+                                horizontal-stretch: 1;
+                            }
+                            VxInput {
+                                text <=> root.new-clip-keybind;
+                                placeholder: "Keybind (e.g. f5)";
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            VxInput {
+                                text <=> root.new-clip-path;
+                                placeholder: "Path to .wav file";
+                                horizontal-stretch: 1;
+                                accepted => {
+                                    if root.new-clip-name != "" && root.new-clip-path != "" {
+                                        root.add-soundboard-clip(root.new-clip-name, root.new-clip-path, root.new-clip-keybind);
+                                        root.new-clip-name = "";
+                                        root.new-clip-path = "";
+                                        root.new-clip-keybind = "";
+                                    }
+                                }
+                            }
+                            VxButton {
+                                label: "Add";
+                                small: true;
+                                accent: true;
+                                enabled: root.new-clip-name != "" && root.new-clip-path != "";
+                                clicked => {
+                                    root.add-soundboard-clip(root.new-clip-name, root.new-clip-path, root.new-clip-keybind);
+                                    root.new-clip-name = "";
+                                    root.new-clip-path = "";
+                                    root.new-clip-keybind = "";
+                                }
+                            }
+                        }
+                        Text {
+                            text: "48kHz mono WAV recommended. Max 16 clips, 5s each.";
+                            color: VxTheme.text-muted;
+                            font-size: 9px;
+                        }
                     }
                 }
             }
@@ -1351,6 +1605,12 @@ export component SettingsView inherits Rectangle {
                     color: VxTheme.text-muted;
                     font-size: 10px;
                 }
+            }
+
+            VxButton {
+                label: "About Voxlink";
+                ghost: true;
+                clicked => { root.show-about(); }
             }
         }
     }

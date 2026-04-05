@@ -110,6 +110,30 @@ pub struct AppConfig {
     /// Category names that are collapsed in the channel list.
     #[serde(default)]
     pub collapsed_categories: Vec<String>,
+    /// User IDs whose DM threads are closed/archived (hidden from list, messages preserved).
+    #[serde(default)]
+    pub closed_dm_user_ids: Vec<String>,
+    /// Activity status text (e.g. "Playing Valorant"). Persisted across sessions.
+    #[serde(default)]
+    pub activity: String,
+    /// Notification sound style: "default", "subtle", "chime", "none"
+    #[serde(default = "default_notification_sound")]
+    pub notification_sound: String,
+    /// Show OS-level desktop notifications for mentions and DMs when the window is unfocused.
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
+    /// Last read message ID per channel. Used to show "NEW" separator in chat.
+    #[serde(default)]
+    pub last_read_messages: std::collections::HashMap<String, String>,
+    /// Channel IDs that the user has favorited (shown at top of channel list).
+    #[serde(default)]
+    pub favorite_channels: Vec<String>,
+    /// Recently used reaction emojis (most recent first, max 5). Shown as quick-access in the emoji picker.
+    #[serde(default)]
+    pub recent_reactions: Vec<String>,
+    /// Whether the first-run welcome screen has been dismissed. Once true, the welcome card is hidden.
+    #[serde(default)]
+    pub first_run_completed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +212,10 @@ fn default_ducking_threshold() -> f32 {
     0.05
 }
 
+fn default_notification_sound() -> String {
+    "default".into()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -238,6 +266,14 @@ impl Default for AppConfig {
             soundboard_clips: Vec::new(),
             account_email: None,
             collapsed_categories: Vec::new(),
+            closed_dm_user_ids: Vec::new(),
+            activity: String::new(),
+            notification_sound: default_notification_sound(),
+            desktop_notifications: default_true(),
+            last_read_messages: std::collections::HashMap::new(),
+            favorite_channels: Vec::new(),
+            recent_reactions: Vec::new(),
+            first_run_completed: false,
         }
     }
 }
@@ -395,6 +431,14 @@ mod tests {
             soundboard_clips: Vec::new(),
             account_email: None,
             collapsed_categories: Vec::new(),
+            closed_dm_user_ids: Vec::new(),
+            activity: String::new(),
+            notification_sound: "chime".into(),
+            desktop_notifications: true,
+            last_read_messages: std::collections::HashMap::new(),
+            favorite_channels: Vec::new(),
+            recent_reactions: Vec::new(),
+            first_run_completed: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
@@ -583,6 +627,7 @@ mod tests {
         assert!((config.ducking_amount - 0.0).abs() < f32::EPSILON);
         assert!((config.ducking_threshold - 0.05).abs() < f32::EPSILON);
         assert!(config.soundboard_clips.is_empty());
+        assert!(config.desktop_notifications); // default true
     }
 
     #[test]

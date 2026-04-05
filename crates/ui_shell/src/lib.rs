@@ -1,7 +1,7 @@
 slint::include_modules!();
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use shared_types::{AppView, PerfSnapshot, SpaceRole};
 use slint::ComponentHandle;
@@ -380,6 +380,8 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
             is_category_header: false,
             category_collapsed: false,
             mention_count: 0,
+            auto_delete_hours: c.auto_delete_hours as i32,
+            ..Default::default()
         })
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
@@ -395,10 +397,15 @@ pub fn render_space(
     outgoing_requests: &[shared_types::FriendRequest],
     self_user_id: Option<&str>,
     collapsed_categories: &[String],
+    user_notes: &std::collections::HashMap<String, String>,
+    channel_notification_overrides: &std::collections::HashMap<String, String>,
+    favorite_channels: &[String],
 ) {
     let query = search_query.trim().to_lowercase();
     let mut visible_text_channels = 0i32;
     let mut visible_voice_channels = 0i32;
+    let mut visible_favorite_channels = 0i32;
+    let fav_channel_ids: HashSet<&str> = favorite_channels.iter().map(|s| s.as_str()).collect();
     let favorite_ids: HashSet<&str> = favorites
         .iter()
         .map(|friend| friend.user_id.as_str())
@@ -425,6 +432,10 @@ pub fn render_space(
             }
             let cat = channel.category.clone();
             let is_collapsed = !cat.is_empty() && collapsed.contains(&cat);
+            let is_fav = fav_channel_ids.contains(channel.id.as_str());
+            if is_fav {
+                visible_favorite_channels += 1;
+            }
 
             ChannelData {
                 id: channel.id.clone().into(),
@@ -447,6 +458,13 @@ pub fn render_space(
                 is_category_header: false,
                 category_collapsed: is_collapsed,
                 mention_count: 0,
+                auto_delete_hours: channel.auto_delete_hours as i32,
+                is_favorite: is_fav,
+                notification_setting: channel_notification_overrides
+                    .get(&channel.id)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into(),
             }
         })
         .collect();
@@ -485,24 +503,29 @@ pub fn render_space(
         })
         .collect();
     visible_members.sort_by(|left, right| {
+        // Favorites first, then in-voice, then by role, then alphabetical
         favorite_ids
             .contains(stable_member_key(right))
             .cmp(&favorite_ids.contains(stable_member_key(left)))
-            .then_with(|| member_role_tier(right.role).cmp(&member_role_tier(left.role)))
             .then_with(|| right.channel_id.is_some().cmp(&left.channel_id.is_some()))
+            .then_with(|| member_role_tier(right.role).cmp(&member_role_tier(left.role)))
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
     let members: Vec<MemberData> = visible_members
         .into_iter()
         .map(|member| {
             let stable_id = stable_member_key(member);
-            member_data_from_info(
+            let mut md = member_data_from_info(
                 member,
                 favorite_ids.contains(stable_id),
                 incoming_ids.contains(stable_id),
                 outgoing_ids.contains(stable_id),
                 self_user_id == Some(stable_id),
-            )
+            );
+            if let Some(note) = user_notes.get(stable_id) {
+                md.user_note = note.clone().into();
+            }
+            md
         })
         .collect();
 
@@ -511,6 +534,7 @@ pub fn render_space(
     window.set_members(std::rc::Rc::new(slint::VecModel::from(members)).into());
     window.set_visible_text_channels(visible_text_channels);
     window.set_visible_voice_channels(visible_voice_channels);
+    window.set_visible_favorite_channels(visible_favorite_channels);
     window.set_visible_members(visible_member_count);
 }
 
@@ -542,12 +566,47 @@ pub fn set_chat_messages(
     messages: &[shared_types::TextMessageData],
     self_name: &str,
 ) {
+    set_chat_messages_with_last_read(window, messages, self_name, None);
+}
+
+/// Set chat messages with an optional last-read message ID.
+/// If provided, the first message after that ID gets a "NEW" separator.
+pub fn set_chat_messages_with_last_read(
+    window: &MainWindow,
+    messages: &[shared_types::TextMessageData],
+    self_name: &str,
+    last_read_message_id: Option<&str>,
+) {
+    // Count replies per parent message
+    let mut reply_counts: HashMap<&str, i32> = HashMap::new();
+    for m in messages {
+        if let Some(ref parent_id) = m.reply_to_message_id {
+            *reply_counts.entry(parent_id.as_str()).or_default() += 1;
+        }
+    }
+
+    // Find the index of the first unread message (the one right after last_read_message_id)
+    let new_separator_idx: Option<usize> = last_read_message_id.and_then(|last_read| {
+        messages
+            .iter()
+            .position(|m| m.message_id == last_read)
+            .and_then(|pos| {
+                // The separator goes on the next message (first unread)
+                let next = pos + 1;
+                if next < messages.len() {
+                    Some(next)
+                } else {
+                    None // all messages are read
+                }
+            })
+    });
+
     let mut model: Vec<ChatMessage> = Vec::with_capacity(messages.len());
     let mut prev_sender: Option<&str> = None;
     let mut prev_timestamp: u64 = 0;
     let mut prev_day: u64 = 0;
 
-    for m in messages {
+    for (idx, m) in messages.iter().enumerate() {
         let day = m.timestamp / 86400;
         // Insert date separator at day boundaries
         if day != prev_day && m.timestamp > 0 {
@@ -561,6 +620,12 @@ pub fn set_chat_messages(
         }
 
         let mut msg = text_msg_to_chat_msg(m, self_name);
+        msg.reply_count = reply_counts.get(m.message_id.as_str()).copied().unwrap_or(0);
+
+        // Mark the first unread message with the NEW separator
+        if new_separator_idx == Some(idx) {
+            msg.is_new_separator = true;
+        }
 
         // Group consecutive messages from same sender within 5 minutes
         let same_sender = prev_sender == Some(m.sender_name.as_str());
@@ -654,6 +719,27 @@ fn member_data_from_info(
         has_incoming_request,
         has_outgoing_request,
         is_self,
+        bio: member.bio.clone().into(),
+        nickname: member.nickname.clone().unwrap_or_default().into(),
+        user_note: Default::default(),
+        role_color_index: hex_color_to_index(&member.role_color),
+        activity: member.activity.clone().into(),
+    }
+}
+
+/// Map a hex color string from the server to a role color index for the UI.
+/// Returns 0 for default/unknown, 1-8 for known palette colors.
+fn hex_color_to_index(hex: &str) -> i32 {
+    match hex.to_lowercase().as_str() {
+        "#ff5555" => 1, // red
+        "#5599ff" => 2, // blue
+        "#55ff55" => 3, // green
+        "#ffd700" => 4, // gold
+        "#b366ff" => 5, // purple
+        "#ff9944" => 6, // orange
+        "#ff77aa" => 7, // pink
+        "#44dddd" => 8, // cyan
+        _ => 0,         // default
     }
 }
 
@@ -744,6 +830,7 @@ fn member_widget_entries(
             is_in_voice: member.channel_id.is_some(),
             color_index: member_color_index(&member.name),
             is_friend: false,
+            last_seen: Default::default(),
         })
         .collect()
 }
@@ -773,6 +860,50 @@ fn stable_member_key(member: &shared_types::MemberInfo) -> &str {
         .as_deref()
         .filter(|id| !id.is_empty())
         .unwrap_or(member.id.as_str())
+}
+
+/// Format a unix timestamp into a human-readable relative time string.
+/// Returns empty string if the timestamp is 0.
+pub fn format_relative_time(unix_secs: u64) -> String {
+    if unix_secs == 0 {
+        return String::new();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let delta = now.saturating_sub(unix_secs);
+    if delta < 60 {
+        "Just now".into()
+    } else if delta < 3600 {
+        let mins = delta / 60;
+        if mins == 1 {
+            "1 min ago".into()
+        } else {
+            format!("{mins} min ago")
+        }
+    } else if delta < 86_400 {
+        let hours = delta / 3600;
+        if hours == 1 {
+            "1 hour ago".into()
+        } else {
+            format!("{hours} hours ago")
+        }
+    } else if delta < 604_800 {
+        let days = delta / 86_400;
+        if days == 1 {
+            "Yesterday".into()
+        } else {
+            format!("{days} days ago")
+        }
+    } else {
+        let weeks = delta / 604_800;
+        if weeks == 1 {
+            "1 week ago".into()
+        } else {
+            format!("{weeks} weeks ago")
+        }
+    }
 }
 
 fn offline_friend_detail(friend: &shared_types::FavoriteFriend) -> String {
@@ -825,6 +956,12 @@ fn friend_data_from_favorite(friend: &shared_types::FavoriteFriend) -> FriendDat
         (offline_friend_detail(friend), "Offline", false)
     };
 
+    let last_seen = if !friend.is_online && friend.last_seen_at > 0 {
+        format!("Last seen {}", format_relative_time(friend.last_seen_at))
+    } else {
+        String::new()
+    };
+
     FriendData {
         user_id: friend.user_id.clone().into(),
         name: friend.name.clone().into(),
@@ -835,6 +972,7 @@ fn friend_data_from_favorite(friend: &shared_types::FavoriteFriend) -> FriendDat
         is_in_voice,
         color_index: member_color_index(&friend.name),
         is_friend: true,
+        last_seen: last_seen.into(),
     }
 }
 
@@ -904,6 +1042,7 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
     ChatMessage {
         sender_name: m.sender_name.clone().into(),
         sender_initial: sender_initial.into(),
+        sender_id: m.sender_id.clone().into(),
         content: content.into(),
         timestamp: format_timestamp(m.timestamp).into(),
         is_self: m.sender_name == self_name,
@@ -922,6 +1061,9 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         channel_name: Default::default(),
         show_header: true,
         date_separator: Default::default(),
+        reply_count: 0,
+        link_url: m.link_url.clone().unwrap_or_default().into(),
+        is_new_separator: false,
     }
 }
 
@@ -1018,6 +1160,36 @@ fn render_inline(text: &str) -> String {
                 continue;
             }
         }
+        // @everyone / @here → UPPERCASE for visual emphasis
+        if chars[i] == '@' {
+            let rest: String = chars[i..].iter().collect();
+            if rest.starts_with("@everyone") {
+                out.push_str("@EVERYONE");
+                i += "@everyone".len();
+                continue;
+            }
+            if rest.starts_with("@here") {
+                out.push_str("@HERE");
+                i += "@here".len();
+                continue;
+            }
+        }
+        // URL detection — wrap http:// and https:// URLs in angle brackets
+        if chars[i] == 'h' {
+            let rest: String = chars[i..].iter().collect();
+            if rest.starts_with("https://") || rest.starts_with("http://") {
+                // Find end of URL (space, newline, or end of string)
+                let url_end = rest
+                    .find(|c: char| c.is_whitespace())
+                    .unwrap_or(rest.len());
+                let url = &rest[..url_end];
+                out.push_str("\u{1f517} <");
+                out.push_str(url);
+                out.push('>');
+                i += url_end;
+                continue;
+            }
+        }
         out.push(chars[i]);
         i += 1;
     }
@@ -1040,14 +1212,16 @@ fn find_closing_single(chars: &[char], start: usize, marker: char) -> Option<usi
     chars[start..].iter().position(|&c| c == marker).map(|pos| start + pos)
 }
 
-fn message_mentions_user(content: &str, user_name: &str) -> bool {
+pub fn message_mentions_user(content: &str, user_name: &str) -> bool {
+    let lower = content.to_lowercase();
+    if lower.contains("@everyone") || lower.contains("@here") {
+        return true;
+    }
     let trimmed_name = user_name.trim();
     if trimmed_name.is_empty() {
         return false;
     }
-    content
-        .to_lowercase()
-        .contains(&format!("@{}", trimmed_name.to_lowercase()))
+    lower.contains(&format!("@{}", trimmed_name.to_lowercase()))
 }
 
 pub fn format_reactions(reactions: &[shared_types::ReactionData]) -> String {
@@ -1072,6 +1246,67 @@ pub fn format_timestamp(unix_secs: u64) -> String {
     format!("{hours:02}:{minutes:02}")
 }
 
+/// Format an epoch timestamp as a human-readable date+time string for scheduled events.
+fn format_event_time(epoch: i64) -> String {
+    if epoch <= 0 {
+        return String::new();
+    }
+    let epoch = epoch as u64;
+    // Days since epoch → approximate date (good enough for display)
+    let secs_in_day: u64 = 86400;
+    let total_days = epoch / secs_in_day;
+    // Gregorian calendar from days since 1970-01-01
+    let (year, month, day) = {
+        // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+        let z = total_days + 719468;
+        let era = z / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        (y, m, d)
+    };
+    let secs_today = epoch % secs_in_day;
+    let hours = secs_today / 3600;
+    let minutes = (secs_today % 3600) / 60;
+    format!("{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}")
+}
+
+/// Convert a shared_types::ScheduledEvent to the Slint ScheduledEventData struct.
+pub fn scheduled_event_to_data(event: &shared_types::ScheduledEvent) -> ScheduledEventData {
+    ScheduledEventData {
+        id: event.id.as_str().into(),
+        title: event.title.as_str().into(),
+        description: event.description.as_str().into(),
+        start_time: format_event_time(event.start_time).into(),
+        creator_name: event.creator_name.as_str().into(),
+        interested_count: event.interested_count as i32,
+        is_interested: event.is_interested,
+    }
+}
+
+/// Set the full list of scheduled events on the window.
+pub fn set_scheduled_events(window: &MainWindow, events: &[shared_types::ScheduledEvent]) {
+    let model: Vec<ScheduledEventData> = events.iter().map(scheduled_event_to_data).collect();
+    window.set_scheduled_events(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
+/// Set the full list of automod words on the window.
+pub fn set_automod_words(window: &MainWindow, words: &[shared_types::AutomodWord]) {
+    let model: Vec<AutomodWordData> = words
+        .iter()
+        .map(|aw| AutomodWordData {
+            word: aw.word.as_str().into(),
+            action: aw.action.as_str().into(),
+        })
+        .collect();
+    window.set_automod_words(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
 pub fn set_device_lists(window: &MainWindow, inputs: &[String], outputs: &[String]) {
     let input_model: Vec<slint::SharedString> = inputs.iter().map(|s| s.into()).collect();
     let output_model: Vec<slint::SharedString> = outputs.iter().map(|s| s.into()).collect();
@@ -1090,4 +1325,147 @@ pub fn set_soundboard_clips(window: &MainWindow, clips: &[(String, String, Strin
         })
         .collect();
     window.set_soundboard_clips(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
+/// Set the recent reactions quick-access list in the emoji picker.
+pub fn set_recent_reactions(window: &MainWindow, reactions: &[String]) {
+    let model: Vec<slint::SharedString> = reactions.iter().map(|s| s.into()).collect();
+    window.set_recent_reactions(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
+/// Show a profile popup for a member identified by user_id.
+/// Looks up the member in the provided space state and populates the popup fields.
+pub fn show_profile_popup(
+    window: &MainWindow,
+    space: Option<&shared_types::SpaceState>,
+    user_id: &str,
+) {
+    let member = space.and_then(|s| {
+        s.members.iter().find(|m| {
+            // Match by user_id if available, fall back to peer_id
+            (m.user_id.is_some() && m.user_id.as_deref() == Some(user_id))
+                || m.id == user_id
+        })
+    });
+
+    let Some(member) = member else {
+        // Could not find the member — nothing to show
+        return;
+    };
+
+    let initial = member
+        .name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    let color_index = member_color_index(&member.name);
+
+    let status_text = match member.status_preset {
+        shared_types::UserStatus::Online => "Online",
+        shared_types::UserStatus::Idle => "Idle",
+        shared_types::UserStatus::DoNotDisturb => "Do Not Disturb",
+        shared_types::UserStatus::Invisible => "Invisible",
+    };
+
+    window.set_profile_popup_user_id(user_id.into());
+    window.set_profile_popup_name(member.name.clone().into());
+    window.set_profile_popup_initial(initial.into());
+    window.set_profile_popup_color_index(color_index);
+    window.set_profile_popup_bio(member.bio.clone().into());
+    window.set_profile_popup_status(status_text.into());
+    window.set_profile_popup_role(member_role_label(member.role).into());
+    window.set_profile_popup_role_color(member.role_color.clone().into());
+    window.set_profile_popup_role_color_index(hex_color_to_index(&member.role_color));
+    window.set_profile_popup_activity(member.activity.clone().into());
+    window.set_profile_popup_visible(true);
+}
+
+/// Emoji shortcode lookup table: (shortcode, unicode_char).
+pub fn emoji_shortcodes() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("thumbsup", "\u{1F44D}"),
+        ("thumbsdown", "\u{1F44E}"),
+        ("heart", "\u{2764}\u{FE0F}"),
+        ("fire", "\u{1F525}"),
+        ("star", "\u{2B50}"),
+        ("party", "\u{1F389}"),
+        ("laugh", "\u{1F602}"),
+        ("cry", "\u{1F622}"),
+        ("angry", "\u{1F621}"),
+        ("thinking", "\u{1F914}"),
+        ("cool", "\u{1F60E}"),
+        ("clap", "\u{1F44F}"),
+        ("wave", "\u{1F44B}"),
+        ("pray", "\u{1F64F}"),
+        ("100", "\u{1F4AF}"),
+        ("check", "\u{2705}"),
+        ("x", "\u{274C}"),
+        ("warning", "\u{26A0}\u{FE0F}"),
+        ("music", "\u{1F3B5}"),
+        ("eyes", "\u{1F440}"),
+        ("rocket", "\u{1F680}"),
+        ("skull", "\u{1F480}"),
+        ("ghost", "\u{1F47B}"),
+        ("sparkles", "\u{2728}"),
+        ("tada", "\u{1F389}"),
+        ("sob", "\u{1F62D}"),
+        ("joy", "\u{1F602}"),
+        ("wink", "\u{1F609}"),
+        ("grin", "\u{1F601}"),
+        ("smile", "\u{1F604}"),
+        ("sunglasses", "\u{1F60E}"),
+        ("ok", "\u{1F44C}"),
+        ("muscle", "\u{1F4AA}"),
+        ("brain", "\u{1F9E0}"),
+        ("crown", "\u{1F451}"),
+        ("gem", "\u{1F48E}"),
+        ("bulb", "\u{1F4A1}"),
+        ("boom", "\u{1F4A5}"),
+        ("zzz", "\u{1F4A4}"),
+        ("poop", "\u{1F4A9}"),
+    ]
+}
+
+/// Set the recent-reactions model on the window from a list of emoji strings.
+/// Replace `:shortcode:` patterns in text with their unicode emoji.
+/// Unknown shortcodes are left as-is.
+pub fn resolve_emoji_shortcodes(text: &str) -> String {
+    let table = emoji_shortcodes();
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find(':') {
+        // Push everything before the colon
+        result.push_str(&rest[..start]);
+
+        // Look for closing colon after the opening one
+        let after_colon = &rest[start + 1..];
+        if let Some(end) = after_colon.find(':') {
+            let candidate = &after_colon[..end];
+            // Valid shortcode: non-empty, alphanumeric/underscore only
+            if !candidate.is_empty()
+                && candidate
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
+                let lower = candidate.to_lowercase();
+                if let Some((_, emoji)) = table.iter().find(|(name, _)| *name == lower) {
+                    result.push_str(emoji);
+                    rest = &after_colon[end + 1..];
+                    continue;
+                }
+            }
+            // Not a known shortcode — emit the colon and continue scanning
+            result.push(':');
+            rest = after_colon;
+        } else {
+            // No closing colon — emit the rest and stop
+            result.push_str(&rest[start..]);
+            rest = "";
+        }
+    }
+    result.push_str(rest);
+    result
 }

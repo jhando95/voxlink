@@ -44,6 +44,7 @@ pub fn setup_create_space(
                 log::error!("Failed to create space: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed: Not connected".into());
+                    crate::helpers::show_toast(&w, "Failed to create space", 3);
                 }
             }
         });
@@ -87,6 +88,7 @@ pub fn setup_join_space(
                 log::error!("Failed to join space: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed: Not connected".into());
+                    crate::helpers::show_toast(&w, "Failed to join space", 3);
                 }
             }
         });
@@ -167,6 +169,7 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
         let s = state.borrow();
         if let Some(ref space) = s.space {
             if w.get_current_space_id() == space.id {
+                let cfg = config_store::load_config();
                 ui_shell::render_space(
                     &w,
                     space,
@@ -175,7 +178,10 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
                     &s.incoming_friend_requests,
                     &s.outgoing_friend_requests,
                     s.self_user_id.as_deref(),
-                    &config_store::load_config().collapsed_categories,
+                    &cfg.collapsed_categories,
+                    &cfg.user_notes,
+                    &cfg.channel_notification_overrides,
+                    &cfg.favorite_channels,
                 );
             }
         }
@@ -358,6 +364,7 @@ pub fn setup_delete_space(
                 log::error!("Failed to delete space: {e}");
                 if let Some(w) = window_weak.upgrade() {
                     w.set_status_text("Failed to delete space".into());
+                    crate::helpers::show_toast(&w, "Failed to delete space", 3);
                 }
             }
         });
@@ -549,6 +556,26 @@ pub fn setup_set_channel_slow_mode(
     });
 }
 
+pub fn setup_set_channel_auto_delete(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_channel_auto_delete(move |channel_id, auto_delete_hours| {
+        let channel_id = channel_id.to_string();
+        let auto_delete_hours = auto_delete_hours.max(0) as u32;
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetChannelAutoDelete { channel_id, auto_delete_hours })
+                .await;
+        });
+    });
+}
+
 pub fn setup_set_channel_category(
     window: &MainWindow,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
@@ -672,6 +699,47 @@ pub fn setup_whisper(
     }
 }
 
+pub fn setup_rename_space(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_rename_space(move |name| {
+        let name = name.to_string().trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let n = net.lock().await;
+            let _ = n
+                .send_signal(&SignalMessage::RenameSpace { name })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_space_description(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_set_space_description(move |description| {
+        let description = description.to_string().trim().to_string();
+        let net = network.clone();
+        rt.spawn(async move {
+            let n = net.lock().await;
+            let _ = n
+                .send_signal(&SignalMessage::SetSpaceDescription { description })
+                .await;
+        });
+    });
+}
+
 pub fn setup_save_user_note(window: &MainWindow) {
     let window_weak = window.as_weak();
     window.on_save_user_note(move |user_id, note| {
@@ -688,5 +756,256 @@ pub fn setup_save_user_note(window: &MainWindow) {
         if let Some(w) = window_weak.upgrade() {
             w.set_status_text("Note saved".into());
         }
+    });
+}
+
+pub fn setup_set_role_color(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_role_color(move |role_tier, color| {
+        let role = match role_tier {
+            3 => SpaceRole::Owner,
+            2 => SpaceRole::Admin,
+            1 => SpaceRole::Moderator,
+            _ => SpaceRole::Member,
+        };
+        let color = color.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetRoleColor { role, color })
+                .await;
+        });
+    });
+}
+
+pub fn setup_set_activity(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_set_activity(move |activity| {
+        let activity = activity.to_string().trim().to_string();
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SetActivity { activity })
+                .await;
+        });
+    });
+}
+
+pub fn setup_create_event(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_create_event(move |title, description, start_time| {
+        let title = title.to_string().trim().to_string();
+        let description = description.to_string().trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::CreateScheduledEvent {
+                    title,
+                    description,
+                    start_time: start_time as i64,
+                    end_time: 0,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_delete_event(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_delete_event(move |event_id| {
+        let event_id = event_id.to_string();
+        if event_id.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::DeleteScheduledEvent { event_id })
+                .await;
+        });
+    });
+}
+
+pub fn setup_toggle_event_interest(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_toggle_event_interest(move |event_id| {
+        let event_id = event_id.to_string();
+        if event_id.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::ToggleEventInterest { event_id })
+                .await;
+        });
+    });
+}
+
+pub fn setup_list_events(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_list_events(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::ListScheduledEvents)
+                .await;
+        });
+    });
+}
+
+pub fn setup_browse_public_spaces(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_browse_public_spaces(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net.send_signal(&SignalMessage::BrowsePublicSpaces).await;
+        });
+    });
+}
+
+pub fn setup_set_space_public(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_set_space_public(move |is_public| {
+        let net = network.clone();
+        rt.spawn(async move {
+            let n = net.lock().await;
+            let _ = n
+                .send_signal(&SignalMessage::SetSpacePublic { is_public })
+                .await;
+        });
+    });
+}
+
+pub fn setup_join_public_space(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_join_public_space(move |invite_code| {
+        let net = network.clone();
+        let code = invite_code.to_string();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net.send_signal(&SignalMessage::JoinSpace {
+                invite_code: code,
+                user_name: String::new(), // server uses auth identity
+            }).await;
+        });
+    });
+}
+
+pub fn setup_add_automod_word(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_add_automod_word(move |word, action| {
+        let word = word.to_string().trim().to_string();
+        let action = action.to_string().trim().to_string();
+        if word.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::AddAutomodWord { word, action })
+                .await;
+        });
+    });
+}
+
+pub fn setup_remove_automod_word(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_remove_automod_word(move |word| {
+        let word = word.to_string().trim().to_string();
+        if word.is_empty() {
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::RemoveAutomodWord { word })
+                .await;
+        });
+    });
+}
+
+pub fn setup_list_automod_words(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    window.on_list_automod_words(move || {
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::ListAutomodWords)
+                .await;
+        });
     });
 }

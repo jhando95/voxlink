@@ -64,8 +64,17 @@ pub fn handle_channel_joined(
         space.active_channel_id = Some(channel_id.to_string());
     }
 
+    // Look up the channel topic from space channel list
+    let channel_topic = s
+        .space
+        .as_ref()
+        .and_then(|sp| sp.channels.iter().find(|c| c.id == channel_id))
+        .map(|c| c.topic.clone())
+        .unwrap_or_default();
+
     w.set_room_code(channel_name.into());
     w.set_active_channel_id(channel_id.into());
+    w.set_channel_topic(channel_topic.into());
     w.set_in_space_channel(true);
     w.set_reconnect_attempts(0);
     w.set_dropped_frames_baseline(w.get_dropped_frames_total());
@@ -191,6 +200,7 @@ pub fn handle_channel_left(
     ui_shell::set_participants(w, &[]);
     w.set_room_code(slint::SharedString::default());
     w.set_active_channel_id(slint::SharedString::default());
+    w.set_channel_topic(slint::SharedString::default());
     w.set_is_muted(false);
     w.set_is_deafened(false);
     w.set_in_space_channel(false);
@@ -198,6 +208,8 @@ pub fn handle_channel_left(
     w.set_reconnect_attempts(0);
     w.set_dropped_frames_baseline(w.get_dropped_frames_total());
     w.set_dropped_frames(0);
+    w.set_recording_active(false);
+    w.set_recording_user(slint::SharedString::default());
     w.set_window_title("Voxlink".into());
 
     let audio = ctx.audio.clone();
@@ -217,12 +229,20 @@ pub fn handle_channel_topic_changed(
     topic: &str,
 ) {
     let mut s = state.borrow_mut();
+    let is_active_channel = s
+        .space
+        .as_ref()
+        .and_then(|sp| sp.active_channel_id.as_deref())
+        == Some(channel_id);
     if let Some(ref mut space) = s.space {
         if let Some(channel) = space.channels.iter_mut().find(|c| c.id == channel_id) {
             channel.topic = topic.to_string();
         }
     }
     drop(s);
+    if is_active_channel {
+        w.set_channel_topic(topic.into());
+    }
     crate::friends::sync_ui(w, state);
 }
 

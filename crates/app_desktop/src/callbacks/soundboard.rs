@@ -3,6 +3,63 @@ use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+pub fn setup_add_clip(
+    window: &MainWindow,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let window_weak = window.as_weak();
+    let audio = audio.clone();
+    let rt = rt_handle.clone();
+    window.on_add_soundboard_clip(move |name, path, keybind| {
+        let name = name.trim().to_string();
+        let path = path.trim().to_string();
+        let keybind = keybind.trim().to_string();
+        if name.is_empty() || path.is_empty() {
+            return;
+        }
+        let audio = audio.clone();
+        let window_weak = window_weak.clone();
+        rt.spawn(async move {
+            // Try to load the clip first
+            let load_ok = if let Ok(aud) = audio.try_lock() {
+                aud.load_soundboard_clip(&path).is_ok()
+            } else {
+                false
+            };
+            if !load_ok {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = window_weak.upgrade() {
+                        w.set_status_text("Failed to load WAV file. Check the path.".into());
+                    }
+                });
+                return;
+            }
+            // Save to config
+            let _lock = crate::helpers::CONFIG_LOCK.lock().ok();
+            let mut cfg = config_store::load_config();
+            cfg.soundboard_clips.push(config_store::SoundboardClipConfig {
+                name: name.clone(),
+                path: path.clone(),
+                keybind: if keybind.is_empty() { None } else { Some(keybind.clone()) },
+            });
+            let _ = config_store::save_config(&cfg);
+            // Update UI
+            let clip_tuples: Vec<(String, String, String)> = cfg
+                .soundboard_clips
+                .iter()
+                .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
+                .collect();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = window_weak.upgrade() {
+                    ui_shell::set_soundboard_clips(&w, &clip_tuples);
+                    crate::helpers::show_toast(&w, &format!("Loaded soundboard clip: {name}"), 1);
+                }
+            });
+        });
+    });
+}
+
 pub fn setup_play_clip(
     window: &MainWindow,
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,

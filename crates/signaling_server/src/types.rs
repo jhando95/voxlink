@@ -27,7 +27,11 @@ pub(crate) struct Peer {
     pub room_code_cache: std::sync::RwLock<Option<String>>,
     pub is_muted: AtomicBool,
     pub is_deafened: AtomicBool,
+    /// Server-deafen: when true, the server stops relaying audio TO this peer.
+    pub is_server_deafened: AtomicBool,
     pub status: Mutex<String>,
+    /// Activity status text (e.g. "Playing Valorant"), empty if none
+    pub activity: Mutex<String>,
     pub tx: Mutex<Tx>,
     pub space_id: Mutex<Option<String>>,
     pub typing_channel_id: Mutex<Option<String>>,
@@ -98,17 +102,21 @@ pub(crate) const MAX_SPACE_AUDIT_ENTRIES: usize = 64;
 pub(crate) struct Space {
     pub id: String,
     pub name: String,
+    pub description: String,
     pub invite_code: String,
     pub owner_id: String,
     pub channels: Vec<ChannelMeta>,
     pub member_ids: Vec<String>,
     pub member_roles: HashMap<String, shared_types::SpaceRole>,
+    /// Role display colors: role_storage_key -> hex color string (e.g. "owner" -> "#ffd700")
+    pub role_colors: HashMap<String, String>,
     /// Text messages per channel_id, capped at LIMITS.max_channel_messages.
     pub text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>>,
     pub audit_log: VecDeque<shared_types::SpaceAuditEntry>,
     /// Slow mode: (channel_id, peer_id) -> last message epoch seconds
     pub slow_mode_timestamps: HashMap<(String, String), u64>,
     pub created_at: Instant,
+    pub is_public: bool,
 }
 
 pub(crate) struct ChannelMeta {
@@ -125,6 +133,8 @@ pub(crate) struct ChannelMeta {
     /// Minimum role required to access this channel (default: Member)
     pub min_role: shared_types::SpaceRole,
     pub position: u32,
+    /// Auto-delete messages after N hours (0 = disabled)
+    pub auto_delete_hours: u32,
 }
 
 pub(crate) struct ServerState {

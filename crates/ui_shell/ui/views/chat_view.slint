@@ -22,6 +22,7 @@ export component ChatView inherits Rectangle {
     in property <[ChatMessage]> chat-search-results: [];
     in-out property <string> chat-search-query: "";
     callback search-messages(string);
+    in property <[string]> recent-reactions: [];
     in property <int> typing-dot-phase: 0;
 
     // Thread panel
@@ -33,8 +34,23 @@ export component ChatView inherits Rectangle {
     callback open-thread(string, string);
     callback close-thread();
 
+    // Slow mode countdown
+    in property <int> slow-mode-secs: 0;
+    in-out property <int> slow-mode-remaining: 0;
+
+    // Mention autocomplete
+    in property <bool> mention-popup-visible: false;
+    in property <[string]> mention-suggestions: [];
+    in-out property <int> mention-selected-index: 0;
+    callback mention-input-changed(string);
+    callback mention-selected(int);
+
     property <bool> show-pinned-panel: true;
     property <bool> show-search-panel: false;
+    property <bool> show-emoji-picker: false;
+    property <string> emoji-picker-target-message-id: "";
+    property <int> emoji-tab: 0; // 0=Recent 1=Smileys 2=People 3=Nature 4=Food 5=Objects 6=Symbols
+    property <string> emoji-search-text: "";
     property <bool> typing-active: false;
     changed chat-input => {
         let next = root.chat-input != "";
@@ -42,6 +58,8 @@ export component ChatView inherits Rectangle {
             root.typing-active = next;
             root.chat-typing-activity(next);
         }
+        // Notify Rust side for mention autocomplete detection
+        root.mention-input-changed(root.chat-input);
     }
     callback navigate(int);
     callback chat-typing-activity(bool);
@@ -50,6 +68,9 @@ export component ChatView inherits Rectangle {
     callback delete-text-message(string);
     callback react-to-message(string, string);
     callback toggle-pin-message(string, bool);
+    callback forward-message(string); // message_id
+    callback copy-message-text(string); // message content
+    callback show-profile(string); // user_id
 
     background: transparent;
 
@@ -71,6 +92,8 @@ export component ChatView inherits Rectangle {
                     color: VxTheme.text-primary;
                     font-size: 24px;
                     font-weight: 700;
+                    overflow: elide;
+                    max-width: 300px;
                 }
                 Text {
                     text: root.chat-context-subtitle != ""
@@ -108,60 +131,33 @@ export component ChatView inherits Rectangle {
             }
         }
 
-        Rectangle {
-            border-radius: VxTheme.radius-card;
-            background: VxTheme.bg-soft;
-            border-color: VxTheme.border-subtle;
-            border-width: 1px;
+        HorizontalLayout {
+            spacing: 8px;
+            padding-left: 4px;
 
-            VerticalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                padding-top: 12px;
-                padding-bottom: 12px;
-                spacing: 8px;
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    VxStatusPill {
-                        label: root.chat-is-direct-message ? "Private" : "Channel";
-                        tone: root.chat-is-direct-message ? VxTheme.accent : VxTheme.text-secondary;
-                        fill: root.chat-is-direct-message ? VxTheme.accent-subtle : VxTheme.bg-panel;
-                    }
-                    if !root.chat-is-direct-message : Rectangle {
-                        height: 22px;
-                        pinned-toggle-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.show-pinned-panel = !root.show-pinned-panel; }
-                        }
-                        VxStatusPill {
-                            label: (root.show-pinned-panel ? "Hide " : "Show ") + root.chat-pinned-messages.length + " pinned";
-                            tone: root.chat-pinned-messages.length > 0 ? VxTheme.warning : VxTheme.text-muted;
-                            fill: pinned-toggle-touch.has-hover
-                                ? VxTheme.card-hover-bg
-                                : (root.chat-pinned-messages.length > 0 ? VxTheme.warning-soft : VxTheme.bg-soft);
-                        }
-                    }
-                    if root.reply-target-message-id != "" : VxStatusPill {
-                        label: "Reply ready";
-                        tone: VxTheme.accent;
-                        fill: VxTheme.accent-subtle;
-                    }
-                    if root.chat-typing-text != "" : VxStatusPill {
-                        label: "Typing";
-                        tone: VxTheme.success;
-                        fill: VxTheme.success-dim;
-                    }
+            if !root.chat-is-direct-message && root.chat-pinned-messages.length > 0 : Rectangle {
+                height: 22px;
+                pinned-toggle-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.show-pinned-panel = !root.show-pinned-panel; }
                 }
-
-                Text {
-                    text: root.chat-is-direct-message
-                        ? "Direct messages stay focused and quiet. Use replies when context matters."
-                        : "Use replies to keep context tight and @name to pull people back into the channel.";
-                    color: VxTheme.text-muted;
-                    font-size: 10px;
-                    wrap: word-wrap;
+                VxStatusPill {
+                    label: (root.show-pinned-panel ? "Hide " : "") + root.chat-pinned-messages.length + " pinned";
+                    tone: VxTheme.warning;
+                    fill: pinned-toggle-touch.has-hover
+                        ? VxTheme.card-hover-bg
+                        : VxTheme.warning-soft;
                 }
+            }
+            if root.reply-target-message-id != "" : VxStatusPill {
+                label: "Replying to " + root.reply-target-sender-name;
+                tone: VxTheme.accent;
+                fill: VxTheme.accent-subtle;
+            }
+            if root.chat-typing-text != "" : VxStatusPill {
+                label: root.chat-typing-text;
+                tone: VxTheme.success;
+                fill: VxTheme.success-dim;
             }
         }
 
@@ -351,46 +347,27 @@ export component ChatView inherits Rectangle {
                         padding: root.wide ? 20px : (root.compact-mode ? 8px : 16px);
                         spacing: root.compact-mode ? 3px : 6px;
 
-                        if root.chat-messages.length == 0 : Rectangle {
-                            border-radius: VxTheme.radius-card;
-                            background: VxTheme.bg-soft;
-                            border-color: VxTheme.border-subtle;
-                            border-width: 1px;
-                            VerticalLayout {
-                                padding: 18px;
-                                spacing: 8px;
-                                Text {
-                                    text: root.chat-is-direct-message ? "No direct messages yet" : "No messages yet";
-                                    color: VxTheme.text-primary;
-                                    font-size: 13px;
-                                    font-weight: 700;
-                                }
-                                Text {
-                                    text: root.chat-is-direct-message
-                                        ? "Start the conversation with a simple first message."
-                                        : "Start the channel with a clean first message.";
-                                    color: VxTheme.text-muted;
-                                    font-size: 10px;
-                                    wrap: word-wrap;
-                                }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    VxStatusPill {
-                                        label: root.chat-is-direct-message ? "Private thread" : "Fresh channel";
-                                        tone: root.chat-is-direct-message ? VxTheme.accent : VxTheme.text-secondary;
-                                        fill: root.chat-is-direct-message ? VxTheme.accent-subtle : VxTheme.bg-panel;
-                                    }
-                                    VxStatusPill {
-                                        label: "Enter sends";
-                                        tone: VxTheme.text-secondary;
-                                        fill: VxTheme.bg-panel;
-                                    }
-                                    if !root.chat-is-direct-message : VxStatusPill {
-                                        label: "@name mentions";
-                                        tone: VxTheme.accent;
-                                        fill: VxTheme.accent-subtle;
-                                    }
-                                }
+                        if root.chat-messages.length == 0 : VerticalLayout {
+                            alignment: center;
+                            vertical-stretch: 1;
+                            spacing: 6px;
+                            padding: 24px;
+                            Text {
+                                text: root.chat-is-direct-message
+                                    ? "No messages yet"
+                                    : "This channel is brand new";
+                                color: VxTheme.text-secondary;
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.chat-is-direct-message
+                                    ? "Be the first to say something!"
+                                    : "Start the conversation — say hello below.";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                horizontal-alignment: center;
                             }
                         }
 
@@ -409,6 +386,22 @@ export component ChatView inherits Rectangle {
                                     font-weight: 600;
                                 }
                                 Rectangle { height: 1px; background: VxTheme.border-subtle; horizontal-stretch: 1; }
+                            }
+
+                            // ─── NEW messages separator ───
+                            if msg.is-new-separator && msg.date-separator == "" : HorizontalLayout {
+                                padding-top: 6px;
+                                padding-bottom: 4px;
+                                alignment: center;
+                                spacing: 10px;
+                                Rectangle { height: 1px; background: VxTheme.accent; horizontal-stretch: 1; }
+                                Text {
+                                    text: "NEW";
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                }
+                                Rectangle { height: 1px; background: VxTheme.accent; horizontal-stretch: 1; }
                             }
 
                             // ─── Message bubble ───
@@ -437,9 +430,17 @@ export component ChatView inherits Rectangle {
                                     initial: msg.sender-initial;
                                     color-index: msg.color-index;
                                 }
-                                // Spacer to align grouped messages with avatar
+                                // Spacer — shows timestamp on hover (like Discord)
                                 if !root.compact-mode && !msg.show-header : Rectangle {
                                     width: 30px;
+                                    Text {
+                                        text: msg.timestamp;
+                                        color: VxTheme.text-muted;
+                                        font-size: 8px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        visible: msg-hover.has-hover;
+                                    }
                                 }
 
                                 VerticalLayout {
@@ -449,11 +450,23 @@ export component ChatView inherits Rectangle {
                                     // Sender header — hidden for grouped messages
                                     if msg.show-header : HorizontalLayout {
                                         spacing: 8px;
-                                        Text {
-                                            text: msg.sender-name;
-                                            color: msg.is-self ? VxTheme.accent : VxTheme.text-primary;
-                                            font-size: 11px;
-                                            font-weight: 700;
+                                        Rectangle {
+                                            width: sender-name-text.preferred-width;
+                                            height: sender-name-text.preferred-height;
+                                            sender-name-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.show-profile(msg.sender-id); }
+                                            }
+                                            sender-name-text := Text {
+                                                text: msg.sender-name;
+                                                color: sender-name-touch.has-hover
+                                                    ? VxTheme.accent-hover
+                                                    : (msg.is-self ? VxTheme.accent : VxTheme.text-primary);
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                overflow: elide;
+                                                max-width: 200px;
+                                            }
                                         }
                                         Text {
                                             text: msg.timestamp;
@@ -483,68 +496,210 @@ export component ChatView inherits Rectangle {
                                         spacing: 8px;
                                         Rectangle { horizontal-stretch: 1; }
 
-                                        // Action buttons: only visible on hover (Discord-style)
-                                        if msg-hover.has-hover : HorizontalLayout {
-                                            spacing: 6px;
-                                            for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F389}", "\u{1F602}", "\u{1F914}", "\u{1F525}"] : Rectangle {
-                                                height: 22px;
-                                                border-radius: VxTheme.radius-pill;
-                                                background: react-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                                border-color: VxTheme.border-subtle;
-                                                border-width: 1px;
+                                        // Compact hover toolbar (Discord-style)
+                                        if msg-hover.has-hover : Rectangle {
+                                            height: 26px;
+                                            border-radius: VxTheme.radius-pill;
+                                            background: VxTheme.bg-raised;
+                                            border-color: VxTheme.border-subtle;
+                                            border-width: 1px;
 
-                                                react-touch := TouchArea {
-                                                    mouse-cursor: pointer;
-                                                    clicked => { root.react-to-message(msg.message-id, emoji); }
-                                                }
+                                            HorizontalLayout {
+                                                padding-left: 4px;
+                                                padding-right: 4px;
+                                                spacing: 2px;
+                                                alignment: center;
 
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
+                                                // Quick reactions
+                                                for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F602}"] : Rectangle {
+                                                    width: 26px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: react-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    react-touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.react-to-message(msg.message-id, emoji); }
+                                                    }
                                                     Text {
                                                         text: emoji;
-                                                        font-size: 11px;
+                                                        font-size: 12px;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                                Rectangle {
+                                                    width: 26px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: more-emoji-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    more-emoji-touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.emoji-picker-target-message-id = msg.message-id;
+                                                            root.show-emoji-picker = true;
+                                                        }
+                                                    }
+                                                    Text {
+                                                        text: "+";
+                                                        font-size: 12px;
+                                                        color: VxTheme.text-muted;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                // Separator
+                                                Rectangle { width: 1px; height: 16px; background: VxTheme.border-subtle; }
+
+                                                // Reply
+                                                Rectangle {
+                                                    width: reply-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: reply-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    reply-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.editing-message-id = "";
+                                                            root.editing-original-content = "";
+                                                            root.reply-target-message-id = msg.message-id;
+                                                            root.reply-target-sender-name = msg.sender-name;
+                                                            root.reply-target-preview = msg.content;
+                                                        }
+                                                    }
+                                                    reply-lbl := Text {
+                                                        text: "Reply";
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                // Copy
+                                                Rectangle {
+                                                    width: copy-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: copy-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    copy-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.copy-message-text(msg.content); }
+                                                    }
+                                                    copy-lbl := Text {
+                                                        text: "Copy";
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                if msg.reply-count > 0 : Rectangle {
+                                                    width: thread-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: thread-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    thread-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.open-thread(msg.message-id, msg.channel-name); }
+                                                    }
+                                                    thread-lbl := Text {
+                                                        text: msg.reply-count + " replies";
+                                                        color: VxTheme.accent;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                if !root.chat-is-direct-message : Rectangle {
+                                                    width: fwd-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: fwd-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    fwd-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.forward-message(msg.message-id); }
+                                                    }
+                                                    fwd-lbl := Text {
+                                                        text: "Fwd";
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                if !root.chat-is-direct-message : Rectangle {
+                                                    width: pin-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: pin-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    pin-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
+                                                    }
+                                                    pin-lbl := Text {
+                                                        text: msg.is-pinned ? "Unpin" : "Pin";
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                if msg.is-self : Rectangle {
+                                                    width: 1px; height: 16px; background: VxTheme.border-subtle;
+                                                }
+
+                                                if msg.is-self : Rectangle {
+                                                    width: edit-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: edit-act.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    edit-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            root.editing-message-id = msg.message-id;
+                                                            root.editing-original-content = msg.content;
+                                                            root.chat-input = msg.content;
+                                                        }
+                                                    }
+                                                    edit-lbl := Text {
+                                                        text: "Edit";
+                                                        color: VxTheme.text-secondary;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+
+                                                if msg.is-self : Rectangle {
+                                                    width: del-lbl.preferred-width + 12px;
+                                                    height: 22px;
+                                                    border-radius: VxTheme.radius-pill;
+                                                    background: del-act.has-hover ? VxTheme.danger-hover : transparent;
+                                                    del-act := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.delete-text-message(msg.message-id); }
+                                                    }
+                                                    del-lbl := Text {
+                                                        text: "Del";
+                                                        color: del-act.has-hover ? VxTheme.text-inverse : VxTheme.danger;
+                                                        font-size: 10px;
+                                                        font-weight: 600;
+                                                        horizontal-alignment: center;
                                                         vertical-alignment: center;
                                                     }
                                                 }
                                             }
-                                        }
-                                        if msg-hover.has-hover : VxButton {
-                                            label: "Reply";
-                                            small: true;
-                                            ghost: true;
-                                            clicked => {
-                                                root.editing-message-id = "";
-                                                root.editing-original-content = "";
-                                                root.reply-target-message-id = msg.message-id;
-                                                root.reply-target-sender-name = msg.sender-name;
-                                                root.reply-target-preview = msg.content;
-                                            }
-                                        }
-
-                                        if msg-hover.has-hover && !root.chat-is-direct-message : VxButton {
-                                            label: msg.is-pinned ? "Unpin" : "Pin";
-                                            small: true;
-                                            ghost: true;
-                                            clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
-                                        }
-
-                                        if msg-hover.has-hover && msg.is-self : VxButton {
-                                            label: "Edit";
-                                            small: true;
-                                            ghost: true;
-                                            clicked => {
-                                                root.editing-message-id = msg.message-id;
-                                                root.editing-original-content = msg.content;
-                                                root.chat-input = msg.content;
-                                            }
-                                        }
-
-                                        if msg-hover.has-hover && msg.is-self : VxButton {
-                                            label: "Delete";
-                                            small: true;
-                                            ghost: true;
-                                            clicked => { root.delete-text-message(msg.message-id); }
                                         }
                                     }
 
@@ -583,9 +738,14 @@ export component ChatView inherits Rectangle {
 
                                     if msg.reply-sender-name != "" : Rectangle {
                                         border-radius: VxTheme.radius-control;
-                                        background: VxTheme.bg-panel;
+                                        background: reply-quote-touch.has-hover ? VxTheme.bg-raised : VxTheme.bg-panel;
                                         border-width: 0px;
                                         height: reply-col.preferred-height + 16px;
+
+                                        reply-quote-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.open-thread(msg.message-id, msg.channel-name); }
+                                        }
 
                                         // Left accent bar
                                         Rectangle {
@@ -690,20 +850,88 @@ export component ChatView inherits Rectangle {
                                         }
                                     }
 
-                                    if msg.reactions != "" : Rectangle {
-                                        height: 22px;
+                                    // Link preview card
+                                    if msg.link-url != "" : Rectangle {
+                                        background: VxTheme.bg-panel;
                                         border-radius: VxTheme.radius-control;
-                                        background: VxTheme.bg-raised;
-                                        border-color: VxTheme.border-subtle;
                                         border-width: 1px;
+                                        border-color: VxTheme.accent-border;
+                                        height: 36px;
+
                                         HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            alignment: center;
+                                            padding: 8px;
+                                            spacing: 8px;
+
+                                            Rectangle {
+                                                width: 22px;
+                                                height: 22px;
+                                                border-radius: 5px;
+                                                background: VxTheme.accent-subtle;
+
+                                                Text {
+                                                    text: "🔗";
+                                                    font-size: 12px;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
                                             Text {
+                                                text: msg.link-url;
+                                                color: VxTheme.accent;
+                                                font-size: 10px;
+                                                font-weight: 600;
+                                                overflow: elide;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    if msg.reactions != "" : HorizontalLayout {
+                                        spacing: 4px;
+                                        padding-top: 2px;
+                                        // Each reaction pill
+                                        Rectangle {
+                                            height: 24px;
+                                            width: reaction-txt.preferred-width + 14px;
+                                            border-radius: VxTheme.radius-pill;
+                                            background: rxn-touch.has-hover ? VxTheme.accent-subtle : VxTheme.bg-raised;
+                                            border-color: rxn-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
+                                            border-width: 1px;
+                                            rxn-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    root.emoji-picker-target-message-id = msg.message-id;
+                                                    root.show-emoji-picker = true;
+                                                }
+                                            }
+                                            reaction-txt := Text {
                                                 text: msg.reactions;
                                                 color: VxTheme.text-primary;
                                                 font-size: 11px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        // + add reaction button
+                                        Rectangle {
+                                            width: 24px; height: 24px;
+                                            border-radius: VxTheme.radius-pill;
+                                            background: add-rxn.has-hover ? VxTheme.card-hover-bg : transparent;
+                                            border-color: add-rxn.has-hover ? VxTheme.border-subtle : transparent;
+                                            border-width: 1px;
+                                            add-rxn := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => {
+                                                    root.emoji-picker-target-message-id = msg.message-id;
+                                                    root.show-emoji-picker = true;
+                                                }
+                                            }
+                                            Text {
+                                                text: "+";
+                                                color: VxTheme.text-muted;
+                                                font-size: 12px;
+                                                horizontal-alignment: center;
                                                 vertical-alignment: center;
                                             }
                                         }
@@ -822,64 +1050,210 @@ export component ChatView inherits Rectangle {
                             }
                         }
 
+                        // Slash command hints
+                        if root.chat-input == "/" || (root.chat-input != "" && root.chat-input.character-count > 0 && root.chat-input.to-float() != root.chat-input.to-float()) : Rectangle {
+                        }
+                        if root.chat-input == "/" : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-raised;
+                            border-color: VxTheme.border-subtle;
+                            border-width: 1px;
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 4px;
+                                Text { text: "COMMANDS"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                                for cmd in [
+                                    { slash: "/nick", desc: "Set server nickname" },
+                                    { slash: "/status", desc: "Set status (online/idle/dnd/invisible)" },
+                                    { slash: "/activity", desc: "Set activity text" },
+                                    { slash: "/mute", desc: "Toggle mute" },
+                                    { slash: "/deafen", desc: "Toggle deafen" },
+                                    { slash: "/shrug", desc: "Append \u{00AF}\\_(\u{30C4})_/\u{00AF}" },
+                                    { slash: "/tableflip", desc: "Append (\u{256F}\u{00B0}\u{25A1}\u{00B0})\u{256F}\u{FE35} \u{253B}\u{2501}\u{253B}" },
+                                    { slash: "/unflip", desc: "Append \u{252C}\u{2500}\u{252C} \u{30CE}( \u{309C}-\u{309C}\u{30CE})" },
+                                ] : Rectangle {
+                                    height: 26px;
+                                    border-radius: VxTheme.radius-control;
+                                    background: cmd-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                    cmd-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.chat-input = cmd.slash + " "; }
+                                    }
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        spacing: 10px;
+                                        alignment: center;
+                                        Text {
+                                            text: cmd.slash;
+                                            color: VxTheme.accent;
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                            width: 80px;
+                                        }
+                                        Text {
+                                            text: cmd.desc;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            horizontal-stretch: 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mention autocomplete popup
+                        if root.mention-popup-visible && root.mention-suggestions.length > 0 : Rectangle {
+                            border-radius: VxTheme.radius-card;
+                            background: VxTheme.bg-raised;
+                            border-color: VxTheme.accent-border;
+                            border-width: 1px;
+                            VerticalLayout {
+                                padding: 6px;
+                                spacing: 2px;
+                                Text {
+                                    text: "MEMBERS";
+                                    color: VxTheme.text-muted;
+                                    font-size: 8px;
+                                    font-weight: 700;
+                                    horizontal-alignment: left;
+                                }
+                                for suggestion[idx] in root.mention-suggestions : Rectangle {
+                                    height: idx < 8 ? 28px : 0px;
+                                    visible: idx < 8;
+                                    border-radius: VxTheme.radius-control;
+                                    background: idx == root.mention-selected-index
+                                        ? VxTheme.surface-active
+                                        : mention-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                    border-color: idx == root.mention-selected-index ? VxTheme.accent-border : transparent;
+                                    border-width: 1px;
+                                    animate background { duration: 60ms; easing: ease-out; }
+                                    mention-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.mention-selected(idx);
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        spacing: 8px;
+                                        alignment: center;
+                                        Text {
+                                            text: "@";
+                                            color: VxTheme.accent;
+                                            font-size: 11px;
+                                            font-weight: 700;
+                                        }
+                                        Text {
+                                            text: suggestion;
+                                            color: idx == root.mention-selected-index ? VxTheme.accent : VxTheme.text-primary;
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         HorizontalLayout {
                             spacing: 10px;
 
-                            VxInput {
-                                text <=> root.chat-input;
-                                placeholder: root.editing-message-id != "" ? "Edit message" :
-                                             root.reply-target-message-id != "" ? (root.chat-is-direct-message ? "Reply to " + root.chat-channel-name : "Reply in #" + root.chat-channel-name) :
-                                             (root.chat-is-direct-message ? "Message " + root.chat-channel-name : "Message #" + root.chat-channel-name);
+                            Rectangle {
                                 horizontal-stretch: 1;
-                                accepted => {
-                                    if root.chat-input != "" {
-                                        if root.editing-message-id != "" {
-                                            root.edit-text-message(root.editing-message-id, root.chat-input);
-                                            root.editing-message-id = "";
-                                            root.editing-original-content = "";
-                                            root.chat-input = "";
-                                        } else {
-                                            root.send-text-message();
-                                            root.reply-target-message-id = "";
-                                            root.reply-target-sender-name = "";
-                                            root.reply-target-preview = "";
+                                VxInput {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text <=> root.chat-input;
+                                    placeholder: root.slow-mode-remaining > 0
+                                        ? "Slowmode: " + root.slow-mode-remaining + "s"
+                                        : root.editing-message-id != "" ? "Edit message" :
+                                                 root.reply-target-message-id != "" ? (root.chat-is-direct-message ? "Reply to " + root.chat-channel-name : "Reply in #" + root.chat-channel-name) :
+                                                 (root.chat-is-direct-message ? "Message " + root.chat-channel-name : "Message #" + root.chat-channel-name);
+                                    accepted => {
+                                        if root.chat-input != "" {
+                                            if root.editing-message-id != "" {
+                                                root.edit-text-message(root.editing-message-id, root.chat-input);
+                                                root.editing-message-id = "";
+                                                root.editing-original-content = "";
+                                                root.chat-input = "";
+                                            } else if root.slow-mode-remaining <= 0 {
+                                                root.send-text-message();
+                                                root.reply-target-message-id = "";
+                                                root.reply-target-sender-name = "";
+                                                root.reply-target-preview = "";
+                                                if root.slow-mode-secs > 0 {
+                                                    root.slow-mode-remaining = root.slow-mode-secs;
+                                                }
+                                            }
                                         }
+                                    }
+                                }
+                                // Character counter — visible when approaching the 2000 char limit
+                                if root.chat-input.character-count > 1800 : Rectangle {
+                                    x: parent.width - self.width - 6px;
+                                    y: parent.height - self.height - 4px;
+                                    width: char-counter-text.preferred-width + 10px;
+                                    height: 18px;
+                                    border-radius: VxTheme.radius-pill;
+                                    background: VxTheme.bg-panel.transparentize(0.15);
+                                    char-counter-text := Text {
+                                        text: root.chat-input.character-count + "/2000";
+                                        color: root.chat-input.character-count > 1950 ? VxTheme.danger :
+                                               root.chat-input.character-count > 1800 ? VxTheme.warning : VxTheme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
                                     }
                                 }
                             }
 
                             VxButton {
+                                label: "\u{1F600}";
+                                ghost: true;
+                                clicked => {
+                                    root.emoji-picker-target-message-id = "";
+                                    root.show-emoji-picker = !root.show-emoji-picker;
+                                }
+                            }
+                            if root.slow-mode-remaining > 0 : VxStatusPill {
+                                label: root.slow-mode-remaining + "s";
+                                tone: VxTheme.warning;
+                                fill: VxTheme.warning-soft;
+                            }
+                            VxButton {
                                 label: root.editing-message-id != "" ? "Save" :
                                        root.reply-target-message-id != "" ? "Reply" : "Send";
                                 accent: true;
-                                enabled: root.chat-input != "";
+                                enabled: root.chat-input != "" && (root.slow-mode-remaining <= 0 || root.editing-message-id != "");
                                 clicked => {
                                     if root.editing-message-id != "" {
                                         root.edit-text-message(root.editing-message-id, root.chat-input);
                                         root.editing-message-id = "";
                                         root.editing-original-content = "";
                                         root.chat-input = "";
-                                    } else {
+                                    } else if root.slow-mode-remaining <= 0 {
                                         root.send-text-message();
                                         root.reply-target-message-id = "";
                                         root.reply-target-sender-name = "";
                                         root.reply-target-preview = "";
+                                        if root.slow-mode-secs > 0 {
+                                            root.slow-mode-remaining = root.slow-mode-secs;
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        Text {
-                            text: root.editing-message-id != ""
-                                ? "Save replaces only the selected message."
-                                : (root.reply-target-message-id != ""
-                                    ? "Reply keeps the original message context attached."
-                                    : (root.chat-is-direct-message
-                                        ? "Private thread. Enter sends immediately."
-                                        : "Enter sends immediately. Use @name to pull people into the channel."));
-                            color: VxTheme.text-muted;
+                        if !root.chat-is-direct-message : Text {
+                            text: root.slow-mode-remaining > 0
+                                ? "Slowmode active — " + root.slow-mode-remaining + "s remaining"
+                                : "Enter sends · @name mentions · **bold** · *italic*";
+                            color: root.slow-mode-remaining > 0 ? VxTheme.warning : VxTheme.text-muted;
                             font-size: 9px;
-                            wrap: word-wrap;
                         }
                     }
                 }
@@ -941,6 +1315,8 @@ export component ChatView inherits Rectangle {
                                 color: VxTheme.accent;
                                 font-size: 11px;
                                 font-weight: 700;
+                                overflow: elide;
+                                max-width: 160px;
                             }
                             Text {
                                 text: root.thread-parent-timestamp;
@@ -980,6 +1356,8 @@ export component ChatView inherits Rectangle {
                                         color: VxTheme.accent;
                                         font-size: 10px;
                                         font-weight: 700;
+                                        overflow: elide;
+                                        max-width: 160px;
                                     }
                                     Text {
                                         text: reply.timestamp;
@@ -1012,6 +1390,346 @@ export component ChatView inherits Rectangle {
                             font-size: 10px;
                             font-weight: 600;
                             vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─── Full emoji picker overlay ───
+    if root.show-emoji-picker : Rectangle {
+        x: root.wide ? root.width - 380px : root.width / 2 - 175px;
+        y: root.height - 440px;
+        width: 350px;
+        height: 400px;
+        background: VxTheme.bg-surface;
+        border-color: VxTheme.border-subtle;
+        border-width: 1px;
+        border-radius: VxTheme.radius-card;
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+
+            // Header + close
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: "Emoji";
+                    color: VxTheme.text-primary;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                }
+                TouchArea {
+                    width: 20px; height: 20px;
+                    mouse-cursor: pointer;
+                    clicked => { root.show-emoji-picker = false; root.emoji-search-text = ""; }
+                    Text { text: "\u{2715}"; color: VxTheme.text-muted; font-size: 12px; }
+                }
+            }
+
+            // Category tabs
+            HorizontalLayout {
+                spacing: 2px;
+                for tab-info[idx] in [
+                    {emoji: "\u{1F552}", label: "Recent"},
+                    {emoji: "\u{1F600}", label: "Smileys"},
+                    {emoji: "\u{1F44B}", label: "People"},
+                    {emoji: "\u{1F431}", label: "Nature"},
+                    {emoji: "\u{1F354}", label: "Food"},
+                    {emoji: "\u{1F3B5}", label: "Objects"},
+                    {emoji: "\u{2764}", label: "Symbols"}
+                ] : Rectangle {
+                    width: 34px; height: 28px;
+                    border-radius: VxTheme.radius-control;
+                    background: root.emoji-tab == idx ? VxTheme.accent-subtle : (tab-hover.has-hover ? VxTheme.card-hover-bg : transparent);
+                    border-color: root.emoji-tab == idx ? VxTheme.accent-border : transparent;
+                    border-width: root.emoji-tab == idx ? 1px : 0px;
+                    tab-hover := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.emoji-tab = idx; }
+                    }
+                    Text {
+                        text: tab-info.emoji;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: VxTheme.border-subtle; }
+
+            // ── Recent reactions quick-access ──
+            if root.recent-reactions.length > 0 : HorizontalLayout {
+                spacing: 4px;
+                padding-left: 2px;
+                padding-right: 2px;
+                Text {
+                    text: "Recent";
+                    color: VxTheme.text-muted;
+                    font-size: 8px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    width: 36px;
+                }
+                for rr-emoji in root.recent-reactions : Rectangle {
+                    width: 30px;
+                    height: 28px;
+                    border-radius: 6px;
+                    background: rr-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                    border-color: rr-touch.has-hover ? VxTheme.border-subtle : transparent;
+                    border-width: 1px;
+                    rr-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if root.emoji-picker-target-message-id != "" {
+                                root.react-to-message(root.emoji-picker-target-message-id, rr-emoji);
+                            } else {
+                                root.chat-input = root.chat-input + rr-emoji;
+                            }
+                            root.show-emoji-picker = false;
+                            root.emoji-search-text = "";
+                        }
+                    }
+                    Text {
+                        text: rr-emoji;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Scrollable emoji grid
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 4px;
+                    padding: 2px;
+
+                    // ── Tab 0: Frequently used ──
+                    if root.emoji-tab == 0 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "FREQUENTLY USED"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{1F44D}", "\u{2764}", "\u{1F602}", "\u{1F525}", "\u{2705}", "\u{1F60A}", "\u{1F64F}", "\u{1F389}", "\u{1F60D}", "\u{1F914}"],
+                            ["\u{1F44F}", "\u{1F631}", "\u{274C}", "\u{1F60E}", "\u{1F62D}", "\u{1F621}", "\u{2B50}", "\u{1F4AF}", "\u{1F973}", "\u{1F44E}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-r0.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-r0 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 1: Smileys & Emotion ──
+                    if root.emoji-tab == 1 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "SMILEYS & EMOTION"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{1F600}", "\u{1F603}", "\u{1F604}", "\u{1F601}", "\u{1F606}", "\u{1F605}", "\u{1F602}", "\u{1F923}", "\u{1F972}", "\u{263A}"],
+                            ["\u{1F60A}", "\u{1F607}", "\u{1F642}", "\u{1F643}", "\u{1F609}", "\u{1F60C}", "\u{1F60D}", "\u{1F970}", "\u{1F618}", "\u{1F617}"],
+                            ["\u{1F619}", "\u{1F61A}", "\u{1F60B}", "\u{1F61B}", "\u{1F61C}", "\u{1F92A}", "\u{1F61D}", "\u{1F911}", "\u{1F917}", "\u{1F92D}"],
+                            ["\u{1F92B}", "\u{1F914}", "\u{1F910}", "\u{1F928}", "\u{1F610}", "\u{1F611}", "\u{1F636}", "\u{1F60F}", "\u{1F612}", "\u{1F644}"],
+                            ["\u{1F62C}", "\u{1F925}", "\u{1F60C}", "\u{1F614}", "\u{1F62A}", "\u{1F924}", "\u{1F634}", "\u{1F637}", "\u{1F912}", "\u{1F915}"],
+                            ["\u{1F922}", "\u{1F92E}", "\u{1F927}", "\u{1F975}", "\u{1F976}", "\u{1F974}", "\u{1F635}", "\u{1F92F}", "\u{1F920}", "\u{1F973}"],
+                            ["\u{1F978}", "\u{1F60E}", "\u{1F913}", "\u{1F9D0}", "\u{1F615}", "\u{1F61F}", "\u{1F641}", "\u{2639}", "\u{1F62E}", "\u{1F62F}"],
+                            ["\u{1F632}", "\u{1F633}", "\u{1F97A}", "\u{1F626}", "\u{1F627}", "\u{1F628}", "\u{1F630}", "\u{1F625}", "\u{1F622}", "\u{1F62D}"],
+                            ["\u{1F631}", "\u{1F616}", "\u{1F623}", "\u{1F61E}", "\u{1F613}", "\u{1F629}", "\u{1F62B}", "\u{1F971}", "\u{1F624}", "\u{1F621}"],
+                            ["\u{1F620}", "\u{1F92C}", "\u{1F608}", "\u{1F47F}", "\u{1F480}", "\u{2620}", "\u{1F4A9}", "\u{1F921}", "\u{1F479}", "\u{1F47A}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-s1.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-s1 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 2: People & Gestures ──
+                    if root.emoji-tab == 2 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "PEOPLE & GESTURES"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{1F44B}", "\u{1F91A}", "\u{1F590}", "\u{270B}", "\u{1F596}", "\u{1F44C}", "\u{1F90C}", "\u{1F90F}", "\u{270C}", "\u{1F91E}"],
+                            ["\u{1F91F}", "\u{1F918}", "\u{1F919}", "\u{1F448}", "\u{1F449}", "\u{1F446}", "\u{1F595}", "\u{1F447}", "\u{261D}", "\u{1F44D}"],
+                            ["\u{1F44E}", "\u{270A}", "\u{1F44A}", "\u{1F91B}", "\u{1F91C}", "\u{1F44F}", "\u{1F64C}", "\u{1F450}", "\u{1F932}", "\u{1F91D}"],
+                            ["\u{1F64F}", "\u{270D}", "\u{1F485}", "\u{1F933}", "\u{1F4AA}", "\u{1F9BE}", "\u{1F9BF}", "\u{1F9B5}", "\u{1F9B6}", "\u{1F442}"],
+                            ["\u{1F443}", "\u{1F9E0}", "\u{1FAC0}", "\u{1FAC1}", "\u{1F9B7}", "\u{1F9B4}", "\u{1F440}", "\u{1F441}", "\u{1F445}", "\u{1F444}"],
+                            ["\u{1F476}", "\u{1F9D2}", "\u{1F466}", "\u{1F467}", "\u{1F9D1}", "\u{1F471}", "\u{1F468}", "\u{1F9D4}", "\u{1F469}", "\u{1F9D3}"],
+                            ["\u{1F474}", "\u{1F475}", "\u{1F46E}", "\u{1F477}", "\u{1F482}", "\u{1F575}", "\u{1F9D9}", "\u{1F9DA}", "\u{1F9DB}", "\u{1F9DC}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-p2.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-p2 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 3: Nature & Animals ──
+                    if root.emoji-tab == 3 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "NATURE & ANIMALS"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{1F435}", "\u{1F412}", "\u{1F98D}", "\u{1F9A7}", "\u{1F436}", "\u{1F415}", "\u{1F9AE}", "\u{1F429}", "\u{1F43A}", "\u{1F98A}"],
+                            ["\u{1F99D}", "\u{1F431}", "\u{1F408}", "\u{1F981}", "\u{1F42F}", "\u{1F405}", "\u{1F406}", "\u{1F434}", "\u{1F40E}", "\u{1F984}"],
+                            ["\u{1F993}", "\u{1F98C}", "\u{1F9AC}", "\u{1F42E}", "\u{1F402}", "\u{1F403}", "\u{1F404}", "\u{1F437}", "\u{1F416}", "\u{1F417}"],
+                            ["\u{1F42A}", "\u{1F42B}", "\u{1F999}", "\u{1F992}", "\u{1F418}", "\u{1F9A3}", "\u{1F98F}", "\u{1F99B}", "\u{1F42D}", "\u{1F401}"],
+                            ["\u{1F400}", "\u{1F439}", "\u{1F430}", "\u{1F407}", "\u{1F43F}", "\u{1F9AB}", "\u{1F994}", "\u{1F987}", "\u{1F43B}", "\u{1F428}"],
+                            ["\u{1F43C}", "\u{1F9A5}", "\u{1F9A6}", "\u{1F9A8}", "\u{1F998}", "\u{1F9A1}", "\u{1F43E}", "\u{1F983}", "\u{1F414}", "\u{1F413}"],
+                            ["\u{1F33B}", "\u{1F339}", "\u{1F940}", "\u{1F33A}", "\u{1F338}", "\u{1F33C}", "\u{1F337}", "\u{1F331}", "\u{1F332}", "\u{1F333}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-n3.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-n3 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 4: Food & Drink ──
+                    if root.emoji-tab == 4 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "FOOD & DRINK"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{1F347}", "\u{1F348}", "\u{1F349}", "\u{1F34A}", "\u{1F34B}", "\u{1F34C}", "\u{1F34D}", "\u{1F96D}", "\u{1F34E}", "\u{1F34F}"],
+                            ["\u{1F350}", "\u{1F351}", "\u{1F352}", "\u{1F353}", "\u{1FAD0}", "\u{1F95D}", "\u{1F345}", "\u{1FAD2}", "\u{1F965}", "\u{1F951}"],
+                            ["\u{1F346}", "\u{1F954}", "\u{1F955}", "\u{1F33D}", "\u{1F336}", "\u{1FAD1}", "\u{1F952}", "\u{1F96C}", "\u{1F966}", "\u{1F9C4}"],
+                            ["\u{1F354}", "\u{1F355}", "\u{1F32D}", "\u{1F96A}", "\u{1F32E}", "\u{1F32F}", "\u{1FAD4}", "\u{1F9C6}", "\u{1F95A}", "\u{1F373}"],
+                            ["\u{1F958}", "\u{1F372}", "\u{1FAD5}", "\u{1F963}", "\u{1F957}", "\u{1F37F}", "\u{1F9C8}", "\u{1F9C2}", "\u{1F356}", "\u{1F357}"],
+                            ["\u{1F969}", "\u{1F953}", "\u{1F370}", "\u{1F382}", "\u{1F967}", "\u{1F9C1}", "\u{1FAD3}", "\u{1F366}", "\u{1F367}", "\u{1F368}"],
+                            ["\u{1F377}", "\u{1F378}", "\u{1F379}", "\u{1F37A}", "\u{1F37B}", "\u{1F942}", "\u{1F943}", "\u{1FAD7}", "\u{1F964}", "\u{2615}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-f4.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-f4 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 5: Objects & Activities ──
+                    if root.emoji-tab == 5 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "OBJECTS & ACTIVITIES"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{26BD}", "\u{1F3C0}", "\u{1F3C8}", "\u{26BE}", "\u{1F94E}", "\u{1F3BE}", "\u{1F3D0}", "\u{1F3C9}", "\u{1F3B1}", "\u{1F3D3}"],
+                            ["\u{1F3B5}", "\u{1F3B6}", "\u{1F3A4}", "\u{1F3A7}", "\u{1F3B8}", "\u{1F3B9}", "\u{1F3BA}", "\u{1F3BB}", "\u{1FA95}", "\u{1FA98}"],
+                            ["\u{1F3AC}", "\u{1F3A8}", "\u{1F3AD}", "\u{1F3AE}", "\u{1F579}", "\u{1F3B2}", "\u{1F3AF}", "\u{1F3B3}", "\u{1F3B0}", "\u{1F9E9}"],
+                            ["\u{1F4F1}", "\u{1F4BB}", "\u{1F5A5}", "\u{2328}", "\u{1F5A8}", "\u{1F4F7}", "\u{1F4F8}", "\u{1F4F9}", "\u{1F3A5}", "\u{1F4FD}"],
+                            ["\u{1F4A1}", "\u{1F526}", "\u{1F4DA}", "\u{1F4D6}", "\u{1F4D3}", "\u{1F4DD}", "\u{1F4CE}", "\u{1F4CB}", "\u{1F4C1}", "\u{1F4C2}"],
+                            ["\u{1F512}", "\u{1F513}", "\u{1F511}", "\u{1F5DD}", "\u{1F528}", "\u{1FA93}", "\u{26CF}", "\u{2692}", "\u{1F6E0}", "\u{1F5E1}"],
+                            ["\u{1F680}", "\u{2708}", "\u{1F6F8}", "\u{1F3E0}", "\u{1F3E2}", "\u{1F3EB}", "\u{1F3E5}", "\u{1F3ED}", "\u{1F3F0}", "\u{26EA}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-o5.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-o5 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    // ── Tab 6: Symbols & Flags ──
+                    if root.emoji-tab == 6 : VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "SYMBOLS & FLAGS"; color: VxTheme.text-muted; font-size: 8px; font-weight: 700; }
+                        for row in [
+                            ["\u{2764}", "\u{1F9E1}", "\u{1F49B}", "\u{1F49A}", "\u{1F499}", "\u{1F49C}", "\u{1F90E}", "\u{1F5A4}", "\u{1F90D}", "\u{1F494}"],
+                            ["\u{2763}", "\u{1F495}", "\u{1F49E}", "\u{1F493}", "\u{1F497}", "\u{1F496}", "\u{1F498}", "\u{1F49D}", "\u{1F49F}", "\u{262E}"],
+                            ["\u{2705}", "\u{274C}", "\u{2753}", "\u{2757}", "\u{203C}", "\u{2049}", "\u{1F4AF}", "\u{1F525}", "\u{2B50}", "\u{1F31F}"],
+                            ["\u{26A0}", "\u{1F6AB}", "\u{26D4}", "\u{1F6B7}", "\u{1F4A2}", "\u{267B}", "\u{1F504}", "\u{1F51D}", "\u{1F51C}", "\u{1F519}"],
+                            ["\u{1F520}", "\u{1F521}", "\u{1F522}", "\u{1F523}", "\u{1F524}", "\u{1F3B5}", "\u{1F3B6}", "\u{2660}", "\u{2665}", "\u{2666}"],
+                            ["\u{2663}", "\u{1F0CF}", "\u{1F3C1}", "\u{1F6A9}", "\u{1F3F4}", "\u{1F3F3}", "\u{1F1FA}\u{1F1F8}", "\u{1F1EC}\u{1F1E7}", "\u{1F1E9}\u{1F1EA}", "\u{1F1EB}\u{1F1F7}"],
+                            ["\u{1F1EF}\u{1F1F5}", "\u{1F1E8}\u{1F1E6}", "\u{1F1E6}\u{1F1FA}", "\u{1F1E7}\u{1F1F7}", "\u{1F1EE}\u{1F1F3}", "\u{1F1F0}\u{1F1F7}", "\u{1F1EE}\u{1F1F9}", "\u{1F1EA}\u{1F1F8}", "\u{1F1F2}\u{1F1FD}", "\u{1F1F3}\u{1F1F1}"]
+                        ] : HorizontalLayout {
+                            spacing: 2px;
+                            for emoji in row : Rectangle {
+                                width: 30px; height: 30px;
+                                border-radius: 6px;
+                                background: ep-s6.has-hover ? VxTheme.card-hover-bg : transparent;
+                                ep-s6 := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if root.emoji-picker-target-message-id != "" {
+                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+                                        } else { root.chat-input = root.chat-input + emoji; }
+                                        root.show-emoji-picker = false; root.emoji-search-text = "";
+                                    }
+                                }
+                                Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
                         }
                     }
                 }

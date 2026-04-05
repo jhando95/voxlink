@@ -40,6 +40,7 @@ pub fn start(
     ptt_key: Rc<RefCell<Vec<Keycode>>>,
     mute_key: Rc<RefCell<Vec<Keycode>>>,
     deafen_key: Rc<RefCell<Vec<Keycode>>>,
+    soundboard_combos: Rc<RefCell<Vec<(usize, Vec<Keycode>)>>>,
 ) {
     let window_weak = window.as_weak();
     let state = state.clone();
@@ -73,6 +74,7 @@ pub fn start(
     let copied_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let error_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let notification_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
+    let toast_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let signal_buf: Rc<RefCell<Vec<SignalMessage>>> = Rc::new(RefCell::new(Vec::with_capacity(8)));
     let signal_process: Rc<RefCell<Vec<SignalMessage>>> =
         Rc::new(RefCell::new(Vec::with_capacity(8)));
@@ -82,6 +84,10 @@ pub fn start(
     let prev_d_held = Rc::new(RefCell::new(false));
     let prev_esc_held = Rc::new(RefCell::new(false));
     let prev_alt_arrow_held: Rc<RefCell<(bool, u64)>> = Rc::new(RefCell::new((false, 0)));
+    let prev_ctrl_k_held = Rc::new(RefCell::new(false));
+    let prev_qs_arrow_held = Rc::new(RefCell::new(false));
+    let prev_ch_arrow_held = Rc::new(RefCell::new(false));
+    let prev_ch_enter_held = Rc::new(RefCell::new(false));
     let mute_cooldown = Rc::new(RefCell::new(0u64));
     let deafen_cooldown = Rc::new(RefCell::new(0u64));
     let listen_state: Rc<RefCell<Option<ListenState>>> = Rc::new(RefCell::new(None));
@@ -94,6 +100,10 @@ pub fn start(
     let last_input_tick = Rc::new(RefCell::new(0u64));
     let prev_keys_for_idle: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
     let is_idle = Rc::new(RefCell::new(false));
+    let soundboard_was_held: Rc<RefCell<Vec<bool>>> = {
+        let count = soundboard_combos.borrow().len();
+        Rc::new(RefCell::new(vec![false; count]))
+    };
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -158,12 +168,111 @@ pub fn start(
 
                 handle_escape(&keys, current_view, &w, &prev_esc_held);
 
-                // Ctrl+K quick switcher toggle
-                if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::K) ||
-                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::K))
-                    && !w.get_quick_switcher_visible() {
-                        w.set_quick_switcher_visible(true);
+                // Ctrl+K / Cmd+K quick switcher toggle
+                {
+                    let ctrl_or_cmd = keys.contains(&Keycode::LControl)
+                        || keys.contains(&Keycode::RControl)
+                        || keys.contains(&Keycode::LMeta)
+                        || keys.contains(&Keycode::RMeta);
+                    let k_held = ctrl_or_cmd && keys.contains(&Keycode::K);
+                    let was_held = *prev_ctrl_k_held.borrow();
+                    if k_held && !was_held {
+                        let vis = !w.get_quick_switcher_visible();
+                        w.set_quick_switcher_visible(vis);
+                        if !vis {
+                            w.set_quick_switcher_query("".into());
+                        }
                     }
+                    *prev_ctrl_k_held.borrow_mut() = k_held;
+                }
+
+                // Quick switcher keyboard navigation (Up/Down to change selection)
+                // Enter is handled by VxInput's `accepted` callback in Slint
+                if w.get_quick_switcher_visible() {
+                    let up = keys.contains(&Keycode::Up);
+                    let down = keys.contains(&Keycode::Down);
+                    let arrow_held = up || down;
+                    let was_arrow = *prev_qs_arrow_held.borrow();
+                    if arrow_held && !was_arrow {
+                        let count = w.get_quick_switcher_items().row_count() as i32;
+                        let max_visible = count.min(8);
+                        if max_visible > 0 {
+                            let cur = w.get_quick_switcher_index();
+                            let next = if up {
+                                if cur <= 0 { max_visible - 1 } else { cur - 1 }
+                            } else {
+                                if cur + 1 >= max_visible { 0 } else { cur + 1 }
+                            };
+                            w.set_quick_switcher_index(next);
+                        }
+                    }
+                    *prev_qs_arrow_held.borrow_mut() = arrow_held;
+                } else {
+                    *prev_qs_arrow_held.borrow_mut() = false;
+                }
+
+                // Channel navigation in Space view (Up/Down/Enter without modifiers)
+                if current_view == 4 && !w.get_quick_switcher_visible() {
+                    let up = keys.contains(&Keycode::Up);
+                    let down = keys.contains(&Keycode::Down);
+                    let alt = keys.contains(&Keycode::LAlt) || keys.contains(&Keycode::RAlt);
+                    let arrow_held = (up || down) && !alt;
+                    let was_arrow = *prev_ch_arrow_held.borrow();
+                    if arrow_held && !was_arrow {
+                        let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                        // Build list of navigable channel indices (non-header, non-collapsed)
+                        let nav_indices: Vec<usize> = channels.iter().enumerate()
+                            .filter(|(_, c)| !c.is_category_header && !c.category_collapsed)
+                            .map(|(i, _)| i)
+                            .collect();
+                        if !nav_indices.is_empty() {
+                            let cur = w.get_focused_channel_index();
+                            let cur_pos = nav_indices.iter().position(|&i| i as i32 == cur);
+                            let next_pos = if up {
+                                match cur_pos {
+                                    Some(0) | None => nav_indices.len() - 1,
+                                    Some(p) => p - 1,
+                                }
+                            } else {
+                                match cur_pos {
+                                    Some(p) if p + 1 < nav_indices.len() => p + 1,
+                                    _ => 0,
+                                }
+                            };
+                            w.set_focused_channel_index(nav_indices[next_pos] as i32);
+                        }
+                    }
+                    *prev_ch_arrow_held.borrow_mut() = arrow_held;
+
+                    // Enter activates the focused channel
+                    let enter_held = keys.contains(&Keycode::Enter);
+                    let was_enter = *prev_ch_enter_held.borrow();
+                    if enter_held && !was_enter {
+                        let idx = w.get_focused_channel_index();
+                        if idx >= 0 {
+                            let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                            if let Some(ch) = channels.get(idx as usize) {
+                                if !ch.is_category_header {
+                                    if ch.is_voice {
+                                        w.invoke_join_channel(ch.id.clone());
+                                    } else {
+                                        w.invoke_select_text_channel(ch.id.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    *prev_ch_enter_held.borrow_mut() = enter_held;
+                } else {
+                    if *prev_ch_arrow_held.borrow() || *prev_ch_enter_held.borrow() {
+                        *prev_ch_arrow_held.borrow_mut() = false;
+                        *prev_ch_enter_held.borrow_mut() = false;
+                    }
+                    // Reset focused index when leaving space view
+                    if w.get_focused_channel_index() >= 0 && current_view != 4 {
+                        w.set_focused_channel_index(-1);
+                    }
+                }
 
                 // Ctrl+/ keyboard shortcuts overlay
                 if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::Slash) ||
@@ -229,6 +338,28 @@ pub fn start(
                         &deafen_key,
                         w.get_feedback_sound(),
                     );
+
+                    // Soundboard keybind triggering
+                    {
+                        let combos = soundboard_combos.borrow();
+                        let mut was_held = soundboard_was_held.borrow_mut();
+                        for (i, (clip_idx, combo)) in combos.iter().enumerate() {
+                            let held = combo_held(combo, &keys);
+                            let prev = was_held.get(i).copied().unwrap_or(false);
+                            if held && !prev {
+                                let audio = audio.clone();
+                                let idx = *clip_idx;
+                                rt_handle.spawn(async move {
+                                    if let Ok(aud) = audio.try_lock() {
+                                        aud.play_soundboard_clip(idx);
+                                    }
+                                });
+                            }
+                            if i < was_held.len() {
+                                was_held[i] = held;
+                            }
+                        }
+                    }
 
                     signal_handler::connection::drain_audio_and_update_speaking(
                         &network,
@@ -299,6 +430,18 @@ pub fn start(
             auto_hide_notification(&notification_at_tick, tick, &w);
             auto_clear_errors(&error_at_tick, tick, &w);
             auto_hide_copied(&copied_at_tick, tick, &w);
+            // Toast auto-hide after 3 seconds (120 ticks)
+            if w.get_toast_visible() {
+                if toast_at_tick.borrow().is_none() {
+                    *toast_at_tick.borrow_mut() = Some(tick);
+                }
+                if toast_at_tick.borrow().is_some_and(|t| tick.saturating_sub(t) >= 120) {
+                    w.set_toast_visible(false);
+                    *toast_at_tick.borrow_mut() = None;
+                }
+            } else {
+                *toast_at_tick.borrow_mut() = None;
+            }
 
             // --- Idle auto-status (compare slices without cloning) ---
             {
@@ -374,6 +517,12 @@ pub fn start(
             // --- Expire stale typing indicators every ~1s ---
             if tick.is_multiple_of(40) {
                 signal_handler::chat::expire_stale_typing(&w, &state, tick);
+
+                // Decrement slow mode countdown timer (1s intervals)
+                let remaining = w.get_slow_mode_remaining();
+                if remaining > 0 {
+                    w.set_slow_mode_remaining(remaining - 1);
+                }
             }
 
             // --- Retry pending messages every ~2s ---

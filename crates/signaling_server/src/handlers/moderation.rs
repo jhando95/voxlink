@@ -1,5 +1,5 @@
 use crate::{send_error, send_to, Db, Peer, State};
-use shared_types::{SignalMessage, SpaceRole};
+use shared_types::{AutomodWord, SignalMessage, SpaceRole};
 use std::sync::Arc;
 
 use super::presence::notify_watchers_for_user;
@@ -195,6 +195,86 @@ pub async fn handle_mute_member(
         &actor_user_id,
         &actor_name,
         "mute",
+        Some(target_user_id),
+        Some(target_name),
+        detail.into(),
+    )
+    .await;
+}
+
+pub async fn handle_server_deafen_member(
+    state: &State,
+    peer_id: &str,
+    member_id: String,
+    deafened: bool,
+    db: &Db,
+) {
+    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !can_manage_members(actor_role) {
+        send_error(state, peer_id, "You do not have permission to server-deafen members").await;
+        return;
+    }
+
+    let Some((actual_member_id, target_user_id, target_name, member_peer)) =
+        resolve_space_member(state, &space_id, &member_id).await
+    else {
+        send_error(state, peer_id, "Member not found").await;
+        return;
+    };
+
+    if target_user_id == actor_user_id {
+        send_error(state, peer_id, "Cannot server-deafen yourself").await;
+        return;
+    }
+
+    let target_role = {
+        let s = state.read().await;
+        s.spaces
+            .get(&space_id)
+            .map(|space| role_for_identity(space, &target_user_id))
+            .unwrap_or(SpaceRole::Member)
+    };
+    if !can_moderate_target(actor_role, target_role) {
+        send_error(state, peer_id, "You cannot server-deafen that member").await;
+        return;
+    }
+
+    member_peer
+        .is_server_deafened
+        .store(deafened, std::sync::atomic::Ordering::Relaxed);
+
+    let notify = SignalMessage::MemberServerDeafened {
+        member_id: actual_member_id.clone(),
+        deafened,
+    };
+    broadcast_to_space(state, &space_id, "", &notify).await;
+
+    log::info!(
+        "Peer {actual_member_id} {} in space {space_id} by {peer_id}",
+        if deafened {
+            "server-deafened"
+        } else {
+            "server-undeafened"
+        }
+    );
+
+    let detail = if deafened {
+        "Server-deafened the member in the space"
+    } else {
+        "Server-undeafened the member in the space"
+    };
+    let _ = append_audit_entry(
+        state,
+        db,
+        &space_id,
+        &actor_user_id,
+        &actor_name,
+        "server_deafen",
         Some(target_user_id),
         Some(target_name),
         detail.into(),
@@ -486,4 +566,198 @@ pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, 
             send_error(state, peer_id, &msg).await;
         }
     }
+}
+
+// ─── Auto-moderation word filter ───
+
+pub async fn handle_add_automod_word(
+    state: &State,
+    peer_id: &str,
+    word: String,
+    action: String,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(SpaceRole::Admin) {
+        send_error(state, peer_id, "Admin or higher required to manage automod").await;
+        return;
+    }
+
+    let trimmed = word.trim().to_lowercase();
+    if trimmed.is_empty() || trimmed.len() > 100 {
+        send_error(state, peer_id, "Invalid word (must be 1-100 characters)").await;
+        return;
+    }
+    let action = if action == "warn" { "warn" } else { "block" };
+
+    let Some(db_arc) = db else {
+        send_error(state, peer_id, "Persistence required for automod").await;
+        return;
+    };
+
+    let db_clone = db_arc.clone();
+    let sid = space_id.clone();
+    let w = trimmed.clone();
+    let a = action.to_string();
+    let result = tokio::task::spawn_blocking(move || db_clone.add_automod_word(&sid, &w, &a))
+        .await
+        .unwrap_or_else(|_| Err("Automod task failed".into()));
+
+    match result {
+        Ok(()) => {
+            log::info!("Automod word added in space {space_id}: {trimmed} ({action})");
+            broadcast_to_space(
+                state,
+                &space_id,
+                "",
+                &SignalMessage::AutomodWordAdded {
+                    word: trimmed,
+                    action: action.to_string(),
+                },
+            )
+            .await;
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_remove_automod_word(
+    state: &State,
+    peer_id: &str,
+    word: String,
+    db: &Db,
+) {
+    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(SpaceRole::Admin) {
+        send_error(state, peer_id, "Admin or higher required to manage automod").await;
+        return;
+    }
+
+    let trimmed = word.trim().to_lowercase();
+
+    let Some(db_arc) = db else {
+        send_error(state, peer_id, "Persistence required for automod").await;
+        return;
+    };
+
+    let db_clone = db_arc.clone();
+    let sid = space_id.clone();
+    let w = trimmed.clone();
+    let result = tokio::task::spawn_blocking(move || db_clone.remove_automod_word(&sid, &w))
+        .await
+        .unwrap_or_else(|_| Err("Automod task failed".into()));
+
+    match result {
+        Ok(true) => {
+            log::info!("Automod word removed in space {space_id}: {trimmed}");
+            broadcast_to_space(
+                state,
+                &space_id,
+                "",
+                &SignalMessage::AutomodWordRemoved { word: trimmed },
+            )
+            .await;
+        }
+        Ok(false) => {
+            send_error(state, peer_id, "Word not found in filter list").await;
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+pub async fn handle_list_automod_words(state: &State, peer_id: &str, db: &Db) {
+    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+        actor_context(state, peer_id).await
+    else {
+        send_error(state, peer_id, "Not in a space").await;
+        return;
+    };
+    if !actor_role.has_at_least(SpaceRole::Admin) {
+        send_error(state, peer_id, "Admin or higher required to view automod").await;
+        return;
+    }
+
+    let Some(db_arc) = db else {
+        send_error(state, peer_id, "Persistence required for automod").await;
+        return;
+    };
+
+    let db_clone = db_arc.clone();
+    let sid = space_id;
+    let result = tokio::task::spawn_blocking(move || db_clone.load_automod_words(&sid))
+        .await
+        .unwrap_or_else(|_| Err("Automod task failed".into()));
+
+    match result {
+        Ok(rows) => {
+            let words: Vec<AutomodWord> = rows
+                .into_iter()
+                .map(|r| AutomodWord {
+                    word: r.word,
+                    action: r.action,
+                })
+                .collect();
+            let peer = {
+                let s = state.read().await;
+                s.peers.get(peer_id).cloned()
+            };
+            if let Some(peer) = peer {
+                send_to(&peer, &SignalMessage::AutomodWordList { words }).await;
+            }
+        }
+        Err(msg) => {
+            send_error(state, peer_id, &msg).await;
+        }
+    }
+}
+
+/// Check message content against automod filter for a space.
+/// Returns Some((matched_word, action)) if a filter matches, None otherwise.
+pub async fn check_automod(
+    db: &Db,
+    space_id: &str,
+    content: &str,
+) -> Option<(String, String)> {
+    let db_arc = db.as_ref()?;
+    let db_clone = db_arc.clone();
+    let sid = space_id.to_string();
+    let words = tokio::task::spawn_blocking(move || db_clone.load_automod_words(&sid))
+        .await
+        .ok()?
+        .ok()?;
+
+    let lower = content.to_lowercase();
+    for entry in &words {
+        // Word-boundary-aware match: check that the word appears as a standalone word
+        // (surrounded by non-alphanumeric characters or at string boundaries)
+        let pattern = &entry.word;
+        let mut search_start = 0;
+        while let Some(pos) = lower[search_start..].find(pattern) {
+            let abs_pos = search_start + pos;
+            let before_ok = abs_pos == 0
+                || !lower.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
+            let after_pos = abs_pos + pattern.len();
+            let after_ok = after_pos >= lower.len()
+                || !lower.as_bytes()[after_pos].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return Some((entry.word.clone(), entry.action.clone()));
+            }
+            search_start = abs_pos + 1;
+        }
+    }
+    None
 }

@@ -1056,6 +1056,7 @@ async fn join_space(
                 space,
                 channels,
                 members,
+                ..
             } => return (space, channels, members),
             SignalMessage::MemberOnline { .. } | SignalMessage::MemberOffline { .. } => continue,
             other => panic!("Expected SpaceJoined, got: {:?}", other),

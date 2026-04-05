@@ -18,7 +18,28 @@ pub fn handle_text_channel_selected(
     w.set_chat_channel_id(channel_id.into());
     w.set_chat_channel_name(channel_name.into());
     w.set_chat_is_direct_message(false);
-    w.set_chat_context_subtitle(w.get_current_space_name());
+
+    // Show channel topic in subtitle if available, else fall back to space name
+    let (topic, slow_mode_secs) = {
+        let s = state.borrow();
+        let ch = s.space.as_ref().and_then(|sp| {
+            sp.channels.iter().find(|ch| ch.id == channel_id)
+        });
+        let topic = ch.and_then(|ch| {
+            if ch.topic.is_empty() { None } else { Some(ch.topic.clone()) }
+        });
+        let slow = ch.map(|ch| ch.slow_mode_secs).unwrap_or(0);
+        (topic, slow)
+    };
+    let subtitle = match topic {
+        Some(t) => format!("{} — {}", w.get_current_space_name(), t),
+        None => w.get_current_space_name().to_string(),
+    };
+    w.set_chat_context_subtitle(subtitle.into());
+
+    // Set slow mode duration for countdown timer; reset any active countdown
+    w.set_slow_mode_secs(slow_mode_secs as i32);
+    w.set_slow_mode_remaining(0);
     w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
     w.set_chat_input(slint::SharedString::default());
     w.set_editing_message_id(slint::SharedString::default());
@@ -61,6 +82,8 @@ pub fn handle_direct_message_selected(
     w.set_chat_channel_name(user_name.into());
     w.set_chat_is_direct_message(true);
     w.set_chat_context_subtitle("Direct message".into());
+    w.set_slow_mode_secs(0);
+    w.set_slow_mode_remaining(0);
     w.set_chat_input(slint::SharedString::default());
     w.set_editing_message_id(slint::SharedString::default());
     w.set_editing_original_content(slint::SharedString::default());
@@ -135,11 +158,28 @@ pub fn handle_text_message(
         drop(s);
         crate::friends::sync_ui(w, state);
 
-        // Send notification for messages in other channels
-        if w.get_notifications_enabled() && !is_self_message {
-            let sender = message.sender_name.clone();
-            let content = truncate_for_notification(&message.content);
-            crate::helpers::send_notification(&sender, &content);
+        // Send notification for messages in other channels; suppress in DND mode.
+        // Respect per-channel notification overrides: "none" = silent, "mentions" = @-only.
+        if w.get_notifications_enabled() && !is_self_message && w.get_status_preset() != 2 {
+            let cfg = config_store::load_config();
+            let override_setting = cfg
+                .channel_notification_overrides
+                .get(channel_id)
+                .map(|s| s.as_str())
+                .unwrap_or("all");
+            let my_name_ref = w.get_user_name();
+            let mentions_self =
+                ui_shell::message_mentions_user(&message.content, &my_name_ref);
+            let should_notify = match override_setting {
+                "none" => false,
+                "mentions" => mentions_self,
+                _ => true, // "all" or unset
+            };
+            if should_notify {
+                let sender = message.sender_name.clone();
+                let content = truncate_for_notification(&message.content);
+                crate::helpers::send_notification(&sender, &content);
+            }
         }
         return;
     }
@@ -180,7 +220,8 @@ pub fn handle_direct_message(
     let is_self_message = is_self_message(state, w, message);
 
     if !chat_open {
-        if w.get_notifications_enabled() && !is_self_message {
+        // Suppress desktop notifications in DND mode
+        if w.get_notifications_enabled() && !is_self_message && w.get_status_preset() != 2 {
             let sender = message.sender_name.clone();
             let content = truncate_for_notification(&message.content);
             crate::helpers::send_notification(&sender, &content);
@@ -218,10 +259,8 @@ pub fn handle_text_message_edited(
                     let mut updated = msg;
                     updated.content = new_content.into();
                     updated.edited = true;
-                    updated.mentions_self = new_content.to_lowercase().contains(&format!(
-                        "@{}",
-                        w.get_user_name().to_string().to_lowercase()
-                    ));
+                    updated.mentions_self =
+                        ui_shell::message_mentions_user(new_content, &w.get_user_name());
                     model.set_row_data(i, updated);
                     break;
                 }
@@ -656,11 +695,12 @@ fn sync_direct_typing_text(
 }
 
 fn format_typing_text(users: &[String]) -> String {
-    match users {
-        [] => String::new(),
-        [one] => format!("{one} is typing..."),
-        [one, two] => format!("{one} and {two} are typing..."),
-        [one, two, ..] => format!("{one}, {two}, and others are typing..."),
+    match users.len() {
+        0 => String::new(),
+        1 => format!("{} is typing", users[0]),
+        2 => format!("{} and {} are typing", users[0], users[1]),
+        3 => format!("{}, {}, and {} are typing", users[0], users[1], users[2]),
+        n => format!("{n} people are typing"),
     }
 }
 
@@ -707,10 +747,8 @@ fn update_message_content(w: &MainWindow, message_id: &str, new_content: &str) {
                     let mut updated = msg;
                     updated.content = new_content.into();
                     updated.edited = true;
-                    updated.mentions_self = new_content.to_lowercase().contains(&format!(
-                        "@{}",
-                        w.get_user_name().to_string().to_lowercase()
-                    ));
+                    updated.mentions_self =
+                        ui_shell::message_mentions_user(new_content, &w.get_user_name());
                     model.set_row_data(i, updated);
                     break;
                 }

@@ -1,5 +1,5 @@
-import { AuditEntryData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, SavedServerData, ShareSourceData, SoundboardClipData, SpaceData, VxTheme } from "theme.slint";
-import { VxCard, VxInput } from "components.slint";
+import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, VxTheme } from "theme.slint";
+import { VxButton, VxCard, VxInput } from "components.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
@@ -38,6 +38,7 @@ export component MainWindow inherits Window {
     in-out property <bool> is-open-mic: true;
     in-out property <bool> is-connected: false;
     in-out property <bool> first-run: false;
+    callback dismiss-welcome();
     in-out property <float> mic-level: 0.0;
     in-out property <string> status-text: "Disconnected";
     in-out property <string> room-status: "";
@@ -102,6 +103,8 @@ export component MainWindow inherits Window {
     in-out property <string> current-space-id: "";
     in-out property <string> current-space-name: "";
     in-out property <string> current-space-invite: "";
+    in-out property <string> space-description: "";
+    in-out property <bool> is-space-public: false;
     in-out property <bool> is-space-owner: false;
     in-out property <string> space-role-label: "Member";
     in-out property <bool> can-manage-space-channels: false;
@@ -114,6 +117,7 @@ export component MainWindow inherits Window {
     in-out property <string> new-channel-name: "";
     in-out property <bool> in-space-channel: false;
     in-out property <string> active-channel-id: "";
+    in-out property <string> channel-topic: "";
     in-out property <bool> show-quick-call: false;
     in-out property <bool> new-channel-is-voice: true;
     in-out property <int> new-channel-voice-quality: 2;
@@ -121,6 +125,7 @@ export component MainWindow inherits Window {
     in-out property <string> space-search-query: "";
     in-out property <int> visible-text-channels: 0;
     in-out property <int> visible-voice-channels: 0;
+    in-out property <int> visible-favorite-channels: 0;
     in-out property <int> visible-members: 0;
 
     // Text chat
@@ -142,6 +147,19 @@ export component MainWindow inherits Window {
     in property <bool> unread-pulse: false;
     in-out property <[ChatMessage]> chat-search-results: [];
     in-out property <string> chat-search-query: "";
+    // Recent reaction emojis (up to 5, most recent first)
+    in-out property <[string]> recent-reactions: [];
+
+    // Mention autocomplete
+    in-out property <bool> mention-popup-visible: false;
+    in-out property <[string]> mention-suggestions: [];
+    in-out property <int> mention-selected-index: 0;
+    callback mention-input-changed(string);
+    callback mention-selected(int);
+
+    // Slow mode countdown
+    in-out property <int> slow-mode-secs: 0;
+    in-out property <int> slow-mode-remaining: 0;
 
     // Thread panel
     in-out property <[ChatMessage]> thread-messages: [];
@@ -152,6 +170,20 @@ export component MainWindow inherits Window {
     callback open-thread(string, string);
     callback close-thread();
 
+    // Profile popup
+    in-out property <bool> profile-popup-visible: false;
+    in-out property <string> profile-popup-user-id: "";
+    in-out property <string> profile-popup-name: "";
+    in-out property <string> profile-popup-bio: "";
+    in-out property <string> profile-popup-status: "";
+    in-out property <string> profile-popup-role: "";
+    in-out property <string> profile-popup-role-color: "";
+    in-out property <string> profile-popup-activity: "";
+    in-out property <string> profile-popup-initial: "";
+    in-out property <int> profile-popup-color-index: 0;
+    in-out property <int> profile-popup-role-color-index: 0;
+    callback show-profile(string);  // user_id
+
     // Notifications
     in-out property <bool> notifications-enabled: true;
     in-out property <bool> minimize-to-tray: true;
@@ -161,6 +193,13 @@ export component MainWindow inherits Window {
     in-out property <bool> show-spoilers: false;
     in-out property <bool> compact-chat: false;
     in-out property <bool> streamer-mode: false;
+    in-out property <bool> desktop-notifications: true;
+    in-out property <int> notification-sound-index: 0; // 0=Default, 1=Subtle, 2=Chime, 3=None
+    callback set-notification-sound(int);
+    in-out property <int> status-preset: 0; // 0=Online, 1=Idle, 2=DND, 3=Invisible
+    callback set-status-preset(int);
+    in-out property <int> idle-timeout-mins: 5;
+    callback set-idle-timeout(int);
     callback toggle-notifications();
     callback toggle-minimize-to-tray();
     callback toggle-neural-noise-suppression();
@@ -169,11 +208,13 @@ export component MainWindow inherits Window {
     callback toggle-show-spoilers();
     callback toggle-compact-chat();
     callback toggle-streamer-mode();
+    callback toggle-desktop-notifications();
     callback toggle-member-widget();
     // Soundboard
     in property <[SoundboardClipData]> soundboard-clips: [];
     callback play-soundboard-clip(int);
     callback remove-soundboard-clip(int);
+    callback add-soundboard-clip(string, string, string);
     callback send-friend-request(string);
     callback send-friend-request-by-name(string);
     callback accept-friend-request(string);
@@ -181,9 +222,26 @@ export component MainWindow inherits Window {
     callback cancel-friend-request(string);
     callback remove-friend(string);
     callback open-direct-message(string);
+    callback close-direct-message(string);
+
+    // DM Voice Calls
+    callback call-user(string);  // user_id
+    in-out property <bool> incoming-call-visible: false;
+    in-out property <string> incoming-call-name: "";
+    in-out property <string> incoming-call-room: "";
+    callback accept-call();
+    callback decline-call();
+
+    // Toast notification
+    in-out property <string> toast-message: "";
+    in-out property <bool> toast-visible: false;
+    in-out property <int> toast-type: 0; // 0=info, 1=success, 2=warning, 3=error
 
     // Keyboard shortcuts overlay
     in-out property <bool> shortcuts-visible: false;
+
+    // About dialog
+    in-out property <bool> about-visible: false;
 
     // Update banner
     in-out property <bool> update-available: false;
@@ -256,12 +314,17 @@ export component MainWindow inherits Window {
     callback leave-space();
     callback create-channel();
     callback delete-channel(string);
+    callback move-channel-up(string);
+    callback move-channel-down(string);
     callback join-channel(string);
     callback leave-channel();
     callback copy-invite-code();
     callback copy-share-message();
     callback space-search-changed(string);
     callback delete-space();
+    callback rename-space(string);
+    callback set-space-description(string);
+    callback set-space-public(bool);
     callback toggle-feedback-sound();
     callback noise-suppression-changed(float);
     callback input-volume-changed(float);
@@ -275,6 +338,8 @@ export component MainWindow inherits Window {
     callback delete-text-message(string);
     callback react-to-message(string, string);
     callback toggle-pin-message(string, bool);
+    callback forward-message(string);
+    callback copy-message-text(string);
     callback kick-member(string);
     callback ban-member(string);
     callback server-mute-member(string, bool);
@@ -286,14 +351,21 @@ export component MainWindow inherits Window {
     // v0.7 feature callbacks
     callback set-channel-user-limit(/* channel_id */ string, /* limit */ int);
     callback set-channel-slow-mode(/* channel_id */ string, /* secs */ int);
+    callback set-channel-auto-delete(/* channel_id */ string, /* hours */ int);
     callback set-channel-category(/* channel_id */ string, /* category */ string);
     callback set-channel-status(/* channel_id */ string, /* status */ string);
     callback toggle-category-collapse(/* category */ string);
+    callback toggle-favorite-channel(/* channel_id */ string);
+    callback set-channel-notification(/* channel_id */ string, /* setting: "all"/"mentions"/"none" */ string);
     callback timeout-member(/* member_id */ string, /* duration_secs */ int);
     callback set-priority-speaker(/* peer_id */ string, /* enabled */ bool);
     callback whisper-to(/* comma-separated peer IDs */ string);
     callback stop-whisper();
     callback save-user-note(/* user_id */ string, /* note */ string);
+    // v0.10.0: Role colors and activity
+    callback set-role-color(/* role_tier: 0=member,1=mod,2=admin,3=owner */ int, /* color */ string);
+    callback set-activity(/* activity text */ string);
+    in-out property <string> activity-text: "";
 
     // Account system
     in-out property <bool> show-login-view: false;
@@ -308,13 +380,53 @@ export component MainWindow inherits Window {
     callback create-account();
     callback logout();
     callback change-password(string, string);
+    callback change-display-name(string);
+    callback delete-account();
     callback revoke-all-sessions();
+    // Scheduled events
+    in property <[ScheduledEventData]> scheduled-events: [];
+    callback create-event(string, string, int);
+    callback delete-event(string);
+    callback toggle-event-interest(string);
+    callback list-events();
+
+    // Server discovery / explore
+    in property <[PublicSpaceData]> public-spaces: [];
+    callback browse-public-spaces();
+    callback join-public-space(string); // invite_code
+
+    // Recording indicator
+    in-out property <bool> recording-active: false;
+    in-out property <string> recording-user: "";
+
+    // Auto-moderation word filter
+    in-out property <[AutomodWordData]> automod-words: [];
+    callback add-automod-word(string, string);
+    callback remove-automod-word(string);
+    callback list-automod-words();
 
     // Quick switcher
     in-out property <bool> quick-switcher-visible: false;
     in-out property <string> quick-switcher-query: "";
     in-out property <[ChannelData]> quick-switcher-items: [];
+    in-out property <int> quick-switcher-index: 0;
     callback quick-switcher-select(string);
+    callback quick-switcher-filter(string);
+    changed quick-switcher-query => { root.quick-switcher-filter(root.quick-switcher-query); }
+    changed quick-switcher-visible => {
+        if root.quick-switcher-visible {
+            root.quick-switcher-query = "";
+            root.quick-switcher-index = 0;
+            root.quick-switcher-filter("");
+        }
+    }
+
+    // Keyboard channel navigation (space view)
+    in-out property <int> focused-channel-index: -1;
+
+    // Welcome screen overlay
+    in-out property <bool> show-welcome-overlay: false;
+    in-out property <string> welcome-message: "";
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -340,12 +452,17 @@ export component MainWindow inherits Window {
                 unread-direct-messages-count: root.unread-direct-messages-count;
                 favorite-friends-count: root.favorite-friends-count;
                 online-friends-count: root.online-friends-count;
+                user-name: root.user-name;
+                user-status: root.status-text;
+                is-muted: root.is-muted;
+                is-deafened: root.is-deafened;
                 navigate(view-index) => {
                     root.navigate(view-index);
                     if !root.desktop-layout {
                         root.sidebar-expanded = false;
                     }
                 }
+                show-shortcuts => { root.shortcuts-visible = true; }
                 select-space(space-id) => {
                     root.select-space(space-id);
                     if !root.desktop-layout {
@@ -419,6 +536,7 @@ export component MainWindow inherits Window {
                         if root.current-view == 0 : HomeView {
                             wide: root.desktop-layout;
                             first-run: root.first-run;
+                            streamer-mode: root.streamer-mode;
                             server-address <=> root.server-address;
                             saved-servers: root.saved-servers;
                             user-name <=> root.user-name;
@@ -443,6 +561,14 @@ export component MainWindow inherits Window {
                             create-room => { root.create-room(); }
                             join-room(code) => { root.join-room(code); }
                             open-direct-message(user-id) => { root.open-direct-message(user-id); }
+                            close-direct-message(user-id) => { root.close-direct-message(user-id); }
+                            call-user(user-id) => { root.call-user(user-id); }
+                            activity-text <=> root.activity-text;
+                            set-activity(text) => { root.set-activity(text); }
+                            dismiss-welcome => { root.dismiss-welcome(); }
+                            public-spaces: root.public-spaces;
+                            browse-public-spaces => { root.browse-public-spaces(); }
+                            join-public-space(code) => { root.join-public-space(code); }
                         }
 
                         if root.current-view == 1 : RoomView {
@@ -466,6 +592,7 @@ export component MainWindow inherits Window {
                             dropped-frames: root.dropped-frames;
                             in-space-channel: root.in-space-channel;
                             current-space-name: root.current-space-name;
+                            channel-topic: root.channel-topic;
                             has-screen-share: root.has-screen-share;
                             is-sharing-screen: root.is-sharing-screen;
                             screen-share-owner-name: root.screen-share-owner-name;
@@ -490,6 +617,10 @@ export component MainWindow inherits Window {
                             select-screen-share-profile(profile-index) => { root.select-screen-share-profile(profile-index); }
                             volume-changed(peer-id, level) => { root.volume-changed(peer-id, level); }
                             navigate(view-index) => { root.navigate(view-index); }
+                            soundboard-clips: root.soundboard-clips;
+                            play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
+                            recording-active: root.recording-active;
+                            recording-user: root.recording-user;
                         }
 
                         if root.current-view == 2 : SettingsView {
@@ -540,15 +671,28 @@ export component MainWindow inherits Window {
                             toggle-compact-chat => { root.toggle-compact-chat(); }
                             streamer-mode: root.streamer-mode;
                             toggle-streamer-mode => { root.toggle-streamer-mode(); }
+                            desktop-notifications: root.desktop-notifications;
+                            toggle-desktop-notifications => { root.toggle-desktop-notifications(); }
+                            notification-sound-index: root.notification-sound-index;
+                            set-notification-sound(idx) => { root.set-notification-sound(idx); }
                             clear-keybind(binding) => { root.clear-keybind(binding); }
+                            status-preset: root.status-preset;
+                            set-status-preset(preset) => { root.set-status-preset(preset); }
+                            idle-timeout-mins: root.idle-timeout-mins;
+                            set-idle-timeout(mins) => { root.set-idle-timeout(mins); }
                             is-logged-in: root.is-logged-in;
                             account-email: root.account-email;
                             logout => { root.logout(); }
                             show-login => { root.show-login-view = true; root.login-mode = true; root.auth-error = ""; }
+                            show-about => { root.about-visible = true; }
                             revoke-all-sessions => { root.revoke-all-sessions(); }
+                            change-password(old, new) => { root.change-password(old, new); }
+                            change-display-name(name) => { root.change-display-name(name); }
+                            delete-account => { root.delete-account(); }
                             soundboard-clips: root.soundboard-clips;
                             play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
                             remove-soundboard-clip(idx) => { root.remove-soundboard-clip(idx); }
+                            add-soundboard-clip(name, path, keybind) => { root.add-soundboard-clip(name, path, keybind); }
                         }
 
                         if root.current-view == 4 : SpaceView {
@@ -562,11 +706,13 @@ export component MainWindow inherits Window {
                             can-manage-space-roles: root.can-manage-space-roles;
                             can-view-space-audit: root.can-view-space-audit;
                             channels: root.channels;
+                            focused-channel-index: root.focused-channel-index;
                             members: root.members;
                             audit-entries: root.space-audit-entries;
                             search-query <=> root.space-search-query;
                             visible-text-channels: root.visible-text-channels;
                             visible-voice-channels: root.visible-voice-channels;
+                            visible-favorite-channels: root.visible-favorite-channels;
                             visible-members: root.visible-members;
                             new-channel-name <=> root.new-channel-name;
                             new-channel-is-voice <=> root.new-channel-is-voice;
@@ -581,8 +727,15 @@ export component MainWindow inherits Window {
                             join-channel(channel-id) => { root.join-channel(channel-id); }
                             create-channel => { root.create-channel(); }
                             delete-channel(channel-id) => { root.delete-channel(channel-id); }
+                            move-channel-up(channel-id) => { root.move-channel-up(channel-id); }
+                            move-channel-down(channel-id) => { root.move-channel-down(channel-id); }
                             leave-space => { root.leave-space(); }
                             delete-space => { root.delete-space(); }
+                            rename-space(name) => { root.rename-space(name); }
+                            set-space-description(desc) => { root.set-space-description(desc); }
+                            space-description: root.space-description;
+                            is-space-public: root.is-space-public;
+                            set-space-public(public) => { root.set-space-public(public); }
                             kick-member(member-id) => { root.kick-member(member-id); }
                             ban-member(member-id) => { root.ban-member(member-id); }
                             server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
@@ -593,6 +746,7 @@ export component MainWindow inherits Window {
                             timeout-member(member-id, duration) => { root.timeout-member(member-id, duration); }
                             set-channel-user-limit(channel-id, limit) => { root.set-channel-user-limit(channel-id, limit); }
                             set-channel-slow-mode(channel-id, secs) => { root.set-channel-slow-mode(channel-id, secs); }
+                            set-channel-auto-delete(channel-id, hours) => { root.set-channel-auto-delete(channel-id, hours); }
                             set-channel-category(channel-id, cat) => { root.set-channel-category(channel-id, cat); }
                             set-channel-status(channel-id, status) => { root.set-channel-status(channel-id, status); }
                             save-user-note(user-id, note) => { root.save-user-note(user-id, note); }
@@ -603,7 +757,19 @@ export component MainWindow inherits Window {
                             remove-friend(user-id) => { root.remove-friend(user-id); }
                             open-direct-message(user-id) => { root.open-direct-message(user-id); }
                             toggle-category-collapse(cat) => { root.toggle-category-collapse(cat); }
+                            toggle-favorite-channel(channel-id) => { root.toggle-favorite-channel(channel-id); }
+                            set-channel-notification(channel-id, setting) => { root.set-channel-notification(channel-id, setting); }
                             unread-pulse: root.unread-pulse;
+                            streamer-mode: root.streamer-mode;
+                            scheduled-events: root.scheduled-events;
+                            create-event(title, desc, time) => { root.create-event(title, desc, time); }
+                            delete-event(id) => { root.delete-event(id); }
+                            toggle-event-interest(id) => { root.toggle-event-interest(id); }
+                            list-events => { root.list-events(); }
+                            automod-words: root.automod-words;
+                            add-automod-word(word, action) => { root.add-automod-word(word, action); }
+                            remove-automod-word(word) => { root.remove-automod-word(word); }
+                            list-automod-words => { root.list-automod-words(); }
                         }
 
                         if root.current-view == 5 : ChatView {
@@ -630,10 +796,15 @@ export component MainWindow inherits Window {
                             delete-text-message(message-id) => { root.delete-text-message(message-id); }
                             react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
                             toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
+                            forward-message(message-id) => { root.forward-message(message-id); }
+                            copy-message-text(content) => { root.copy-message-text(content); }
+                            show-profile(user-id) => { root.show-profile(user-id); }
                             chat-search-results: root.chat-search-results;
                             chat-search-query <=> root.chat-search-query;
                             search-messages(query) => { root.search-messages(query); }
                             typing-dot-phase: root.typing-dot-phase;
+                            slow-mode-secs: root.slow-mode-secs;
+                            slow-mode-remaining <=> root.slow-mode-remaining;
                             thread-messages: root.thread-messages;
                             thread-panel-visible: root.thread-panel-visible;
                             thread-parent-sender: root.thread-parent-sender;
@@ -641,6 +812,11 @@ export component MainWindow inherits Window {
                             thread-parent-timestamp: root.thread-parent-timestamp;
                             open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
                             close-thread => { root.close-thread(); }
+                            mention-popup-visible: root.mention-popup-visible;
+                            mention-suggestions: root.mention-suggestions;
+                            mention-selected-index <=> root.mention-selected-index;
+                            mention-input-changed(text) => { root.mention-input-changed(text); }
+                            mention-selected(idx) => { root.mention-selected(idx); }
                         }
 
                         if root.current-view == 3 : SystemView {
@@ -892,7 +1068,7 @@ export component MainWindow inherits Window {
                         }
                         Rectangle { horizontal-stretch: 1; }
                         Text {
-                            text: "Esc to close";
+                            text: "Esc to close · Up/Down to navigate";
                             color: VxTheme.text-muted;
                             font-size: 9px;
                         }
@@ -904,7 +1080,7 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         accepted => {
                             if root.quick-switcher-items.length > 0 {
-                                root.quick-switcher-select(root.quick-switcher-items[0].id);
+                                root.quick-switcher-select(root.quick-switcher-items[clamp(root.quick-switcher-index, 0, root.quick-switcher-items.length - 1)].id);
                                 root.quick-switcher-visible = false;
                                 root.quick-switcher-query = "";
                             }
@@ -921,9 +1097,13 @@ export component MainWindow inherits Window {
                         height: idx < 8 ? 40px : 0px;
                         visible: idx < 8;
                         border-radius: VxTheme.radius-control;
-                        background: qs-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                        border-color: VxTheme.border-subtle;
+                        background: idx == root.quick-switcher-index ? VxTheme.surface-active :
+                                    qs-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                        border-color: idx == root.quick-switcher-index ? VxTheme.accent-border : VxTheme.border-subtle;
                         border-width: 1px;
+
+                        animate background { duration: 60ms; easing: ease-out; }
+                        animate border-color { duration: 60ms; easing: ease-out; }
 
                         qs-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -939,24 +1119,422 @@ export component MainWindow inherits Window {
                             padding-right: 12px;
                             spacing: 10px;
                             alignment: center;
-                            Text {
-                                text: item.is-voice ? "VC" : "TXT";
-                                color: VxTheme.text-muted;
-                                font-size: 9px;
-                                font-weight: 800;
-                                width: 28px;
+                            Rectangle {
+                                width: 32px;
+                                height: 24px;
+                                border-radius: 6px;
+                                background: item.is-voice ? VxTheme.accent-subtle :
+                                            item.status == "dm" ? VxTheme.warning-soft : VxTheme.bg-panel;
+                                border-color: item.is-voice ? VxTheme.accent-border :
+                                              item.status == "dm" ? VxTheme.warning.transparentize(0.6) : VxTheme.border-subtle;
+                                border-width: 1px;
+                                Text {
+                                    text: item.is-voice ? "VC" : item.status == "dm" ? "DM" : "#";
+                                    color: item.is-voice ? VxTheme.accent :
+                                           item.status == "dm" ? VxTheme.warning : VxTheme.text-muted;
+                                    font-size: 9px;
+                                    font-weight: 800;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
                             }
                             Text {
                                 text: item.name;
-                                color: VxTheme.text-primary;
+                                color: idx == root.quick-switcher-index ? VxTheme.accent : VxTheme.text-primary;
                                 font-size: 11px;
                                 font-weight: 600;
                                 horizontal-stretch: 1;
+                                overflow: elide;
                             }
-                            if item.status != "" : Text {
-                                text: item.status;
+                            if item.category != "" : Text {
+                                text: item.category;
                                 color: VxTheme.text-muted;
                                 font-size: 9px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Incoming Call Overlay ───
+        if root.incoming-call-visible : Rectangle {
+            background: VxTheme.bg-canvas.transparentize(0.25);
+            TouchArea { clicked => {} } // block clicks
+
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VxCard {
+                        width: 320px;
+                        VerticalLayout {
+                            padding: 24px;
+                            spacing: 16px;
+
+                            Text {
+                                text: "Incoming Call";
+                                color: VxTheme.text-primary;
+                                font-size: 16px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                text: root.incoming-call-name + " is calling you";
+                                color: VxTheme.text-secondary;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 12px;
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 110px;
+                                    height: 36px;
+                                    border-radius: VxTheme.radius-control;
+                                    background: call-accept-touch.has-hover ? VxTheme.success.darker(0.1) : VxTheme.success;
+                                    call-accept-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.incoming-call-visible = false;
+                                            root.accept-call();
+                                        }
+                                    }
+                                    Text {
+                                        text: "Accept";
+                                        color: white;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 110px;
+                                    height: 36px;
+                                    border-radius: VxTheme.radius-control;
+                                    background: call-decline-touch.has-hover ? VxTheme.danger.darker(0.1) : VxTheme.danger;
+                                    call-decline-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.incoming-call-visible = false;
+                                            root.decline-call();
+                                        }
+                                    }
+                                    Text {
+                                        text: "Decline";
+                                        color: white;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Toast Notification ───
+        if root.toast-visible : Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 80px;
+            width: min(360px, parent.width - 40px);
+            height: 40px;
+            border-radius: VxTheme.radius-control;
+            background: root.toast-type == 3 ? VxTheme.danger :
+                        root.toast-type == 2 ? VxTheme.warning :
+                        root.toast-type == 1 ? VxTheme.success :
+                        VxTheme.bg-raised;
+            border-color: root.toast-type == 3 ? VxTheme.danger :
+                          root.toast-type == 2 ? VxTheme.warning :
+                          root.toast-type == 1 ? VxTheme.success :
+                          VxTheme.accent-border;
+            border-width: 1px;
+            opacity: 0.95;
+            animate opacity { duration: 200ms; }
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: root.toast-type == 3 ? "✕" :
+                          root.toast-type == 2 ? "⚠" :
+                          root.toast-type == 1 ? "✓" : "ℹ";
+                    color: root.toast-type >= 1 ? #fff : VxTheme.accent;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.toast-message;
+                    color: root.toast-type >= 1 ? #fff : VxTheme.text-primary;
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                TouchArea {
+                    width: 20px;
+                    clicked => { root.toast-visible = false; }
+                    Text {
+                        text: "×";
+                        color: root.toast-type >= 1 ? #fff : VxTheme.text-muted;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ─── Profile Popup Overlay ───
+        if root.profile-popup-visible : Rectangle {
+            background: VxTheme.bg-overlay;
+            TouchArea {
+                clicked => { root.profile-popup-visible = false; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height * 0.22;
+                width: min(340px, parent.width - 40px);
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.bg-raised;
+                border-color: VxTheme.accent-border;
+                border-width: 1px;
+
+                // Block clicks from reaching the backdrop
+                TouchArea {}
+
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+
+                    // Avatar + name row
+                    HorizontalLayout {
+                        spacing: 14px;
+                        alignment: start;
+
+                        // Avatar circle
+                        Rectangle {
+                            width: 52px;
+                            height: 52px;
+                            border-radius: 26px * VxTheme.avatar-roundness * 2;
+                            background: VxTheme.avatar-color(root.profile-popup-color-index);
+
+                            Text {
+                                text: root.profile-popup-initial;
+                                color: #fff;
+                                font-size: 20px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 4px;
+                            alignment: center;
+
+                            Text {
+                                text: root.profile-popup-name;
+                                color: VxTheme.text-primary;
+                                font-size: 16px;
+                                font-weight: 700;
+                            }
+
+                            if root.profile-popup-role != "" : Rectangle {
+                                height: 20px;
+                                width: profile-role-txt.preferred-width + 14px;
+                                border-radius: VxTheme.radius-pill;
+                                background: root.profile-popup-role-color-index > 0
+                                    ? VxTheme.role-color(root.profile-popup-role-color-index).transparentize(0.82)
+                                    : VxTheme.accent-subtle;
+                                border-color: root.profile-popup-role-color-index > 0
+                                    ? VxTheme.role-color(root.profile-popup-role-color-index).transparentize(0.5)
+                                    : VxTheme.accent-border;
+                                border-width: 1px;
+
+                                profile-role-txt := Text {
+                                    text: root.profile-popup-role;
+                                    color: root.profile-popup-role-color-index > 0
+                                        ? VxTheme.role-color(root.profile-popup-role-color-index)
+                                        : VxTheme.accent;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    // Status
+                    if root.profile-popup-status != "" : HorizontalLayout {
+                        spacing: 6px;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            y: 4px;
+                            border-radius: 4px;
+                            background: root.profile-popup-status == "Online" ? VxTheme.success :
+                                        root.profile-popup-status == "Idle" ? VxTheme.warning :
+                                        root.profile-popup-status == "Do Not Disturb" ? VxTheme.danger :
+                                        VxTheme.text-muted;
+                        }
+                        Text {
+                            text: root.profile-popup-status;
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                        }
+                    }
+
+                    // Activity
+                    if root.profile-popup-activity != "" : Rectangle {
+                        background: VxTheme.bg-soft;
+                        border-radius: VxTheme.radius-control;
+                        height: profile-activity-txt.preferred-height + 14px;
+
+                        profile-activity-txt := Text {
+                            x: 10px;
+                            y: 7px;
+                            width: parent.width - 20px;
+                            text: root.profile-popup-activity;
+                            color: VxTheme.text-secondary;
+                            font-size: 10px;
+                            font-weight: 600;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // Bio
+                    if root.profile-popup-bio != "" : VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "ABOUT";
+                            color: VxTheme.text-muted;
+                            font-size: 9px;
+                            font-weight: 700;
+                            letter-spacing: 0.8px;
+                        }
+                        Text {
+                            text: root.profile-popup-bio;
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // Message button
+                    Rectangle {
+                        height: 32px;
+                        border-radius: VxTheme.radius-control;
+                        background: profile-msg-touch.has-hover ? VxTheme.accent-hover : VxTheme.accent;
+
+                        profile-msg-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.profile-popup-visible = false;
+                                root.open-direct-message(root.profile-popup-user-id);
+                            }
+                        }
+
+                        Text {
+                            text: "Message";
+                            color: white;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Welcome Screen Overlay ───
+        if root.show-welcome-overlay : Rectangle {
+            background: VxTheme.bg-canvas.transparentize(0.15);
+            TouchArea { clicked => {} } // block clicks
+
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VxCard {
+                        width: min(400px, root.width - 60px);
+                        VerticalLayout {
+                            padding: 28px;
+                            spacing: 18px;
+
+                            // Accent bar
+                            Rectangle {
+                                height: 4px;
+                                border-radius: 2px;
+                                background: VxTheme.accent;
+                            }
+
+                            // Space name
+                            Text {
+                                text: root.current-space-name;
+                                color: VxTheme.text-primary;
+                                font-size: 18px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                            }
+
+                            // Welcome label
+                            Text {
+                                text: "WELCOME";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 700;
+                                letter-spacing: 1.2px;
+                                horizontal-alignment: center;
+                            }
+
+                            // Message body
+                            Text {
+                                text: root.welcome-message;
+                                color: VxTheme.text-secondary;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                            }
+
+                            // Dismiss button
+                            Rectangle {
+                                height: 36px;
+                                border-radius: 8px;
+                                background: welcome-dismiss-touch.has-hover ? VxTheme.accent.darker(0.15) : VxTheme.accent;
+
+                                welcome-dismiss-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.show-welcome-overlay = false;
+                                        root.welcome-message = "";
+                                    }
+                                }
+
+                                Text {
+                                    text: "Got it!";
+                                    color: white;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
                     }
@@ -1002,8 +1580,10 @@ export component MainWindow inherits Window {
                     // Navigation
                     Text { text: "NAVIGATION"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
                     for shortcut in [
-                        { key: "Ctrl+K", desc: "Quick switcher" },
+                        { key: "Ctrl/Cmd+K", desc: "Quick switcher" },
                         { key: "Ctrl+/", desc: "Keyboard shortcuts" },
+                        { key: "Up/Down", desc: "Navigate channels (space view)" },
+                        { key: "Enter", desc: "Open focused channel" },
                         { key: "Alt+Up/Down", desc: "Switch text channels" },
                         { key: "Escape", desc: "Back / close overlay" },
                     ] : HorizontalLayout {
@@ -1069,6 +1649,8 @@ export component MainWindow inherits Window {
                     for shortcut in [
                         { key: "Enter", desc: "Send message" },
                         { key: "Shift+Enter", desc: "New line" },
+                        { key: "Ctrl+E", desc: "Edit last message" },
+                        { key: "Up", desc: "Edit last message (empty input)" },
                     ] : HorizontalLayout {
                         spacing: 12px;
                         Rectangle {
@@ -1093,6 +1675,121 @@ export component MainWindow inherits Window {
                             font-size: 11px;
                             vertical-alignment: center;
                         }
+                    }
+                }
+            }
+        }
+
+        // ─── About Dialog Overlay ───
+        if root.about-visible : Rectangle {
+            background: VxTheme.bg-overlay;
+            TouchArea {
+                clicked => { root.about-visible = false; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height * 0.22;
+                width: min(360px, parent.width - 40px);
+                border-radius: VxTheme.radius-card;
+                background: VxTheme.bg-raised;
+                border-color: VxTheme.accent-border;
+                border-width: 1px;
+
+                // Block clicks from reaching the backdrop
+                TouchArea {}
+
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 16px;
+                    alignment: center;
+
+                    // App name badge
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        Rectangle {
+                            width: 36px;
+                            height: 24px;
+                            border-radius: VxTheme.radius-control;
+                            background: VxTheme.accent;
+                            Text {
+                                text: "VX";
+                                color: #fff;
+                                font-size: 12px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: "VOXLINK";
+                            color: VxTheme.text-primary;
+                            font-size: 22px;
+                            font-weight: 800;
+                            letter-spacing: 1px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "Version 0.9.0";
+                        color: VxTheme.text-secondary;
+                        font-size: 11px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Voice without limits";
+                        color: VxTheme.text-muted;
+                        font-size: 12px;
+                        font-italic: true;
+                        horizontal-alignment: center;
+                    }
+
+                    // Divider
+                    Rectangle {
+                        height: 1px;
+                        background: VxTheme.border-subtle;
+                    }
+
+                    // Report a Bug
+                    VerticalLayout {
+                        spacing: 6px;
+                        alignment: center;
+                        Text {
+                            text: "Report a Bug";
+                            color: VxTheme.text-primary;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "github.com/jhando95/voxlink";
+                            color: VxTheme.accent;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Divider
+                    Rectangle {
+                        height: 1px;
+                        background: VxTheme.border-subtle;
+                    }
+
+                    Text {
+                        text: "Made with Rust + Slint";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                    }
+
+                    VxButton {
+                        label: "Close";
+                        soft: true;
+                        clicked => { root.about-visible = false; }
                     }
                 }
             }
