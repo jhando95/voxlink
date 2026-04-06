@@ -15,7 +15,9 @@ use ui_shell::MainWindow;
 use crate::signal_handler;
 use keys::{combo_held, combo_to_config, combo_to_display, keycode_sort_order};
 
-const TICK_MS: u64 = 25; // 40Hz — smooth for audio, low overhead
+const TICK_MS_ACTIVE: u64 = 25; // 40Hz — smooth for audio during voice calls
+const TICK_MS_IDLE: u64 = 100; // 10Hz — low overhead when not in a voice call
+const TICKS_PER_IDLE_FIRE: u64 = TICK_MS_IDLE / TICK_MS_ACTIVE; // tick increment per idle fire
 
 // ─── Event Loop ───
 
@@ -51,9 +53,11 @@ pub fn start(
     let network_flag = network_flag.clone();
     let rt_handle = rt_handle.clone();
     let screen_share = screen_share.clone();
-    let timer = slint::Timer::default();
+    let timer = Rc::new(slint::Timer::default());
+    let timer_handle = timer.clone(); // cloned into the closure for set_interval
     let screen_frame_timer = Rc::new(slint::Timer::default());
     let tick_count = Rc::new(RefCell::new(0u64));
+    let timer_is_active_rate = Rc::new(RefCell::new(true)); // tracks current timer rate
 
     let audio_ctx = signal_handler::AudioContext {
         audio_started: audio_started.clone(),
@@ -118,20 +122,45 @@ pub fn start(
 
     timer.start(
         slint::TimerMode::Repeated,
-        std::time::Duration::from_millis(TICK_MS),
+        std::time::Duration::from_millis(TICK_MS_ACTIVE),
         move || {
             let Some(w) = window_weak.upgrade() else {
                 return;
-            };
-            let tick = {
-                let mut t = tick_count.borrow_mut();
-                *t += 1;
-                *t
             };
 
             let in_call = *audio_started_conn.borrow();
             let current_view = w.get_current_view();
             let viewing_room = current_view == 1;
+
+            // --- Adaptive timer rate ---
+            // Switch to 40Hz when in a voice call (or previewing mic), 10Hz otherwise.
+            // Tick increments proportionally so all tick-based timeouts keep correct
+            // wall-clock timing regardless of the current rate.
+            let needs_active_rate =
+                in_call || (current_view == 2 && w.get_mic_preview_active());
+            {
+                let mut is_active = timer_is_active_rate.borrow_mut();
+                if needs_active_rate && !*is_active {
+                    timer_handle
+                        .set_interval(std::time::Duration::from_millis(TICK_MS_ACTIVE));
+                    *is_active = true;
+                } else if !needs_active_rate && *is_active {
+                    timer_handle
+                        .set_interval(std::time::Duration::from_millis(TICK_MS_IDLE));
+                    *is_active = false;
+                }
+            }
+
+            let tick = {
+                let mut t = tick_count.borrow_mut();
+                let increment = if needs_active_rate {
+                    1
+                } else {
+                    TICKS_PER_IDLE_FIRE
+                };
+                *t += increment;
+                *t
+            };
 
             // Reset audio recovery state and bandwidth counters when entering a new call
             {
@@ -168,11 +197,18 @@ pub fn start(
             );
 
             // --- Keyboard input ---
-            let keys = device_state.get_keys();
+            // Skip OS keyboard polling when disconnected and not listening for keybinds.
+            // This avoids the cost of device_query syscalls during idle.
+            let is_connected = w.get_is_connected();
+            let listening_shared = w.get_listening_keybind();
+            let need_keys = is_connected || !listening_shared.is_empty();
+            let keys = if need_keys {
+                device_state.get_keys()
+            } else {
+                Vec::new()
+            };
 
             // --- Keybind listening mode ---
-            // Check emptiness on SharedString first (O(1)) to avoid heap allocation every tick
-            let listening_shared = w.get_listening_keybind();
             if !listening_shared.is_empty() {
                 let listening = listening_shared.to_string();
                 handle_keybind_listening(
