@@ -58,6 +58,7 @@ pub fn handle_channel_joined(
                 eq_mid: eq[1] as f32 / 1200.0 + 0.5,
                 eq_treble: eq[2] as f32 / 1200.0 + 0.5,
                 pan: pan_raw as f32 / 200.0 + 0.5,
+                is_priority_speaker: p.is_priority_speaker,
             }
         })
         .collect();
@@ -73,6 +74,7 @@ pub fn handle_channel_joined(
         eq_mid: 0.5,
         eq_treble: 0.5,
         pan: 0.5,
+        is_priority_speaker: false,
     });
     s.room.connection = shared_types::ConnectionState::Connected;
     s.current_view = AppView::Room;

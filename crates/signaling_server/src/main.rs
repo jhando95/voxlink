@@ -2320,7 +2320,7 @@ async fn handle_send_voice_note(
     let msg = shared_types::TextMessageData {
         message_id: msg_id,
         sender_name: name,
-        sender_id: user_id,
+        sender_id: user_id.clone(),
         content: content_text,
         timestamp: now,
         reply_to_message_id: None,
@@ -2342,6 +2342,10 @@ async fn handle_send_voice_note(
             for (_, p) in s.peers.iter() {
                 let uid = p.user_id.lock().await.clone().unwrap_or_default();
                 if uid == *mid {
+                    // Block check: skip recipients who have blocked the sender
+                    if p.blocked_by.read().map(|b| b.contains(&user_id)).unwrap_or(false) {
+                        continue;
+                    }
                     send_to(p, &SignalMessage::TextMessage {
                         channel_id: channel_id.clone(),
                         message: msg.clone(),

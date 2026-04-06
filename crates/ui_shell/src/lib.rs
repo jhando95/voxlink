@@ -322,7 +322,7 @@ pub fn set_participants(window: &MainWindow, participants: &[shared_types::Parti
                 is_speaking: p.is_speaking,
                 volume: p.volume,
                 color_index: color_index as i32,
-                is_priority_speaker: false,
+                is_priority_speaker: p.is_priority_speaker,
                 audio_level: p.audio_level,
                 eq_bass: p.eq_bass,
                 eq_mid: p.eq_mid,

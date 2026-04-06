@@ -172,7 +172,7 @@ pub async fn handle_join_room(
                     name: p.name.lock().await.clone(),
                     is_muted: p.is_muted.load(Ordering::Relaxed),
                     is_deafened: p.is_deafened.load(Ordering::Relaxed),
-                    is_priority_speaker: false,
+                    is_priority_speaker: p.is_priority_speaker.load(Ordering::Relaxed),
                 });
             }
         }
@@ -202,7 +202,7 @@ pub async fn handle_join_room(
             name: p.name.lock().await.clone(),
             is_muted: p.is_muted.load(Ordering::Relaxed),
             is_deafened: p.is_deafened.load(Ordering::Relaxed),
-            is_priority_speaker: false,
+            is_priority_speaker: p.is_priority_speaker.load(Ordering::Relaxed),
         })
     } else {
         None

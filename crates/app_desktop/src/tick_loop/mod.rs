@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use shared_types::{MicMode, SignalMessage};
@@ -78,7 +79,7 @@ pub fn start(
     let copied_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let error_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
     let notification_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
-    let toast_at_tick: Rc<RefCell<Option<u64>>> = Rc::new(RefCell::new(None));
+    let toast_at_tick: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
     let signal_buf: Rc<RefCell<Vec<SignalMessage>>> = Rc::new(RefCell::new(Vec::with_capacity(8)));
     let signal_process: Rc<RefCell<Vec<SignalMessage>>> =
         Rc::new(RefCell::new(Vec::with_capacity(8)));
@@ -119,6 +120,10 @@ pub fn start(
     let prev_session_mb_tenths = Rc::new(RefCell::new(u64::MAX)); // tenths of MB
     let prev_est_mb_hr = Rc::new(RefCell::new(u64::MAX));
     let prev_est_peer_count = Rc::new(RefCell::new(usize::MAX));
+    // Wall-clock instants for periodic tasks (immune to adaptive tick rate drift)
+    let last_slow_update = Rc::new(RefCell::new(Instant::now()));
+    let last_typing_expiry = Rc::new(RefCell::new(Instant::now()));
+    let last_ping_update = Rc::new(RefCell::new(Instant::now()));
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -487,12 +492,12 @@ pub fn start(
             auto_hide_notification(&notification_at_tick, tick, &w);
             auto_clear_errors(&error_at_tick, tick, &w);
             auto_hide_copied(&copied_at_tick, tick, &w);
-            // Toast auto-hide after 3 seconds (120 ticks)
+            // Toast auto-hide after 3 seconds (wall-clock)
             if w.get_toast_visible() {
                 if toast_at_tick.borrow().is_none() {
-                    *toast_at_tick.borrow_mut() = Some(tick);
+                    *toast_at_tick.borrow_mut() = Some(Instant::now());
                 }
-                if toast_at_tick.borrow().is_some_and(|t| tick.saturating_sub(t) >= 120) {
+                if toast_at_tick.borrow().is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
                     w.set_toast_visible(false);
                     *toast_at_tick.borrow_mut() = None;
                 }
@@ -533,8 +538,9 @@ pub fn start(
                 }
             }
 
-            // --- Slow updates every ~1s ---
-            if tick.is_multiple_of(40) {
+            // --- Slow updates every ~1s (wall-clock) ---
+            if last_slow_update.borrow().elapsed() >= Duration::from_secs(1) {
+                *last_slow_update.borrow_mut() = Instant::now();
                 let total_dropped_frames =
                     perf.borrow()
                         .dropped_frames
@@ -620,8 +626,9 @@ pub fn start(
                 }
             }
 
-            // --- Expire stale typing indicators every ~1s ---
-            if tick.is_multiple_of(40) {
+            // --- Expire stale typing indicators every ~1s (wall-clock) ---
+            if last_typing_expiry.borrow().elapsed() >= Duration::from_secs(1) {
+                *last_typing_expiry.borrow_mut() = Instant::now();
                 signal_handler::chat::expire_stale_typing(&w, &state, tick);
 
                 // Decrement slow mode countdown timer (1s intervals)
@@ -636,8 +643,9 @@ pub fn start(
                 retry_pending_messages(&state, &network, &rt_handle, &w);
             }
 
-            // --- Ping every ~3s ---
-            if tick.is_multiple_of(120) {
+            // --- Ping every ~3s (wall-clock) ---
+            if last_ping_update.borrow().elapsed() >= Duration::from_secs(3) {
+                *last_ping_update.borrow_mut() = Instant::now();
                 update_ping(&network, &rt_handle, &w, &perf);
             }
 

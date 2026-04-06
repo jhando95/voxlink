@@ -746,6 +746,27 @@ pub async fn handle_send_direct_message(
 
     match stored {
         Ok(message) => {
+            // Block check: if target has blocked sender, don't deliver
+            let blocked = {
+                let s = state.read().await;
+                s.peers.values().any(|p| {
+                    if let Ok(uid) = p.user_id.try_lock() {
+                        if uid.as_deref() == Some(target_user_id.as_str()) {
+                            return p
+                                .blocked_by
+                                .read()
+                                .map(|b| b.contains(&current_user_id))
+                                .unwrap_or(false);
+                        }
+                    }
+                    false
+                })
+            };
+            if blocked {
+                send_error(state, peer_id, "Cannot send message to this user").await;
+                return;
+            }
+
             let sender_notify = SignalMessage::DirectMessage {
                 user_id: target_user_id.clone(),
                 message: message.clone(),
@@ -1744,7 +1765,7 @@ pub async fn handle_send_group_message(
     match result {
         Ok(members) => {
             let msg = shared_types::TextMessageData {
-                sender_id: current_user_id,
+                sender_id: current_user_id.clone(),
                 sender_name,
                 content,
                 timestamp: timestamp as u64,
@@ -1766,6 +1787,15 @@ pub async fn handle_send_group_message(
             };
             for member_id in &members {
                 for peer in peers_for_user(state, member_id).await {
+                    // Block check: skip members who have blocked the sender
+                    if peer
+                        .blocked_by
+                        .read()
+                        .map(|b| b.contains(&current_user_id))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
                     send_to(&peer, &notify).await;
                 }
             }

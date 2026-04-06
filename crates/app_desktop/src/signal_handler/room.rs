@@ -49,14 +49,18 @@ pub fn handle_room_entered(
                 eq_mid: eq[1] as f32 / 1200.0 + 0.5,
                 eq_treble: eq[2] as f32 / 1200.0 + 0.5,
                 pan: pan_raw as f32 / 200.0 + 0.5,
+                is_priority_speaker: p.is_priority_speaker,
             }
         })
         .collect();
+    // Restore mute/deafen state from the UI (survives reconnects)
+    let self_muted = w.get_is_muted();
+    let self_deafened = w.get_is_deafened();
     s.room.participants.push(Participant {
         id: "self".into(),
         name: w.get_user_name().to_string(),
-        is_muted: false,
-        is_deafened: false,
+        is_muted: self_muted,
+        is_deafened: self_deafened,
         is_speaking: false,
         volume: 1.0,
         audio_level: 0,
@@ -64,7 +68,10 @@ pub fn handle_room_entered(
         eq_mid: 0.5,
         eq_treble: 0.5,
         pan: 0.5,
+        is_priority_speaker: false,
     });
+    s.room.is_muted = self_muted;
+    s.room.is_deafened = self_deafened;
 
     s.room.connection = shared_types::ConnectionState::Connected;
     s.room.active_screen_share_peer_id = None;
@@ -136,6 +143,7 @@ pub fn handle_peer_joined(
         eq_mid: saved_eq[1] as f32 / 1200.0 + 0.5,
         eq_treble: saved_eq[2] as f32 / 1200.0 + 0.5,
         pan: saved_pan as f32 / 200.0 + 0.5,
+        is_priority_speaker: peer.is_priority_speaker,
     });
     ui_shell::set_participants(w, &s.room.participants);
     let count = s.room.participants.len();
@@ -321,13 +329,19 @@ pub fn handle_priority_speaker_changed(
         "Priority speaker {}: {peer_id}",
         if enabled { "enabled" } else { "disabled" }
     );
-    let s = state.borrow();
-    let peer_name = s
+    let mut s = state.borrow_mut();
+    let peer_name = if let Some(p) = s
         .room
         .participants
-        .iter()
+        .iter_mut()
         .find(|p| p.id == peer_id)
-        .map(|p| p.name.clone());
+    {
+        p.is_priority_speaker = enabled;
+        Some(p.name.clone())
+    } else {
+        None
+    };
+    ui_shell::set_participants(w, &s.room.participants);
     drop(s);
     if let Some(name) = peer_name {
         if enabled {

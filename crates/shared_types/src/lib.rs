@@ -46,6 +46,8 @@ pub struct Participant {
     pub eq_treble: f32,
     /// Stereo pan (0.0=full left, 0.5=center, 1.0=full right)
     pub pan: f32,
+    /// Whether this participant is a priority speaker
+    pub is_priority_speaker: bool,
 }
 
 #[derive(Debug, Clone, Default)]
