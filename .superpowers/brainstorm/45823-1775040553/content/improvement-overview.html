@@ -1,0 +1,104 @@
+<h2>Voxlink v0.9.3 — Polish & Refinement Batch</h2>
+<p class="subtitle">Curated improvements across visual polish, UX, and functional completeness</p>
+
+<div class="section">
+  <h3>Visual Polish</h3>
+  <div class="options" data-multiselect>
+    <div class="option selected" data-choice="reply-blocks" onclick="toggleSelect(this)">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>Reply Quote Blocks</h3>
+        <p>Replace inline reply text with visual quote blocks — left accent border, muted background, sender name + preview. Like Discord's reply rendering.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="typing-dots" onclick="toggleSelect(this)">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>Animated Typing Indicator</h3>
+        <p>Three bouncing dots animation when someone is typing, replacing static "User is typing..." text. Smooth 1.2s loop.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="status-dots" onclick="toggleSelect(this)">
+      <div class="letter">3</div>
+      <div class="content">
+        <h3>Status Dots on Members</h3>
+        <p>Colored dot overlay on avatars — green (online), yellow (idle), red (DND), gray (offline/invisible). Consistent across member list, chat, and friend list.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="forwarded-style" onclick="toggleSelect(this)">
+      <div class="letter">4</div>
+      <div class="content">
+        <h3>Forwarded Message Styling</h3>
+        <p>Small "↪ Forwarded from #channel-name" tag above forwarded messages in a muted accent color, visually distinct from replies.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>UX Refinements</h3>
+  <div class="options" data-multiselect>
+    <div class="option selected" data-choice="collapsible-categories" onclick="toggleSelect(this)">
+      <div class="letter">5</div>
+      <div class="content">
+        <h3>Collapsible Channel Categories</h3>
+        <p>Click category headers to collapse/expand channel groups. Arrow indicator rotates on toggle. Collapse state persisted in config.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="disconnect-banner" onclick="toggleSelect(this)">
+      <div class="letter">6</div>
+      <div class="content">
+        <h3>Disconnect Banner</h3>
+        <p>Prominent banner at top when connection is lost — "Connection lost — Reconnecting..." with animated indicator. Replaces subtle status text.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="search-highlight" onclick="toggleSelect(this)">
+      <div class="letter">7</div>
+      <div class="content">
+        <h3>Search Result Context</h3>
+        <p>Show channel name badge on each search result. Bold the matching query text. Show timestamp + sender for context.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="keyboard-nav" onclick="toggleSelect(this)">
+      <div class="letter">8</div>
+      <div class="content">
+        <h3>Keyboard Navigation</h3>
+        <p>Arrow keys to navigate channel list. Enter to join. Escape to go back. Alt+Up/Down to switch channels quickly.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Functional Completeness</h3>
+  <div class="options" data-multiselect>
+    <div class="option selected" data-choice="thread-panel" onclick="toggleSelect(this)">
+      <div class="letter">9</div>
+      <div class="content">
+        <h3>Thread View Panel</h3>
+        <p>Side panel that opens when clicking a reply chain. Shows the parent message + all replies in a threaded view. Close with X or Escape.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="attachment-cards" onclick="toggleSelect(this)">
+      <div class="letter">10</div>
+      <div class="content">
+        <h3>Attachment Download Cards</h3>
+        <p>File attachments render as styled cards with filename, size, and download icon. Click to save. Distinct from regular message text.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="quality-badges" onclick="toggleSelect(this)">
+      <div class="letter">11</div>
+      <div class="content">
+        <h3>Voice Quality Badges</h3>
+        <p>Small badge on voice channels showing quality level (Low/Standard/High/Ultra). Color-coded: gray/blue/green/gold.</p>
+      </div>
+    </div>
+    <div class="option selected" data-choice="unread-pulse" onclick="toggleSelect(this)">
+      <div class="letter">12</div>
+      <div class="content">
+        <h3>Unread Pulse Animation</h3>
+        <p>Subtle pulse glow on space icons and channel badges when new unread messages arrive. Single pulse, not continuous — draws eye without annoying.</p>
+      </div>
+    </div>
+  </div>
+</div>
