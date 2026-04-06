@@ -99,6 +99,9 @@ pub fn start(
     let was_in_call = Rc::new(RefCell::new(false));
     let smoothed_levels: Rc<RefCell<HashMap<String, f32>>> =
         Rc::new(RefCell::new(HashMap::new()));
+    // Reusable cache for per-peer RMS levels — avoids Vec+String alloc every tick
+    let peer_level_cache: Rc<RefCell<HashMap<String, f32>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     let last_input_tick = Rc::new(RefCell::new(0u64));
     let prev_keys_for_idle: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
     let is_idle = Rc::new(RefCell::new(false));
@@ -108,6 +111,10 @@ pub fn start(
     };
     // Bandwidth tracking — accumulates session total bytes
     let session_bytes_total = Rc::new(RefCell::new(0u64));
+    // Cached bandwidth display values — skip format! when unchanged
+    let prev_session_mb_tenths = Rc::new(RefCell::new(u64::MAX)); // tenths of MB
+    let prev_est_mb_hr = Rc::new(RefCell::new(u64::MAX));
+    let prev_est_peer_count = Rc::new(RefCell::new(usize::MAX));
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -133,6 +140,9 @@ pub fn start(
                 if in_call && !prev {
                     audio_recovery.borrow_mut().reset();
                     *session_bytes_total.borrow_mut() = 0;
+                    *prev_session_mb_tenths.borrow_mut() = u64::MAX;
+                    *prev_est_mb_hr.borrow_mut() = u64::MAX;
+                    *prev_est_peer_count.borrow_mut() = usize::MAX;
                     w.set_session_data_mb("0.0".into());
                     w.set_est_data_per_hour("".into());
                     // Drain any stale bandwidth counters from previous session
@@ -415,7 +425,7 @@ pub fn start(
                         }
                     }
 
-                    update_mic_level(tick, &audio, &state, &w, &smoothed_levels);
+                    update_mic_level(tick, &audio, &state, &w, &smoothed_levels, &peer_level_cache);
                 } else {
                     // Not in a call — stop screen share timer if it's still running (cleanup)
                     if screen_frame_timer_tick.running() {
@@ -510,8 +520,13 @@ pub fn start(
                         // Accumulate session total
                         let mut total = session_bytes_total.borrow_mut();
                         *total += bytes_sent + bytes_recv;
-                        let mb = *total as f64 / (1024.0 * 1024.0);
-                        w.set_session_data_mb(format!("{mb:.1}").into());
+                        // Only format when the displayed value changes (tenths of MB)
+                        let mb_tenths = (*total * 10) / (1024 * 1024);
+                        if *prev_session_mb_tenths.borrow() != mb_tenths {
+                            *prev_session_mb_tenths.borrow_mut() = mb_tenths;
+                            let mb = *total as f64 / (1024.0 * 1024.0);
+                            w.set_session_data_mb(format!("{mb:.1}").into());
+                        }
                         // Estimated data per hour based on current bitrate and peer count
                         let peer_count = w.get_participants().row_count();
                         if kbps_up > 0 && peer_count > 0 {
@@ -521,10 +536,17 @@ pub fn start(
                             let total_kbps = kbps_up as u64 + (kbps_down as u64);
                             // MB/hr = kbps * 3600 / 8 / 1024
                             let mb_hr = total_kbps * 3600 / 8 / 1024;
-                            w.set_est_data_per_hour(
-                                format!("Est. {} MB/hr with {} user{}", mb_hr, peers_hearing + 1,
-                                        if peers_hearing + 1 > 1 { "s" } else { "" }).into(),
-                            );
+                            // Only format+set when values actually changed
+                            if *prev_est_mb_hr.borrow() != mb_hr
+                                || *prev_est_peer_count.borrow() != peer_count
+                            {
+                                *prev_est_mb_hr.borrow_mut() = mb_hr;
+                                *prev_est_peer_count.borrow_mut() = peer_count;
+                                w.set_est_data_per_hour(
+                                    format!("Est. {} MB/hr with {} user{}", mb_hr, peers_hearing + 1,
+                                            if peers_hearing + 1 > 1 { "s" } else { "" }).into(),
+                                );
+                            }
                         }
                     }
                 } else {
@@ -908,6 +930,7 @@ fn update_mic_level(
     state: &Rc<RefCell<shared_types::AppState>>,
     w: &MainWindow,
     smoothed_levels: &Rc<RefCell<HashMap<String, f32>>>,
+    peer_level_cache: &Rc<RefCell<HashMap<String, f32>>>,
 ) {
     if !tick.is_multiple_of(2) {
         return;
@@ -925,12 +948,27 @@ fn update_mic_level(
             w.set_talking_while_muted(talking_while_muted);
         }
 
-        // Read per-peer RMS levels from audio engine (lock-free atomics)
-        let peer_levels = aud.peer_rms_levels();
+        // Read per-peer RMS levels via callback — no Vec/String allocation.
+        // We reuse a persistent cache HashMap to avoid re-allocating keys.
+        {
+            let mut cache = peer_level_cache.borrow_mut();
+            // Mark all entries as stale (zero) so departed peers get 0.0
+            for val in cache.values_mut() {
+                *val = 0.0;
+            }
+            aud.for_each_peer_rms_level(|id, rms| {
+                if let Some(val) = cache.get_mut(id) {
+                    *val = rms;
+                } else {
+                    cache.insert(id.to_owned(), rms);
+                }
+            });
+        }
 
         // Compute self mic level on the same dB scale
         let self_pct = rms_to_pct(level);
 
+        let cache = peer_level_cache.borrow();
         let mut smoothed = smoothed_levels.borrow_mut();
         let mut s = state.borrow_mut();
         let mut changed = false;
@@ -939,10 +977,9 @@ fn update_mic_level(
             let new_raw = if p.id == "self" {
                 self_pct
             } else {
-                peer_levels
-                    .iter()
-                    .find(|(id, _)| id == &p.id)
-                    .map(|(_, rms)| rms_to_pct(*rms))
+                cache
+                    .get(&p.id)
+                    .map(|rms| rms_to_pct(*rms))
                     .unwrap_or(0.0)
             };
 
@@ -953,7 +990,11 @@ fn update_mic_level(
             } else {
                 prev * 0.85
             };
-            smoothed.insert(p.id.clone(), displayed);
+            if let Some(val) = smoothed.get_mut(&p.id) {
+                *val = displayed;
+            } else {
+                smoothed.insert(p.id.clone(), displayed);
+            }
 
             let level_i32 = displayed as i32;
             if p.audio_level != level_i32 {
@@ -969,7 +1010,11 @@ fn update_mic_level(
         }
 
         if changed {
-            ui_shell::set_participants(w, &s.room.participants);
+            // Fast path: update only changed rows in the existing model.
+            // Falls back to full rebuild if the row count changed (join/leave).
+            if !ui_shell::update_participant_levels(w, &s.room.participants) {
+                ui_shell::set_participants(w, &s.room.participants);
+            }
         }
     }
 }

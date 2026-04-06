@@ -90,8 +90,8 @@ fn get_or_create<'a, V>(
 
 // ─── Audio Engine ───
 
-/// Callback type for encoded audio frames. Uses Arc<[u8]> for zero-copy sharing.
-type EncodedFrameCallback = Box<dyn Fn(Arc<[u8]>) + Send>;
+/// Callback type for encoded audio frames. Receives a borrowed slice — no heap allocation.
+type EncodedFrameCallback = Box<dyn Fn(&[u8]) + Send>;
 
 pub struct AudioDevice {
     pub name: String,
@@ -311,6 +311,18 @@ impl AudioEngine {
             .collect()
     }
 
+    /// Iterate per-peer RMS levels without allocating a Vec or cloning peer IDs.
+    /// Calls `f(peer_id, rms_level)` for each active peer. Skips if the lock
+    /// is contended (playback callback holds it).
+    pub fn for_each_peer_rms_level(&self, mut f: impl FnMut(&str, f32)) {
+        if let Ok(peers) = self.peer_buffers.try_lock() {
+            for (id, peer) in peers.iter() {
+                let raw = peer.shared.rms_level.load(Ordering::Relaxed);
+                f(id, raw as f32 / 1000.0);
+            }
+        }
+    }
+
     // ─── Device Enumeration ───
 
     /// Re-enumerate the host to pick up hot-plugged devices
@@ -449,7 +461,7 @@ impl AudioEngine {
 
     // ─── Callbacks ───
 
-    pub fn set_on_encoded_frame<F: Fn(Arc<[u8]>) + Send + 'static>(&self, callback: F) {
+    pub fn set_on_encoded_frame<F: Fn(&[u8]) + Send + 'static>(&self, callback: F) {
         if let Ok(mut cb) = self.on_encoded_frame.lock() {
             *cb = Some(Box::new(callback));
             log::info!("on_encoded_frame callback set — audio frames will be forwarded to network");
@@ -597,6 +609,7 @@ impl AudioEngine {
         let mut noise_suppressor = NoiseSuppressor::new();
         let mut echo_canceller = EchoCanceller::new(FRAME_SIZE);
         let mut silence_frames: u32 = 0;
+        let mut encode_errors: u64 = 0;
 
         let stream = device.build_input_stream(
             &config,
@@ -676,10 +689,10 @@ impl AudioEngine {
                     match opus_encoder.encode(&pcm_i16, &mut opus_out) {
                         Ok(len) => {
                             frames_encoded += 1;
-                            let frame: Arc<[u8]> = Arc::from(&opus_out[..len]);
+                            // Pass borrowed slice directly — zero heap allocation
                             if let Ok(cb) = on_frame.try_lock() {
                                 if let Some(ref f) = *cb {
-                                    f(frame);
+                                    f(&opus_out[..len]);
                                     // Log first frame and periodic status
                                     if frames_encoded == 1 {
                                         log::info!("First audio frame encoded and sent ({len} bytes)");
@@ -692,7 +705,10 @@ impl AudioEngine {
                             }
                         }
                         Err(e) => {
-                            log::warn!("Opus encode error: {e}");
+                            encode_errors += 1;
+                            if encode_errors == 1 || encode_errors % 100 == 0 {
+                                log::warn!("Opus encode error (#{encode_errors}): {e}");
+                            }
                         }
                     }
                 }
@@ -813,13 +829,15 @@ impl AudioEngine {
         let ducking_amount = self.ducking_amount.clone();
         let ducking_threshold = self.ducking_threshold.clone();
 
-        // Local snapshot held by the playback callback — refreshed when generation changes
-        let mut local_peers: Vec<Arc<PeerPlaybackShared>> = Vec::new();
+        // Local snapshot held by the playback callback — refreshed when generation changes.
+        // Pre-allocate for 20 peers to avoid allocation on peer join/leave.
+        let mut local_peers: Vec<Arc<PeerPlaybackShared>> = Vec::with_capacity(20);
         let mut local_gen: u32 = 0;
         // Per-peer EQ states (parallel to local_peers, rebuilt on generation change)
-        let mut eq_states: Vec<eq::PeerEqState> = Vec::new();
-        // Per-peer mono scratch buffer (reused each callback, avoids allocation)
-        let mut scratch = vec![0.0f32; FRAME_SIZE * 2];
+        let mut eq_states: Vec<eq::PeerEqState> = Vec::with_capacity(20);
+        // Per-peer mono scratch buffer — pre-allocated for max expected size (48kHz stereo).
+        // At 48kHz stereo the largest callback is 48000 samples per channel.
+        let mut scratch = vec![0.0f32; SAMPLE_RATE as usize];
 
         let stream = device.build_output_stream(
             &config,
@@ -881,10 +899,10 @@ impl AudioEngine {
                     }
                 }
 
-                // Ensure scratch buffer is large enough for the mono frame count
-                if scratch.len() < stereo_frames {
-                    scratch.resize(stereo_frames, 0.0);
-                }
+                // Scratch buffer pre-allocated at init for max size — no resize needed.
+                // Debug-assert to catch unexpected oversized callbacks.
+                debug_assert!(scratch.len() >= stereo_frames,
+                    "scratch buffer too small: {} < {}", scratch.len(), stereo_frames);
 
                 for (peer_idx, peer) in local_peers.iter().enumerate() {
                     if !peer.is_ready() {

@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use shared_types::{AppView, PerfSnapshot, SpaceRole};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 thread_local! {
     static MEMBER_WIDGET: RefCell<Option<slint::Weak<MemberWidgetWindow>>> = const { RefCell::new(None) };
@@ -333,6 +333,51 @@ pub fn set_participants(window: &MainWindow, participants: &[shared_types::Parti
         .collect();
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_participants(rc.into());
+}
+
+/// Update only audio levels and speaking state on existing participant rows.
+/// This avoids rebuilding the entire VecModel on every tick — only rows with
+/// changed data get a `set_row_data()` call. Returns `false` if the model
+/// row count doesn't match (caller should fall back to full `set_participants`).
+pub fn update_participant_levels(
+    window: &MainWindow,
+    participants: &[shared_types::Participant],
+) -> bool {
+    let model = window.get_participants();
+    // Sort the same way as set_participants so indices align
+    let mut sorted: Vec<&shared_types::Participant> = participants.iter().collect();
+    sorted.sort_by(|a, b| {
+        if a.id == "self" {
+            std::cmp::Ordering::Less
+        } else if b.id == "self" {
+            std::cmp::Ordering::Greater
+        } else {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        }
+    });
+
+    if model.row_count() != sorted.len() {
+        return false;
+    }
+
+    for (i, p) in sorted.iter().enumerate() {
+        if let Some(existing) = model.row_data(i) {
+            // Only issue set_row_data when something actually changed
+            if existing.audio_level != p.audio_level
+                || existing.is_speaking != p.is_speaking
+                || existing.is_muted != p.is_muted
+                || existing.is_deafened != p.is_deafened
+            {
+                let mut updated = existing;
+                updated.audio_level = p.audio_level;
+                updated.is_speaking = p.is_speaking;
+                updated.is_muted = p.is_muted;
+                updated.is_deafened = p.is_deafened;
+                model.set_row_data(i, updated);
+            }
+        }
+    }
+    true
 }
 
 pub fn set_spaces(window: &MainWindow, spaces: &[shared_types::SpaceInfo]) {

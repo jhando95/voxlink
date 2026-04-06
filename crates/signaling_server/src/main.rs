@@ -1020,6 +1020,10 @@ async fn handle_connection(
         })
     });
 
+    // Per-connection reusable buffers for audio relay (avoids alloc per frame)
+    let mut relay_buf: Vec<u8> = Vec::with_capacity(512);
+    let mut room_peers_buf: Vec<Arc<Peer>> = Vec::with_capacity(20);
+
     while let Some(msg) = rx.next().await {
         match msg {
             Ok(Message::Text(text)) => {
@@ -1049,7 +1053,7 @@ async fn handle_connection(
                 }
                 match data[0] {
                     shared_types::MEDIA_PACKET_AUDIO => {
-                        relay_audio(&state, &metrics, &peer_id, &data[1..]).await;
+                        relay_audio(&state, &metrics, &peer_id, &data[1..], &mut relay_buf, &mut room_peers_buf).await;
                     }
                     shared_types::MEDIA_PACKET_SCREEN => {
                         relay_screen(&state, &metrics, &peer_id, &data[1..]).await;
@@ -2352,113 +2356,116 @@ async fn handle_send_voice_note(
 
 // Audio/screen frame rate limits now read from LIMITS (env-configurable).
 
-async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
+async fn relay_audio(
+    state: &State,
+    metrics: &Metrics,
+    sender_id: &str,
+    data: &[u8],
+    relay_buf: &mut Vec<u8>,
+    room_peers_buf: &mut Vec<Arc<Peer>>,
+) {
     // #3: Reject oversized audio frames
     if data.len() > shared_types::MAX_AUDIO_FRAME_SIZE {
         return;
     }
 
-    // Fast path: read cached room code without acquiring the global state lock
-    // or the per-peer room_code mutex. This is the hottest path in the server
-    // (~50 calls/sec per peer).
-    let room_code = {
-        let s = state.read().await;
-        let peer = match s.peers.get(sender_id) {
-            Some(p) => p.clone(),
-            None => return,
-        };
+    // Single state read: get room code, sender info, room peers, and whisper targets
+    // in one lock acquisition. This is the hottest path (~50 calls/sec per peer).
+    let s = state.read().await;
 
-        // Server-enforced mute: drop audio from muted peers
-        if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-
-        // #5: Audio frame rate limiting (lock-free)
-        if !atomic_rate_check(&peer.audio_rate_window_ms, &peer.audio_frame_count, LIMITS.max_audio_fps) {
-            return;
-        }
-
-        peer.cached_room_code()
+    let peer = match s.peers.get(sender_id) {
+        Some(p) => p.clone(),
+        None => return,
     };
 
-    let room_code = match room_code {
+    // Server-enforced mute: drop audio from muted peers
+    if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    // #5: Audio frame rate limiting (lock-free)
+    if !atomic_rate_check(&peer.audio_rate_window_ms, &peer.audio_frame_count, LIMITS.max_audio_fps) {
+        return;
+    }
+
+    let room_code = match peer.cached_room_code() {
         Some(c) => c,
         None => return,
     };
 
-    // Build frame once: [kind, id_len, sender_id_bytes, audio_data]
-    let mut frame = Vec::with_capacity(2 + sender_id.len() + data.len());
-    frame.push(shared_types::MEDIA_PACKET_AUDIO);
-    frame.push(sender_id.len() as u8);
-    frame.extend_from_slice(sender_id.as_bytes());
-    frame.extend_from_slice(data);
+    // Build frame into reusable buffer: [kind, id_len, sender_id_bytes, audio_data]
+    relay_buf.clear();
+    relay_buf.push(shared_types::MEDIA_PACKET_AUDIO);
+    relay_buf.push(sender_id.len() as u8);
+    relay_buf.extend_from_slice(sender_id.as_bytes());
+    relay_buf.extend_from_slice(data);
 
-    // Collect room peers + apply whisper + block filtering in a single state read
-    let others = {
-        let s = state.read().await;
-        // Get sender's persistent user_id for block checks (lock-free read)
-        let sender_user_id: Option<String> = s
-            .peers
-            .get(sender_id)
-            .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
+    // Get sender's persistent user_id for block checks (lock-free read)
+    let sender_user_id: Option<String> = s
+        .peers
+        .get(sender_id)
+        .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
 
-        let room_peers: Vec<Arc<Peer>> = s
-            .rooms
-            .get(&room_code)
-            .map(|r| {
-                r.peer_ids
-                    .iter()
-                    .filter(|pid| pid.as_str() != sender_id)
-                    .filter_map(|pid| s.peers.get(pid).cloned())
-                    // Block filtering: skip recipients who have blocked the sender
-                    .filter(|peer| {
-                        if let Some(ref uid) = sender_user_id {
-                            !peer.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false)
-                        } else {
-                            true // No user_id = guest, can't be blocked
-                        }
-                    })
-                    // Server-deafen: skip recipients who are server-deafened
-                    .filter(|peer| !peer.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed))
-                    .collect()
-            })
-            .unwrap_or_default();
-        // Whisper filtering: read lock-free, no allocation when empty
-        let whisper = s
-            .peers
-            .get(sender_id)
-            .and_then(|p| {
-                p.whisper_targets
-                    .read()
-                    .ok()
-                    .filter(|t| !t.is_empty())
-                    .map(|t| t.clone())
-            });
-        match whisper {
-            Some(targets) => room_peers
-                .into_iter()
-                .filter(|p| targets.iter().any(|t| t == &p.id))
-                .collect(),
-            None => room_peers,
+    // Collect room peers into reusable buffer with block + deafen filtering
+    room_peers_buf.clear();
+    if let Some(r) = s.rooms.get(&room_code) {
+        for pid in &r.peer_ids {
+            if pid.as_str() == sender_id {
+                continue;
+            }
+            if let Some(p) = s.peers.get(pid) {
+                // Block filtering: skip recipients who have blocked the sender
+                if let Some(ref uid) = sender_user_id {
+                    if p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false) {
+                        continue;
+                    }
+                }
+                // Server-deafen: skip recipients who are server-deafened
+                if p.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
+                room_peers_buf.push(p.clone());
+            }
         }
-    };
+    }
+
+    // Whisper filtering: read lock-free, no allocation when empty
+    let whisper = s
+        .peers
+        .get(sender_id)
+        .and_then(|p| {
+            p.whisper_targets
+                .read()
+                .ok()
+                .filter(|t| !t.is_empty())
+                .map(|t| t.clone())
+        });
+
+    // Drop the state read lock before sending frames
+    drop(s);
+
+    if let Some(targets) = whisper {
+        room_peers_buf.retain(|p| targets.iter().any(|t| t == &p.id));
+    }
+
     metrics
         .audio_frames_in_total
         .fetch_add(1, Ordering::Relaxed);
     metrics
         .audio_frames_out_total
-        .fetch_add(others.len() as u64, Ordering::Relaxed);
+        .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
 
     // Send with timeout to prevent slow peers from blocking the relay.
     // If a peer can't accept within 500ms, drop the frame for them.
     let send_timeout = std::time::Duration::from_millis(500);
 
     // Single-peer fast path (common case): avoid Arc overhead
-    if others.len() == 1 {
-        let peer_id_dbg = others[0].id.clone();
+    if room_peers_buf.len() == 1 {
+        let peer_id_dbg = room_peers_buf[0].id.clone();
+        let frame_owned: Vec<u8> = relay_buf.clone();
         let fut = async {
-            let mut tx = others[0].tx.lock().await;
-            if let Err(e) = tx.send(Message::Binary(frame.into())).await {
+            let mut tx = room_peers_buf[0].tx.lock().await;
+            if let Err(e) = tx.send(Message::Binary(frame_owned.into())).await {
                 log::debug!("Audio frame send failed for peer {peer_id_dbg}: {e}");
             }
         };
@@ -2467,12 +2474,13 @@ async fn relay_audio(state: &State, metrics: &Metrics, sender_id: &str, data: &[
     }
 
     // Multi-peer path: clone frame per peer (Arc overhead not worth it for small frames)
-    let futs: Vec<_> = others
-        .into_iter()
+    let futs: Vec<_> = room_peers_buf
+        .iter()
         .map(|peer| {
-            let frame_copy = frame.clone();
+            let frame_copy: Vec<u8> = relay_buf.clone();
             let timeout_dur = send_timeout;
             let peer_id_dbg = peer.id.clone();
+            let peer = peer.clone();
             async move {
                 let fut = async {
                     let mut tx = peer.tx.lock().await;
@@ -2664,6 +2672,10 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
     // Pre-allocate receive buffer (max: token(8) + type(1) + audio(4096) = 4105)
     let mut buf = vec![0u8; 8 + 1 + shared_types::MAX_AUDIO_FRAME_SIZE];
 
+    // Per-loop reusable buffers for audio relay (avoids alloc per frame)
+    let mut relay_buf: Vec<u8> = Vec::with_capacity(512);
+    let mut room_peers_buf: Vec<Arc<Peer>> = Vec::with_capacity(20);
+
     loop {
         let (len, src_addr) = match udp_socket.recv_from(&mut buf).await {
             Ok(r) => r,
@@ -2684,28 +2696,25 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
         };
         let packet_type = buf[8];
 
-        // Look up peer by token
+        // Single state read: look up peer by token + register/update UDP address
         let peer_id = {
             let s = state.read().await;
-            match s.udp_sessions.get(&token) {
+            let pid = match s.udp_sessions.get(&token) {
                 Some(pid) => pid.clone(),
                 None => continue, // Unknown token, silently drop
-            }
-        };
-
-        // Register/update the peer's UDP address on first packet (or address change)
-        {
-            let s = state.read().await;
-            if let Some(peer) = s.peers.get(&peer_id) {
+            };
+            // Register/update the peer's UDP address on first packet (or address change)
+            if let Some(peer) = s.peers.get(&pid) {
                 let current = peer.udp_addr.read().map(|a| *a).unwrap_or(None);
                 if current != Some(src_addr) {
-                    log::info!("UDP peer {peer_id} registered at {src_addr}");
+                    log::info!("UDP peer {pid} registered at {src_addr}");
                     if let Ok(mut addr) = peer.udp_addr.write() {
                         *addr = Some(src_addr);
                     }
                 }
             }
-        }
+            pid
+        };
 
         // Keepalive: just refreshes the address mapping above, no relay needed
         if packet_type == shared_types::UDP_KEEPALIVE {
@@ -2715,7 +2724,7 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
         if packet_type == shared_types::MEDIA_PACKET_AUDIO && len >= 10 {
             metrics.udp_frames_in_total.fetch_add(1, Ordering::Relaxed);
             let audio_data = &buf[9..len];
-            relay_audio_udp(&state, &metrics, &peer_id, audio_data, &udp_socket).await;
+            relay_audio_udp(&state, &metrics, &peer_id, audio_data, &udp_socket, &mut relay_buf, &mut room_peers_buf).await;
         }
     }
 }
@@ -2728,109 +2737,112 @@ async fn relay_audio_udp(
     sender_id: &str,
     data: &[u8],
     udp_socket: &UdpSocket,
+    relay_buf: &mut Vec<u8>,
+    room_peers_buf: &mut Vec<Arc<Peer>>,
 ) {
     if data.len() > shared_types::MAX_AUDIO_FRAME_SIZE {
         return;
     }
 
-    let room_code = {
-        let s = state.read().await;
-        let peer = match s.peers.get(sender_id) {
-            Some(p) => p.clone(),
-            None => return,
-        };
+    // Single state read: get room code, sender info, room peers, and whisper targets
+    let s = state.read().await;
 
-        // Server-enforced mute: drop audio from muted peers
-        if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-
-        if !atomic_rate_check(
-            &peer.audio_rate_window_ms,
-            &peer.audio_frame_count,
-            LIMITS.max_audio_fps,
-        ) {
-            return;
-        }
-
-        peer.cached_room_code()
+    let peer = match s.peers.get(sender_id) {
+        Some(p) => p.clone(),
+        None => return,
     };
 
-    let room_code = match room_code {
+    // Server-enforced mute: drop audio from muted peers
+    if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    if !atomic_rate_check(
+        &peer.audio_rate_window_ms,
+        &peer.audio_frame_count,
+        LIMITS.max_audio_fps,
+    ) {
+        return;
+    }
+
+    let room_code = match peer.cached_room_code() {
         Some(c) => c,
         None => return,
     };
 
-    // Build frame for both UDP and WS delivery:
+    // Build frame into reusable buffer for both UDP and WS delivery:
     // [MEDIA_PACKET_AUDIO, id_len, sender_id_bytes, audio_data]
-    let mut frame = Vec::with_capacity(2 + sender_id.len() + data.len());
-    frame.push(shared_types::MEDIA_PACKET_AUDIO);
-    frame.push(sender_id.len() as u8);
-    frame.extend_from_slice(sender_id.as_bytes());
-    frame.extend_from_slice(data);
+    relay_buf.clear();
+    relay_buf.push(shared_types::MEDIA_PACKET_AUDIO);
+    relay_buf.push(sender_id.len() as u8);
+    relay_buf.extend_from_slice(sender_id.as_bytes());
+    relay_buf.extend_from_slice(data);
 
-    // Collect room peers + apply whisper + block filtering in a single state read
-    let others = {
-        let s = state.read().await;
-        let sender_user_id: Option<String> = s
-            .peers
-            .get(sender_id)
-            .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
+    // Get sender's persistent user_id for block checks (lock-free read)
+    let sender_user_id: Option<String> = s
+        .peers
+        .get(sender_id)
+        .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
 
-        let room_peers: Vec<Arc<Peer>> = s
-            .rooms
-            .get(&room_code)
-            .map(|r| {
-                r.peer_ids
-                    .iter()
-                    .filter(|pid| pid.as_str() != sender_id)
-                    .filter_map(|pid| s.peers.get(pid).cloned())
-                    .filter(|peer| {
-                        if let Some(ref uid) = sender_user_id {
-                            !peer.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false)
-                        } else {
-                            true
-                        }
-                    })
-                    // Server-deafen: skip recipients who are server-deafened
-                    .filter(|peer| !peer.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let whisper = s
-            .peers
-            .get(sender_id)
-            .and_then(|p| {
-                p.whisper_targets
-                    .read()
-                    .ok()
-                    .filter(|t| !t.is_empty())
-                    .map(|t| t.clone())
-            });
-        match whisper {
-            Some(targets) => room_peers
-                .into_iter()
-                .filter(|p| targets.iter().any(|t| t == &p.id))
-                .collect(),
-            None => room_peers,
+    // Collect room peers into reusable buffer with block + deafen filtering
+    room_peers_buf.clear();
+    if let Some(r) = s.rooms.get(&room_code) {
+        for pid in &r.peer_ids {
+            if pid.as_str() == sender_id {
+                continue;
+            }
+            if let Some(p) = s.peers.get(pid) {
+                // Block filtering: skip recipients who have blocked the sender
+                if let Some(ref uid) = sender_user_id {
+                    if p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false) {
+                        continue;
+                    }
+                }
+                // Server-deafen: skip recipients who are server-deafened
+                if p.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
+                room_peers_buf.push(p.clone());
+            }
         }
-    };
+    }
+
+    // Whisper filtering: read lock-free, no allocation when empty
+    let whisper = s
+        .peers
+        .get(sender_id)
+        .and_then(|p| {
+            p.whisper_targets
+                .read()
+                .ok()
+                .filter(|t| !t.is_empty())
+                .map(|t| t.clone())
+        });
+
+    // Drop the state read lock before sending frames
+    drop(s);
+
+    if let Some(targets) = whisper {
+        room_peers_buf.retain(|p| targets.iter().any(|t| t == &p.id));
+    }
+
+    let frame = &*relay_buf;
     metrics
         .audio_frames_in_total
         .fetch_add(1, Ordering::Relaxed);
     metrics
         .audio_frames_out_total
-        .fetch_add(others.len() as u64, Ordering::Relaxed);
+        .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
 
-    for peer in &others {
+    for peer in room_peers_buf.iter() {
         let udp_addr = peer.udp_addr.read().ok().and_then(|a| *a);
         if let Some(addr) = udp_addr {
             // Send via UDP — fire-and-forget (UDP is unreliable by design)
-            let _ = udp_socket.send_to(&frame, addr).await;
+            let _ = udp_socket.send_to(frame, addr).await;
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
             // Fallback: send via WebSocket
-            let frame_clone = frame.clone();
+            let frame_clone = frame.to_vec();
             let send_timeout = std::time::Duration::from_millis(500);
             let fut = async {
                 let mut tx = peer.tx.lock().await;
