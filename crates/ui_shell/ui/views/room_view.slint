@@ -250,7 +250,7 @@ export component RoomView inherits Rectangle {
                 spacing: 12px;
 
                 // Screen share: when active, takes over the stage
-                if root.has-screen-share : Rectangle {
+                if root.has-screen-share && !root.is-sharing-screen : Rectangle {
                     vertical-stretch: 1;
                     border-radius: VxTheme.radius-card;
                     background: VxTheme.bg-stage;
@@ -274,7 +274,7 @@ export component RoomView inherits Rectangle {
                         border-radius: 12px;
                         background: VxTheme.bg-panel.transparentize(0.2);
                         share-label := Text {
-                            text: root.is-sharing-screen ? "You are sharing" : root.screen-share-owner-name + " is sharing";
+                            text: root.screen-share-owner-name + " is sharing";
                             color: VxTheme.success;
                             font-size: 10px;
                             font-weight: 700;
@@ -282,6 +282,97 @@ export component RoomView inherits Rectangle {
                             vertical-alignment: center;
                             overflow: elide;
                             max-width: 120px;
+                        }
+                    }
+                }
+
+                // Self-stream preview: when YOU are sharing, show a preview of your stream
+                if root.is-sharing-screen : Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: VxTheme.radius-card;
+                    background: VxTheme.bg-stage;
+                    border-color: VxTheme.success.transparentize(0.5);
+                    border-width: 2px;
+                    clip: true;
+
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.screen-share-image;
+                        image-fit: contain;
+                    }
+
+                    // "You are sharing" badge top-left
+                    Rectangle {
+                        x: 8px;
+                        y: 8px;
+                        height: 26px;
+                        width: self-share-row.preferred-width + 20px;
+                        border-radius: 13px;
+                        background: VxTheme.success.transparentize(0.15);
+
+                        self-share-row := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: white;
+                                animate opacity { duration: 800ms; }
+                                opacity: mod(animation-tick() / 800ms, 2) < 1 ? 1.0 : 0.3;
+                            }
+                            Text {
+                                text: "LIVE — Your screen";
+                                color: white;
+                                font-size: 10px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Source info bottom-left
+                    if root.screen-share-source-label != "" : Rectangle {
+                        x: 8px;
+                        y: parent.height - self.height - 8px;
+                        height: 22px;
+                        width: source-info-text.preferred-width + 16px;
+                        border-radius: 11px;
+                        background: VxTheme.bg-panel.transparentize(0.2);
+                        source-info-text := Text {
+                            text: root.screen-share-source-label;
+                            color: VxTheme.text-secondary;
+                            font-size: 9px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 200px;
+                        }
+                    }
+
+                    // Stop button bottom-right
+                    Rectangle {
+                        x: parent.width - self.width - 8px;
+                        y: parent.height - self.height - 8px;
+                        width: stop-share-text.preferred-width + 24px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: stop-touch.has-hover ? VxTheme.danger : VxTheme.danger.transparentize(0.15);
+                        stop-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle-screen-share(); }
+                        }
+                        stop-share-text := Text {
+                            text: "Stop Sharing";
+                            color: white;
+                            font-size: 10px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                 }
