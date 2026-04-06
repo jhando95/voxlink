@@ -1,5 +1,5 @@
 use shared_types::FRAME_SIZE;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 // ─── Capture ring buffer ───
 // Zero-allocation input accumulator. Replaces Vec + drain() which is O(n).
@@ -123,6 +123,7 @@ impl SpscRingBuf {
     /// Called from the playback/consumer side only.
     /// Returns how many samples were consumed.
     #[inline]
+    #[allow(dead_code)] // Used in tests; kept for API completeness alongside drain_into
     #[allow(clippy::needless_range_loop)] // Indexed access is clearer for ring buffer arithmetic
     pub fn mix_into(&self, dest: &mut [f32], volume: f32) -> usize {
         let w = self.write.load(Ordering::Acquire);
@@ -147,6 +148,41 @@ impl SpscRingBuf {
             let remaining = count - first;
             for i in 0..remaining {
                 dest[first + i] += self.data[i] * volume;
+            }
+        }
+
+        self.read.store((r + count) % cap, Ordering::Release);
+        count
+    }
+
+    /// Drain available samples into `dest` (overwrite, not additive). Zero-allocation.
+    /// Called from the playback/consumer side only.
+    /// Returns how many samples were consumed.
+    #[inline]
+    #[allow(clippy::needless_range_loop)]
+    pub fn drain_into(&self, dest: &mut [f32]) -> usize {
+        let w = self.write.load(Ordering::Acquire);
+        let r = self.read.load(Ordering::Relaxed);
+        let available = (w + self.cap - r) % self.cap;
+        let count = dest.len().min(available);
+        if count == 0 {
+            return 0;
+        }
+
+        let cap = self.cap;
+        let first = cap - r;
+
+        if count <= first {
+            for i in 0..count {
+                dest[i] = self.data[(r + i) % cap];
+            }
+        } else {
+            for i in 0..first {
+                dest[i] = self.data[r + i];
+            }
+            let remaining = count - first;
+            for i in 0..remaining {
+                dest[first + i] = self.data[i];
             }
         }
 
@@ -289,6 +325,17 @@ pub(crate) struct PeerPlaybackShared {
     pub underrun_count: AtomicU32,
     /// Callback count — incremented by playback callback to track activity
     pub callback_count: AtomicU32,
+    /// RMS audio level (0–1000 fixed-point, i.e. level * 1000). Updated by playback callback.
+    pub rms_level: AtomicU32,
+    /// Per-peer 3-band EQ gains in millibels (-600 to +600, i.e. -6dB to +6dB).
+    /// Low shelf at 300Hz.
+    pub eq_bass: AtomicI32,
+    /// Peaking EQ at 1kHz.
+    pub eq_mid: AtomicI32,
+    /// High shelf at 3kHz.
+    pub eq_treble: AtomicI32,
+    /// Stereo pan position (-100 = full left, 0 = center, +100 = full right).
+    pub pan: AtomicI32,
 }
 
 impl PeerPlaybackShared {
@@ -300,6 +347,11 @@ impl PeerPlaybackShared {
             target_frames: AtomicU32::new(JITTER_INITIAL as u32),
             underrun_count: AtomicU32::new(0),
             callback_count: AtomicU32::new(0),
+            rms_level: AtomicU32::new(0),
+            eq_bass: AtomicI32::new(0),
+            eq_mid: AtomicI32::new(0),
+            eq_treble: AtomicI32::new(0),
+            pan: AtomicI32::new(0),
         }
     }
 

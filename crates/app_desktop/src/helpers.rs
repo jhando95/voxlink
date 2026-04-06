@@ -104,6 +104,8 @@ pub fn auto_save_settings(
             favorite_friends: existing.favorite_friends,
             recent_direct_messages: existing.recent_direct_messages,
             peer_volumes: existing.peer_volumes,
+            peer_eq_settings: existing.peer_eq_settings,
+            peer_pan: existing.peer_pan,
             user_notes: existing.user_notes,
             saved_servers: existing.saved_servers,
             join_leave_sounds: existing.join_leave_sounds,

@@ -915,10 +915,10 @@ export component SpaceView inherits Rectangle {
                                         fill: VxTheme.bg-soft;
                                     }
                                     VxStatusPill {
-                                        label: channel.voice-quality == 0 ? "Low"
-                                             : channel.voice-quality == 1 ? "Std"
-                                             : channel.voice-quality == 3 ? "Ultra"
-                                             : "High";
+                                        label: channel.voice-quality == 0 ? "Eco 16k"
+                                             : channel.voice-quality == 1 ? "Std 32k"
+                                             : channel.voice-quality == 3 ? "Studio 128k"
+                                             : "High 64k";
                                         tone: channel.voice-quality == 3 ? VxTheme.warning
                                             : channel.voice-quality == 2 ? VxTheme.success
                                             : channel.voice-quality == 0 ? VxTheme.text-muted
@@ -1004,37 +1004,49 @@ export component SpaceView inherits Rectangle {
                                 }
                             }
 
-                            if root.new-channel-is-voice : HorizontalLayout {
+                            if root.new-channel-is-voice : VerticalLayout {
                                 spacing: 6px;
-                                alignment: start;
-                                FieldLabel { text: "Quality:"; vertical-alignment: center; }
-                                VxButton {
-                                    label: "Low";
-                                    small: true;
-                                    ghost: root.new-channel-voice-quality != 0;
-                                    accent: root.new-channel-voice-quality == 0;
-                                    clicked => { root.new-channel-voice-quality = 0; }
+                                SectionLabel { text: "VOICE QUALITY PRESET"; }
+                                Text {
+                                    text: root.new-channel-voice-quality == 0 ? "Economy \u{2014} 16 kbps per user. Great for slow connections, minimal data."
+                                        : root.new-channel-voice-quality == 1 ? "Standard \u{2014} 32 kbps per user. Balanced quality and bandwidth."
+                                        : root.new-channel-voice-quality == 3 ? "Studio \u{2014} 128 kbps per user. Maximum quality for podcasts/music."
+                                        : "High \u{2014} 64 kbps per user. Clear voice, recommended.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
                                 }
-                                VxButton {
-                                    label: "Standard";
-                                    small: true;
-                                    ghost: root.new-channel-voice-quality != 1;
-                                    accent: root.new-channel-voice-quality == 1;
-                                    clicked => { root.new-channel-voice-quality = 1; }
-                                }
-                                VxButton {
-                                    label: "High";
-                                    small: true;
-                                    ghost: root.new-channel-voice-quality != 2;
-                                    accent: root.new-channel-voice-quality == 2;
-                                    clicked => { root.new-channel-voice-quality = 2; }
-                                }
-                                VxButton {
-                                    label: "Ultra";
-                                    small: true;
-                                    ghost: root.new-channel-voice-quality != 3;
-                                    accent: root.new-channel-voice-quality == 3;
-                                    clicked => { root.new-channel-voice-quality = 3; }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    VxButton {
+                                        label: "Economy";
+                                        small: true;
+                                        ghost: root.new-channel-voice-quality != 0;
+                                        accent: root.new-channel-voice-quality == 0;
+                                        clicked => { root.new-channel-voice-quality = 0; }
+                                    }
+                                    VxButton {
+                                        label: "Standard";
+                                        small: true;
+                                        ghost: root.new-channel-voice-quality != 1;
+                                        accent: root.new-channel-voice-quality == 1;
+                                        clicked => { root.new-channel-voice-quality = 1; }
+                                    }
+                                    VxButton {
+                                        label: "High";
+                                        small: true;
+                                        ghost: root.new-channel-voice-quality != 2;
+                                        accent: root.new-channel-voice-quality == 2;
+                                        clicked => { root.new-channel-voice-quality = 2; }
+                                    }
+                                    VxButton {
+                                        label: "Studio";
+                                        small: true;
+                                        ghost: root.new-channel-voice-quality != 3;
+                                        accent: root.new-channel-voice-quality == 3;
+                                        clicked => { root.new-channel-voice-quality = 3; }
+                                    }
                                 }
                             }
 

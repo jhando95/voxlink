@@ -21,6 +21,10 @@ export component RoomView inherits Rectangle {
     in property <bool> udp-active: false;
     in property <int> reconnect-attempts: 0;
     in property <int> dropped-frames: 0;
+    in property <int> bandwidth-up-kbps: 0;
+    in property <int> bandwidth-down-kbps: 0;
+    in property <string> session-data-mb: "0.0";
+    in property <string> est-data-per-hour: "";
     in property <bool> in-space-channel: false;
     in property <string> current-space-name: "";
     in property <string> channel-topic: "";
@@ -38,6 +42,12 @@ export component RoomView inherits Rectangle {
     in-out property <bool> show-copied: false;
     in-out property <string> selected-peer-id: "";
     in-out property <float> selected-peer-volume: 1.0;
+    // EQ slider values: 0.0 = -6dB, 0.5 = 0dB (flat), 1.0 = +6dB
+    in-out property <float> selected-peer-bass: 0.5;
+    in-out property <float> selected-peer-mid: 0.5;
+    in-out property <float> selected-peer-treble: 0.5;
+    // Pan slider value: 0.0 = full left, 0.5 = center, 1.0 = full right
+    in-out property <float> selected-peer-pan: 0.5;
     in-out property <bool> show-share-config: false;
     callback copy-room-code();
     callback leave-room();
@@ -50,6 +60,10 @@ export component RoomView inherits Rectangle {
     callback select-screen-share-source(int);
     callback select-screen-share-profile(int);
     callback volume-changed(string, float);
+    // EQ changed: peer_id, bass (0-1), mid (0-1), treble (0-1)
+    callback eq-changed(string, float, float, float);
+    // Pan changed: peer_id, pan (0-1 where 0.5=center)
+    callback pan-changed(string, float);
     callback navigate(int);
     in property <[SoundboardClipData]> soundboard-clips: [];
     callback play-soundboard-clip(int);
@@ -69,7 +83,7 @@ export component RoomView inherits Rectangle {
         root.participants.length <= 4 ? 76px :
         root.participants.length <= 9 ? 64px : 52px) * VxTheme.s;
     property <length> tile-w: root.avatar-sz + 24px * VxTheme.s;
-    property <length> tile-h: root.avatar-sz + 32px * VxTheme.s;
+    property <length> tile-h: root.avatar-sz + 40px * VxTheme.s;
     property <length> tile-gap: (root.wide ? 16px : 10px) * VxTheme.s;
     property <int> row-count: root.participants.length <= 0 ? 0 :
         (root.participants.length + root.cols - 1) / root.cols;
@@ -331,6 +345,26 @@ export component RoomView inherits Rectangle {
                             horizontal-alignment: center;
                         }
 
+                        // Audio level meter for solo view
+                        if root.participants.length == 1 : Rectangle {
+                            height: 3px;
+                            width: 120px;
+                            x: (parent.width - self.width) / 2;
+                            border-radius: 1.5px;
+                            background: VxTheme.bg-raised;
+
+                            Rectangle {
+                                width: parent.width * clamp(root.participants[0].audio-level / 100.0, 0.0, 1.0);
+                                height: parent.height;
+                                border-radius: 1.5px;
+                                background: root.participants[0].audio-level > 80 ? VxTheme.danger :
+                                            root.participants[0].audio-level > 60 ? VxTheme.warning :
+                                            VxTheme.success;
+                                animate width { duration: 60ms; }
+                                animate background { duration: 200ms; }
+                            }
+                        }
+
                         Text {
                             text: root.in-space-channel
                                 ? "Waiting for others to join the channel..."
@@ -364,6 +398,10 @@ export component RoomView inherits Rectangle {
                                         } else {
                                             root.selected-peer-id = p.id;
                                             root.selected-peer-volume = p.volume;
+                                            root.selected-peer-bass = p.eq-bass;
+                                            root.selected-peer-mid = p.eq-mid;
+                                            root.selected-peer-treble = p.eq-treble;
+                                            root.selected-peer-pan = p.pan;
                                         }
                                     }
                                 }
@@ -488,6 +526,26 @@ export component RoomView inherits Rectangle {
                                     overflow: elide;
                                     max-width: root.tile-w;
                                 }
+
+                                // Audio level meter
+                                Rectangle {
+                                    height: 3px;
+                                    width: root.tile-w - 8px;
+                                    x: (parent.width - self.width) / 2;
+                                    border-radius: 1.5px;
+                                    background: VxTheme.bg-raised;
+
+                                    Rectangle {
+                                        width: parent.width * clamp(p.audio-level / 100.0, 0.0, 1.0);
+                                        height: parent.height;
+                                        border-radius: 1.5px;
+                                        background: p.audio-level > 80 ? VxTheme.danger :
+                                                    p.audio-level > 60 ? VxTheme.warning :
+                                                    VxTheme.success;
+                                        animate width { duration: 60ms; }
+                                        animate background { duration: 200ms; }
+                                    }
+                                }
                             }
 
                             // Hover / speaking highlight
@@ -511,52 +569,207 @@ export component RoomView inherits Rectangle {
                     }
                 }
 
-                // Per-peer volume slider (shows when a peer is selected)
+                // Per-peer audio controls (shows when a peer is selected)
                 if root.selected-peer-id != "" : Rectangle {
-                    height: 52px;
                     border-radius: VxTheme.radius-control;
                     background: VxTheme.bg-soft;
                     border-color: VxTheme.accent-border;
                     border-width: 1px;
 
-                    HorizontalLayout {
-                        padding-left: 14px;
-                        padding-right: 14px;
-                        spacing: 10px;
-                        alignment: center;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 2px;
 
-                        Text {
-                            text: "Volume";
-                            color: VxTheme.text-secondary;
-                            font-size: 12px;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
+                        // Volume row
+                        HorizontalLayout {
+                            height: 24px;
+                            spacing: 8px;
+                            alignment: center;
 
-                        VxSlider {
-                            horizontal-stretch: 1;
-                            value <=> root.selected-peer-volume;
-                            changed(val) => {
-                                root.selected-peer-volume = val;
-                                root.volume-changed(root.selected-peer-id, val);
+                            Text {
+                                text: "Vol";
+                                color: VxTheme.text-secondary;
+                                font-size: 10px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                vertical-alignment: center;
+                            }
+
+                            VxSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.selected-peer-volume;
+                                changed(val) => {
+                                    root.selected-peer-volume = val;
+                                    root.volume-changed(root.selected-peer-id, val);
+                                }
+                            }
+
+                            Text {
+                                text: Math.round(root.selected-peer-volume * 100) + "%";
+                                color: VxTheme.text-primary;
+                                font-size: 10px;
+                                font-weight: 700;
+                                min-width: 32px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
                             }
                         }
 
-                        Text {
-                            text: Math.round(root.selected-peer-volume * 100) + "%";
-                            color: VxTheme.text-primary;
-                            font-size: 12px;
-                            font-weight: 700;
-                            min-width: 36px;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
+                        // Bass EQ row
+                        HorizontalLayout {
+                            height: 20px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "Bass";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                vertical-alignment: center;
+                            }
+
+                            VxSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.selected-peer-bass;
+                                changed(val) => {
+                                    root.selected-peer-bass = val;
+                                    root.eq-changed(root.selected-peer-id, root.selected-peer-bass, root.selected-peer-mid, root.selected-peer-treble);
+                                }
+                            }
+
+                            Text {
+                                text: (Math.round((root.selected-peer-bass - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-bass - 0.5) * 12) : Math.round((root.selected-peer-bass - 0.5) * 12)) + "dB";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
                         }
 
-                        VxButton {
-                            label: "Done";
-                            small: true;
-                            ghost: true;
-                            clicked => { root.selected-peer-id = ""; }
+                        // Mid EQ row
+                        HorizontalLayout {
+                            height: 20px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "Mid";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                vertical-alignment: center;
+                            }
+
+                            VxSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.selected-peer-mid;
+                                changed(val) => {
+                                    root.selected-peer-mid = val;
+                                    root.eq-changed(root.selected-peer-id, root.selected-peer-bass, root.selected-peer-mid, root.selected-peer-treble);
+                                }
+                            }
+
+                            Text {
+                                text: (Math.round((root.selected-peer-mid - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-mid - 0.5) * 12) : Math.round((root.selected-peer-mid - 0.5) * 12)) + "dB";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Treble EQ row
+                        HorizontalLayout {
+                            height: 20px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "Treble";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                vertical-alignment: center;
+                            }
+
+                            VxSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.selected-peer-treble;
+                                changed(val) => {
+                                    root.selected-peer-treble = val;
+                                    root.eq-changed(root.selected-peer-id, root.selected-peer-bass, root.selected-peer-mid, root.selected-peer-treble);
+                                }
+                            }
+
+                            Text {
+                                text: (Math.round((root.selected-peer-treble - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-treble - 0.5) * 12) : Math.round((root.selected-peer-treble - 0.5) * 12)) + "dB";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Pan row
+                        HorizontalLayout {
+                            height: 20px;
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "Pan";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                vertical-alignment: center;
+                            }
+
+                            VxSlider {
+                                horizontal-stretch: 1;
+                                value <=> root.selected-peer-pan;
+                                changed(val) => {
+                                    root.selected-peer-pan = val;
+                                    root.pan-changed(root.selected-peer-id, val);
+                                }
+                            }
+
+                            Text {
+                                text: {
+                                    Math.round((root.selected-peer-pan - 0.5) * 200) == 0 ? "C" :
+                                    Math.round((root.selected-peer-pan - 0.5) * 200) < 0 ?
+                                        "L" + Math.round((0.5 - root.selected-peer-pan) * 200) :
+                                        "R" + Math.round((root.selected-peer-pan - 0.5) * 200);
+                                }
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                min-width: 32px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Done button
+                        HorizontalLayout {
+                            height: 22px;
+                            alignment: end;
+                            VxButton {
+                                label: "Done";
+                                small: true;
+                                ghost: true;
+                                clicked => { root.selected-peer-id = ""; }
+                            }
                         }
                     }
                 }
@@ -746,6 +959,42 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: root.dropped-frames + " dropped";
                         color: VxTheme.warning;
+                        font-size: 9px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Bandwidth display — separator + up/down kbps
+                if root.bandwidth-up-kbps > 0 || root.bandwidth-down-kbps > 0 : HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 12px;
+                        background: VxTheme.border-subtle;
+                    }
+                    Text {
+                        text: "\u{2191}" + root.bandwidth-up-kbps + "  \u{2193}" + root.bandwidth-down-kbps + " kbps";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Session total + estimated per hour
+                if root.session-data-mb != "0.0" : HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 12px;
+                        background: VxTheme.border-subtle;
+                    }
+                    Text {
+                        text: root.session-data-mb + " MB" + (root.est-data-per-hour != "" ? "  \u{b7}  " + root.est-data-per-hour : "");
+                        color: VxTheme.text-muted;
                         font-size: 9px;
                         font-weight: 600;
                         vertical-alignment: center;

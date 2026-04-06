@@ -37,6 +37,11 @@ pub struct NetworkClient {
     udp_active: Arc<std::sync::atomic::AtomicBool>,
     /// UDP session token (8 bytes, set by server UdpReady response).
     udp_token: Arc<Mutex<Option<[u8; 8]>>>,
+    /// Bandwidth tracking — lock-free counters for live display.
+    bytes_sent: Arc<std::sync::atomic::AtomicU64>,
+    bytes_recv: Arc<std::sync::atomic::AtomicU64>,
+    packets_sent: Arc<std::sync::atomic::AtomicU64>,
+    packets_recv: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for NetworkClient {
@@ -65,6 +70,10 @@ impl NetworkClient {
             udp_socket: Arc::new(Mutex::new(None)),
             udp_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             udp_token: Arc::new(Mutex::new(None)),
+            bytes_sent: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            bytes_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            packets_sent: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            packets_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -99,6 +108,8 @@ impl NetworkClient {
         let connected = self.connected.clone();
         let last_ping_ms_rx = self.last_ping_ms.clone();
         let ping_sent_at_rx = self.ping_sent_at.clone();
+        let bytes_recv_rx = self.bytes_recv.clone();
+        let packets_recv_rx = self.packets_recv.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = rx.next().await {
@@ -116,6 +127,8 @@ impl NetworkClient {
                                 shared_types::MEDIA_PACKET_AUDIO => {
                                     let id_len = data[1] as usize;
                                     if data.len() > 2 + id_len {
+                                        bytes_recv_rx.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                                        packets_recv_rx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let _ = audio_tx.try_send(data.into());
                                     }
                                 }
@@ -200,6 +213,8 @@ impl NetworkClient {
                         packet.extend_from_slice(data);
                         let _ = socket.send(&packet).await;
                     }
+                    self.bytes_sent.fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.packets_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return Ok(());
                 }
             }
@@ -219,6 +234,8 @@ impl NetworkClient {
                 p.extend_from_slice(data);
                 p
             };
+            self.bytes_sent.fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+            self.packets_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tx.send(Message::Binary(packet.into())).await?;
         }
         Ok(())
@@ -294,6 +311,8 @@ impl NetworkClient {
         let audio_tx = self.audio_tx_internal.clone();
         let recv_socket = socket.clone();
         let udp_active = self.udp_active.clone();
+        let bytes_recv_udp = self.bytes_recv.clone();
+        let packets_recv_udp = self.packets_recv.clone();
         tokio::spawn(async move {
             let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_AUDIO_FRAME_SIZE];
             loop {
@@ -303,6 +322,8 @@ impl NetworkClient {
                         if buf[0] == shared_types::MEDIA_PACKET_AUDIO {
                             let id_len = buf[1] as usize;
                             if len > 2 + id_len {
+                                bytes_recv_udp.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
+                                packets_recv_udp.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 let _ = audio_tx.try_send(buf[..len].to_vec());
                             }
                         }
@@ -359,6 +380,21 @@ impl NetworkClient {
     pub fn is_udp_active(&self) -> bool {
         self.udp_active
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Snapshot and reset bandwidth counters. Returns (bytes_sent, bytes_recv).
+    /// Designed for periodic 1-second sampling in the tick loop.
+    pub fn swap_bandwidth_counters(&self) -> (u64, u64) {
+        let sent = self.bytes_sent.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let recv = self.bytes_recv.swap(0, std::sync::atomic::Ordering::Relaxed);
+        (sent, recv)
+    }
+
+    /// Read total packets sent/received (cumulative, not reset).
+    pub fn packet_counts(&self) -> (u64, u64) {
+        let sent = self.packets_sent.load(std::sync::atomic::Ordering::Relaxed);
+        let recv = self.packets_recv.load(std::sync::atomic::Ordering::Relaxed);
+        (sent, recv)
     }
 
     pub async fn disconnect(&mut self) {

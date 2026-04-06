@@ -66,6 +66,8 @@ pub fn setup(
     controls::setup_toggle_deafen(window, state, voice, audio, network, rt_handle);
     controls::setup_toggle_mic_mode(window, voice, audio, rt_handle);
     controls::setup_volume_changed(window, state, audio, rt_handle);
+    controls::setup_eq_changed(window, state, audio, rt_handle);
+    controls::setup_pan_changed(window, state, audio, rt_handle);
 
     // Space
     space::setup_create_space(window, network, rt_handle);
@@ -163,6 +165,10 @@ pub fn setup(
 
     // Welcome / onboarding
     ui::setup_dismiss_welcome(window);
+
+    // Privacy dashboard
+    ui::setup_clear_local_data(window);
+    ui::setup_export_my_data(window);
 
     // Chat
     chat::setup_open_direct_message(window, network, rt_handle);

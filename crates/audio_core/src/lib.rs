@@ -1,6 +1,7 @@
 mod buffers;
 /// Audio DSP primitives. Hot-path functions are re-exported at crate root for benchmarks.
 mod codec;
+mod eq;
 mod feedback;
 
 // Re-export hot-path DSP functions for benchmarks and external use
@@ -294,6 +295,22 @@ impl AudioEngine {
         self.mic_level_raw.load(Ordering::Relaxed) as f32 / 1000.0
     }
 
+    /// Read per-peer RMS audio levels (lock-free read from playback callback atomics).
+    /// Returns Vec of (peer_id, rms_level) where rms_level is 0.0–1.0.
+    pub fn peer_rms_levels(&self) -> Vec<(String, f32)> {
+        let peers = match self.peer_buffers.try_lock() {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
+        };
+        peers
+            .iter()
+            .map(|(id, peer)| {
+                let raw = peer.shared.rms_level.load(Ordering::Relaxed);
+                (id.clone(), raw as f32 / 1000.0)
+            })
+            .collect()
+    }
+
     // ─── Device Enumeration ───
 
     /// Re-enumerate the host to pick up hot-plugged devices
@@ -468,6 +485,26 @@ impl AudioEngine {
             if let Some(peer) = peers.get(peer_id) {
                 let val = (volume.clamp(0.0, 1.0) * 1000.0) as u32;
                 peer.shared.volume.store(val, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Set per-peer 3-band EQ gains. Values are in millibels (-600 to +600).
+    pub fn set_peer_eq(&self, peer_id: &str, bass_mb: i32, mid_mb: i32, treble_mb: i32) {
+        if let Ok(peers) = self.peer_buffers.lock() {
+            if let Some(peer) = peers.get(peer_id) {
+                peer.shared.eq_bass.store(bass_mb.clamp(-600, 600), Ordering::Relaxed);
+                peer.shared.eq_mid.store(mid_mb.clamp(-600, 600), Ordering::Relaxed);
+                peer.shared.eq_treble.store(treble_mb.clamp(-600, 600), Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Set per-peer stereo pan position (-100 = full left, 0 = center, +100 = full right).
+    pub fn set_peer_pan(&self, peer_id: &str, pan: i32) {
+        if let Ok(peers) = self.peer_buffers.lock() {
+            if let Some(peer) = peers.get(peer_id) {
+                peer.shared.pan.store(pan.clamp(-100, 100), Ordering::Relaxed);
             }
         }
     }
@@ -759,8 +796,10 @@ impl AudioEngine {
             device.name().unwrap_or_default()
         );
 
+        // Output in stereo (2 channels) to enable per-peer spatial panning.
+        // Peer audio is mono → we apply EQ, then pan to stereo during mixing.
         let config = StreamConfig {
-            channels: CHANNELS,
+            channels: 2,
             sample_rate: cpal::SampleRate(SAMPLE_RATE),
             buffer_size: cpal::BufferSize::Default,
         };
@@ -777,19 +816,40 @@ impl AudioEngine {
         // Local snapshot held by the playback callback — refreshed when generation changes
         let mut local_peers: Vec<Arc<PeerPlaybackShared>> = Vec::new();
         let mut local_gen: u32 = 0;
+        // Per-peer EQ states (parallel to local_peers, rebuilt on generation change)
+        let mut eq_states: Vec<eq::PeerEqState> = Vec::new();
+        // Per-peer mono scratch buffer (reused each callback, avoids allocation)
+        let mut scratch = vec![0.0f32; FRAME_SIZE * 2];
 
         let stream = device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 data.fill(0.0);
+                // data is interleaved stereo: [L0, R0, L1, R1, ...]
+                let stereo_frames = data.len() / 2;
 
-                // Mix feedback tone (plays even when deafened — it's local UI feedback)
-                feedback_playback.mix_into(data);
+                // Mix feedback tone into both channels equally (mono → stereo)
+                // feedback_playback provides mono — mix into a temp mono buf, then spread
+                {
+                    // Reuse first `stereo_frames` of scratch for feedback mono mix
+                    let fb_buf = &mut scratch[..stereo_frames];
+                    fb_buf.fill(0.0);
+                    feedback_playback.mix_into(fb_buf);
+                    for i in 0..stereo_frames {
+                        let s = fb_buf[i];
+                        data[i * 2] += s;
+                        data[i * 2 + 1] += s;
+                    }
+                }
 
                 // Refresh peer snapshot if generation changed (peer joined/left)
                 let gen = playback_generation.load(Ordering::Acquire);
                 if gen != local_gen {
                     if let Ok(pp) = playback_peers.try_lock() {
+                        // Rebuild EQ states — keep existing state for peers that stayed,
+                        // add new states for new peers. Since we index by position and
+                        // the list is rebuilt entirely, just resize to match.
+                        eq_states.resize_with(pp.len(), eq::PeerEqState::new);
                         local_peers.clone_from(&pp);
                     }
                     local_gen = gen;
@@ -821,10 +881,22 @@ impl AudioEngine {
                     }
                 }
 
-                for peer in &local_peers {
+                // Ensure scratch buffer is large enough for the mono frame count
+                if scratch.len() < stereo_frames {
+                    scratch.resize(stereo_frames, 0.0);
+                }
+
+                for (peer_idx, peer) in local_peers.iter().enumerate() {
                     if !peer.is_ready() {
+                        peer.rms_level.store(0, Ordering::Relaxed);
                         continue;
                     }
+                    // Peek RMS energy before consuming for level meters
+                    let energy = peer.ring.peek_energy();
+                    peer.rms_level.store(
+                        (energy.min(1.0) * 1000.0) as u32,
+                        Ordering::Relaxed,
+                    );
                     let mut vol = peer.volume_f32();
                     if any_speaking {
                         let is_speaking = peer.primed.load(Ordering::Relaxed);
@@ -833,15 +905,47 @@ impl AudioEngine {
                         }
                     }
                     peer.primed.store(true, Ordering::Relaxed);
-                    let consumed = peer.ring.mix_into(data, vol);
+
+                    // Drain mono samples into scratch buffer (not additive)
+                    let mono_buf = &mut scratch[..stereo_frames];
+                    mono_buf.fill(0.0);
+                    let consumed = peer.ring.drain_into(mono_buf);
                     peer.callback_count.fetch_add(1, Ordering::Relaxed);
-                    if consumed < data.len() {
+                    if consumed < stereo_frames {
                         peer.underrun_count.fetch_add(1, Ordering::Relaxed);
+                    }
+
+                    // Apply per-peer 3-band EQ (lock-free atomic reads)
+                    let bass_mb = peer.eq_bass.load(Ordering::Relaxed);
+                    let mid_mb = peer.eq_mid.load(Ordering::Relaxed);
+                    let treble_mb = peer.eq_treble.load(Ordering::Relaxed);
+                    if let Some(eq_state) = eq_states.get_mut(peer_idx) {
+                        eq_state.process(&mut mono_buf[..consumed.max(1)], bass_mb, mid_mb, treble_mb);
+                    }
+
+                    // Apply per-peer stereo pan using constant-power pan law
+                    let pan_raw = peer.pan.load(Ordering::Relaxed).clamp(-100, 100);
+                    let pan_angle = (pan_raw + 100) as f32 / 200.0 * std::f32::consts::FRAC_PI_2;
+                    let left_gain = pan_angle.cos() * vol;
+                    let right_gain = pan_angle.sin() * vol;
+
+                    // Mix panned mono into stereo interleaved output
+                    for i in 0..consumed {
+                        let s = mono_buf[i];
+                        data[i * 2] += s * left_gain;
+                        data[i * 2 + 1] += s * right_gain;
                     }
                 }
 
-                // Record mixed audio to echo reference before volume scaling
-                echo_ref_playback.record(data);
+                // Record mixed audio to echo reference before volume scaling.
+                // Echo reference is mono — sum L+R and halve.
+                {
+                    let echo_buf = &mut scratch[..stereo_frames];
+                    for i in 0..stereo_frames {
+                        echo_buf[i] = (data[i * 2] + data[i * 2 + 1]) * 0.5;
+                    }
+                    echo_ref_playback.record(echo_buf);
+                }
 
                 // Apply master output volume
                 let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;

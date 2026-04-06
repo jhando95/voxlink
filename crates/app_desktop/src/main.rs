@@ -577,6 +577,16 @@ fn apply_config(
     if !config.recent_reactions.is_empty() {
         ui_shell::set_recent_reactions(window, &config.recent_reactions);
     }
+
+    // Privacy dashboard: set config directory path
+    window.set_privacy_config_path(config_store::config_dir_display().into());
+
+    // Audio processing transparency: set initial values
+    // Noise gate threshold is derived from the noise suppression slider
+    // Suppression slider: 0=off, 1=max. The gate threshold in dB is approx -50 + (slider * 20)
+    let gate_db = -50.0 + (config.noise_suppression * 20.0);
+    window.set_audio_noise_gate_threshold(format!("{:.0} dB", gate_db).into());
+    window.set_audio_opus_bitrate("64 kbps".into());
 }
 
 // #18: Dual logger — writes to both stderr and a log file

@@ -36,6 +36,16 @@ pub struct Participant {
     pub is_deafened: bool,
     pub is_speaking: bool,
     pub volume: f32,
+    /// Audio level for level meter display (0–100 percentage scale)
+    pub audio_level: i32,
+    /// Per-peer EQ: bass (0.0=−6dB, 0.5=flat, 1.0=+6dB)
+    pub eq_bass: f32,
+    /// Per-peer EQ: mid
+    pub eq_mid: f32,
+    /// Per-peer EQ: treble
+    pub eq_treble: f32,
+    /// Stereo pan (0.0=full left, 0.5=center, 1.0=full right)
+    pub pan: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -163,19 +173,24 @@ fn default_search_limit() -> u32 {
 /// Map voice quality preset index to Opus bitrate in bps
 pub fn voice_quality_bitrate(quality: u8) -> i32 {
     match quality {
-        0 => 24000,  // Low — poor network, minimal bandwidth
-        1 => 48000,  // Standard — good voice clarity
-        3 => 96000,  // Ultra — near-transparent voice
-        _ => 64000,  // High (default) — excellent quality
+        0 => 16000,   // Economy — great for slow connections, minimal data
+        1 => 32000,   // Standard — balanced quality and bandwidth
+        3 => 128000,  // Studio — maximum quality for podcasts/music
+        _ => 64000,   // High (default) — clear voice, recommended
     }
+}
+
+/// Estimated kbps per user for a given voice quality preset (for UI display).
+pub fn voice_quality_kbps(quality: u8) -> u32 {
+    (voice_quality_bitrate(quality) / 1000) as u32
 }
 
 /// Display label for voice quality preset
 pub fn voice_quality_label(quality: u8) -> &'static str {
     match quality {
-        0 => "Low",
+        0 => "Economy",
         1 => "Standard",
-        3 => "Ultra",
+        3 => "Studio",
         _ => "High",
     }
 }

@@ -765,6 +765,7 @@ pub fn setup_noise_suppression(
         });
     });
 
+    let window_weak = window.as_weak();
     window.on_noise_suppression_changed(move |val| {
         // Slider: 0=off (no suppression), 1=max (aggressive suppression)
         // Noise gate sensitivity: 0=least sensitive (high threshold), 1=most sensitive (low threshold)
@@ -774,6 +775,12 @@ pub fn setup_noise_suppression(
         rt_handle.spawn(async move {
             audio.lock().await.set_sensitivity(sensitivity);
         });
+
+        // Update the noise gate threshold display for the processing pipeline
+        if let Some(w) = window_weak.upgrade() {
+            let gate_db = -50.0 + (val * 20.0);
+            w.set_audio_noise_gate_threshold(format!("{:.0} dB", gate_db).into());
+        }
 
         crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
@@ -1540,6 +1547,40 @@ pub fn setup_dismiss_welcome(window: &MainWindow) {
         cfg.first_run_completed = true;
         if let Err(e) = config_store::save_config(&cfg) {
             log::warn!("Failed to save first_run_completed: {e}");
+        }
+    });
+}
+
+pub fn setup_clear_local_data(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_clear_local_data(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        match config_store::reset_to_defaults() {
+            Ok(()) => {
+                log::info!("Local data cleared (config reset to defaults)");
+                helpers::show_toast(&w, "Local data cleared — config reset to defaults", 1);
+            }
+            Err(e) => {
+                log::error!("Failed to clear local data: {e}");
+                helpers::show_toast(&w, "Failed to clear local data", 3);
+            }
+        }
+    });
+}
+
+pub fn setup_export_my_data(window: &MainWindow) {
+    let window_weak = window.as_weak();
+    window.on_export_my_data(move || {
+        let Some(w) = window_weak.upgrade() else {
+            return;
+        };
+        let json = config_store::export_config_json();
+        if helpers::copy_to_clipboard(&json) {
+            helpers::show_toast(&w, "Config JSON copied to clipboard", 1);
+        } else {
+            helpers::show_toast(&w, "Failed to copy to clipboard", 3);
         }
     });
 }

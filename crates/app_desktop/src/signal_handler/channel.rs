@@ -37,16 +37,28 @@ pub fn handle_channel_joined(
     let mut s = state.borrow_mut();
 
     s.room.room_code = channel_id.to_string();
-    let saved_volumes = &config_store::load_config().peer_volumes;
+    let cfg = config_store::load_config();
+    let saved_volumes = &cfg.peer_volumes;
+    let saved_eq = &cfg.peer_eq_settings;
+    let saved_pan = &cfg.peer_pan;
     s.room.participants = participants
         .iter()
-        .map(|p| Participant {
-            id: p.id.clone(),
-            name: p.name.clone(),
-            is_muted: p.is_muted,
-            is_deafened: false,
-            is_speaking: false,
-            volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
+        .map(|p| {
+            let eq = saved_eq.get(&p.name).copied().unwrap_or([0, 0, 0]);
+            let pan_raw = saved_pan.get(&p.name).copied().unwrap_or(0);
+            Participant {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                is_muted: p.is_muted,
+                is_deafened: false,
+                is_speaking: false,
+                volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
+                audio_level: 0,
+                eq_bass: eq[0] as f32 / 1200.0 + 0.5,
+                eq_mid: eq[1] as f32 / 1200.0 + 0.5,
+                eq_treble: eq[2] as f32 / 1200.0 + 0.5,
+                pan: pan_raw as f32 / 200.0 + 0.5,
+            }
         })
         .collect();
     s.room.participants.push(Participant {
@@ -56,6 +68,11 @@ pub fn handle_channel_joined(
         is_deafened: false,
         is_speaking: false,
         volume: 1.0,
+        audio_level: 0,
+        eq_bass: 0.5,
+        eq_mid: 0.5,
+        eq_treble: 0.5,
+        pan: 0.5,
     });
     s.room.connection = shared_types::ConnectionState::Connected;
     s.current_view = AppView::Room;

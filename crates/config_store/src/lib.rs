@@ -65,6 +65,12 @@ pub struct AppConfig {
     /// Per-peer volume adjustments (peer_name -> volume 0.0-2.0). Persisted across sessions.
     #[serde(default)]
     pub peer_volumes: std::collections::HashMap<String, f32>,
+    /// Per-peer 3-band EQ settings (peer_name -> [bass, mid, treble] in millibels).
+    #[serde(default)]
+    pub peer_eq_settings: std::collections::HashMap<String, [i32; 3]>,
+    /// Per-peer stereo pan position (peer_name -> -100..+100).
+    #[serde(default)]
+    pub peer_pan: std::collections::HashMap<String, i32>,
     /// Private user notes (user_id -> note text). Local only, never sent to server.
     #[serde(default)]
     pub user_notes: std::collections::HashMap<String, String>,
@@ -251,6 +257,8 @@ impl Default for AppConfig {
             favorite_friends: Vec::new(),
             recent_direct_messages: Vec::new(),
             peer_volumes: std::collections::HashMap::new(),
+            peer_eq_settings: std::collections::HashMap::new(),
+            peer_pan: std::collections::HashMap::new(),
             user_notes: std::collections::HashMap::new(),
             saved_servers: Vec::new(),
             join_leave_sounds: default_true(),
@@ -292,6 +300,29 @@ impl AppConfig {
 
 fn config_path() -> Option<PathBuf> {
     ProjectDirs::from("com", "voxlink", "Voxlink").map(|dirs| dirs.config_dir().join("config.json"))
+}
+
+/// Return the config directory path for display in the privacy dashboard.
+pub fn config_dir_display() -> String {
+    ProjectDirs::from("com", "voxlink", "Voxlink")
+        .map(|dirs| dirs.config_dir().display().to_string())
+        .unwrap_or_else(|| "(unknown)".into())
+}
+
+/// Reset config to defaults (preserving auth token so we don't log out).
+pub fn reset_to_defaults() -> Result<(), String> {
+    let existing = load_config();
+    let mut fresh = AppConfig::default();
+    // Preserve authentication state so the user stays logged in
+    fresh.auth_token = existing.auth_token;
+    fresh.account_email = existing.account_email;
+    save_config(&fresh)
+}
+
+/// Serialize the current config to a pretty-printed JSON string (for export).
+pub fn export_config_json() -> String {
+    let cfg = load_config();
+    serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".into())
 }
 
 pub fn load_config() -> AppConfig {
@@ -412,6 +443,8 @@ mod tests {
                 is_in_voice: false,
             }],
             peer_volumes: std::collections::HashMap::new(),
+            peer_eq_settings: std::collections::HashMap::new(),
+            peer_pan: std::collections::HashMap::new(),
             user_notes: std::collections::HashMap::new(),
             saved_servers: vec![SavedServer {
                 name: "Primary".into(),

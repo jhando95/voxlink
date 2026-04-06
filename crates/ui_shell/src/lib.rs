@@ -323,6 +323,11 @@ pub fn set_participants(window: &MainWindow, participants: &[shared_types::Parti
                 volume: p.volume,
                 color_index: color_index as i32,
                 is_priority_speaker: false,
+                audio_level: p.audio_level,
+                eq_bass: p.eq_bass,
+                eq_mid: p.eq_mid,
+                eq_treble: p.eq_treble,
+                pan: p.pan,
             }
         })
         .collect();

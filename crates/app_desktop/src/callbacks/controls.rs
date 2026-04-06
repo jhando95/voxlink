@@ -187,3 +187,92 @@ pub fn setup_volume_changed(
         });
     });
 }
+
+/// Wire per-peer 3-band EQ slider changes.
+/// UI sends bass/mid/treble as 0.0–1.0 (where 0.5 = flat).
+/// We convert to millibels: (val - 0.5) * 12.0 * 100 = millibels (-600 to +600).
+pub fn setup_eq_changed(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let audio = audio.clone();
+    let rt_handle = rt_handle.clone();
+    let state = state.clone();
+    window.on_eq_changed(move |peer_id, bass, mid, treble| {
+        let peer_id_str = peer_id.to_string();
+        let bass_mb = ((bass - 0.5) * 1200.0) as i32;
+        let mid_mb = ((mid - 0.5) * 1200.0) as i32;
+        let treble_mb = ((treble - 0.5) * 1200.0) as i32;
+
+        // Persist by peer name
+        let peer_name = {
+            let s = state.borrow();
+            s.room.participants.iter()
+                .find(|p| p.id == peer_id_str)
+                .map(|p| p.name.clone())
+        };
+        if let Some(name) = peer_name {
+            if bass_mb != 0 || mid_mb != 0 || treble_mb != 0 {
+                let mut cfg = config_store::load_config();
+                cfg.peer_eq_settings.insert(name, [bass_mb, mid_mb, treble_mb]);
+                let _ = config_store::save_config(&cfg);
+            } else {
+                // Remove entry when all flat
+                let mut cfg = config_store::load_config();
+                cfg.peer_eq_settings.remove(&name);
+                let _ = config_store::save_config(&cfg);
+            }
+        }
+
+        let audio = audio.clone();
+        rt_handle.spawn(async move {
+            let aud = audio.lock().await;
+            aud.set_peer_eq(&peer_id_str, bass_mb, mid_mb, treble_mb);
+        });
+    });
+}
+
+/// Wire per-peer stereo pan slider changes.
+/// UI sends pan as 0.0–1.0 (where 0.5 = center).
+/// We convert to -100..+100.
+pub fn setup_pan_changed(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let audio = audio.clone();
+    let rt_handle = rt_handle.clone();
+    let state = state.clone();
+    window.on_pan_changed(move |peer_id, pan| {
+        let peer_id_str = peer_id.to_string();
+        let pan_val = ((pan - 0.5) * 200.0) as i32;
+
+        // Persist by peer name
+        let peer_name = {
+            let s = state.borrow();
+            s.room.participants.iter()
+                .find(|p| p.id == peer_id_str)
+                .map(|p| p.name.clone())
+        };
+        if let Some(name) = peer_name {
+            if pan_val != 0 {
+                let mut cfg = config_store::load_config();
+                cfg.peer_pan.insert(name, pan_val);
+                let _ = config_store::save_config(&cfg);
+            } else {
+                let mut cfg = config_store::load_config();
+                cfg.peer_pan.remove(&name);
+                let _ = config_store::save_config(&cfg);
+            }
+        }
+
+        let audio = audio.clone();
+        rt_handle.spawn(async move {
+            let aud = audio.lock().await;
+            aud.set_peer_pan(&peer_id_str, pan_val);
+        });
+    });
+}

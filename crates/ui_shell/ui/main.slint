@@ -74,6 +74,11 @@ export component MainWindow inherits Window {
     in-out property <int> dropped-frames: 0;
     in-out property <int> dropped-frames-total: 0;
     in-out property <int> dropped-frames-baseline: 0;
+    // Bandwidth tracking
+    in-out property <int> bandwidth-up-kbps: 0;
+    in-out property <int> bandwidth-down-kbps: 0;
+    in-out property <string> session-data-mb: "0.0";
+    in-out property <string> est-data-per-hour: "";
     in-out property <bool> has-screen-share: false;
     in-out property <bool> is-sharing-screen: false;
     in-out property <string> screen-share-owner-name: "";
@@ -303,6 +308,10 @@ export component MainWindow inherits Window {
     callback save-server(string);
     callback remove-server(int);
     callback volume-changed(string, float);
+    // Per-peer 3-band EQ: (peer_id, bass 0-1, mid 0-1, treble 0-1) where 0.5 = flat
+    callback eq-changed(string, float, float, float);
+    // Per-peer stereo pan: (peer_id, pan 0-1) where 0.5 = center
+    callback pan-changed(string, float);
     callback disconnect-server();
     in-out property <[SavedServerData]> saved-servers: [];
     callback copy-room-code();
@@ -428,6 +437,16 @@ export component MainWindow inherits Window {
     // Welcome screen overlay
     in-out property <bool> show-welcome-overlay: false;
     in-out property <string> welcome-message: "";
+
+    // Privacy dashboard
+    in-out property <string> privacy-config-path: "";
+    in-out property <string> privacy-log-path: "";
+    callback clear-local-data();
+    callback export-my-data();
+
+    // Audio processing transparency
+    in-out property <string> audio-noise-gate-threshold: "-42 dB";
+    in-out property <string> audio-opus-bitrate: "64 kbps";
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -591,6 +610,10 @@ export component MainWindow inherits Window {
                             udp-active: root.udp-active;
                             reconnect-attempts: root.reconnect-attempts;
                             dropped-frames: root.dropped-frames;
+                            bandwidth-up-kbps: root.bandwidth-up-kbps;
+                            bandwidth-down-kbps: root.bandwidth-down-kbps;
+                            session-data-mb: root.session-data-mb;
+                            est-data-per-hour: root.est-data-per-hour;
                             in-space-channel: root.in-space-channel;
                             current-space-name: root.current-space-name;
                             channel-topic: root.channel-topic;
@@ -617,6 +640,8 @@ export component MainWindow inherits Window {
                             select-screen-share-source(source-index) => { root.select-screen-share-source(source-index); }
                             select-screen-share-profile(profile-index) => { root.select-screen-share-profile(profile-index); }
                             volume-changed(peer-id, level) => { root.volume-changed(peer-id, level); }
+                            eq-changed(peer-id, bass, mid, treble) => { root.eq-changed(peer-id, bass, mid, treble); }
+                            pan-changed(peer-id, pan) => { root.pan-changed(peer-id, pan); }
                             navigate(view-index) => { root.navigate(view-index); }
                             soundboard-clips: root.soundboard-clips;
                             play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
@@ -694,6 +719,14 @@ export component MainWindow inherits Window {
                             play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
                             remove-soundboard-clip(idx) => { root.remove-soundboard-clip(idx); }
                             add-soundboard-clip(name, path, keybind) => { root.add-soundboard-clip(name, path, keybind); }
+                            // Privacy dashboard
+                            privacy-config-path: root.privacy-config-path;
+                            privacy-log-path: root.privacy-log-path;
+                            clear-local-data => { root.clear-local-data(); }
+                            export-my-data => { root.export-my-data(); }
+                            // Audio processing transparency
+                            audio-noise-gate-threshold: root.audio-noise-gate-threshold;
+                            audio-opus-bitrate: root.audio-opus-bitrate;
                         }
 
                         if root.current-view == 4 : SpaceView {

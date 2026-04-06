@@ -138,6 +138,14 @@ export component SettingsView inherits Rectangle {
     in-out property <string> new-clip-name: "";
     in-out property <string> new-clip-path: "";
     in-out property <string> new-clip-keybind: "";
+    // Privacy dashboard
+    in property <string> privacy-config-path: "";
+    in property <string> privacy-log-path: "";
+    callback clear-local-data();
+    callback export-my-data();
+    // Audio processing transparency
+    in property <string> audio-noise-gate-threshold: "-42 dB";
+    in property <string> audio-opus-bitrate: "64 kbps";
 
     background: transparent;
 
@@ -522,6 +530,65 @@ export component SettingsView inherits Rectangle {
                                     checked: root.echo-cancellation;
                                     toggled => { root.toggle-echo-cancellation(); }
                                 }
+                            }
+
+                            Divider {}
+
+                            SectionLabel { text: "PROCESSING PIPELINE"; }
+                            Text {
+                                text: "What Voxlink applies to your audio, in order. Read-only.";
+                                color: VxTheme.text-muted;
+                                font-size: 9px;
+                            }
+                            // Each row: status dot + name + detail
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
+                                Text { text: "High-pass filter"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "80 Hz cutoff"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.noise-suppression >= 0.2 ? VxTheme.success : VxTheme.text-muted; }
+                                Text { text: "Noise gate"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.noise-suppression < 0.2 ? "Off" : "Threshold: " + root.audio-noise-gate-threshold; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
+                                Text { text: "AGC"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "Target: -18 dB"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
+                                Text { text: "De-esser"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "Active"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.neural-noise-suppression ? VxTheme.success : VxTheme.text-muted; }
+                                Text { text: "Neural denoise"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.neural-noise-suppression ? "On" : "Off"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.echo-cancellation ? VxTheme.success : VxTheme.text-muted; }
+                                Text { text: "Echo cancellation"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.echo-cancellation ? "On" : "Off"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
+                                Text { text: "Opus encode"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.audio-opus-bitrate; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
                             }
                         }
                     }
@@ -1587,6 +1654,108 @@ export component SettingsView inherits Rectangle {
                             color: VxTheme.text-muted;
                             font-size: 9px;
                         }
+                    }
+                }
+            }
+
+            // ─── Privacy Dashboard ───
+            VxCard {
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 12px;
+                    SectionLabel { text: "PRIVACY DASHBOARD"; }
+                    Text {
+                        text: "Voxlink is transparent about what data it stores and where.";
+                        color: VxTheme.text-muted;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+
+                    // Local data
+                    FieldLabel { text: "Data stored locally"; }
+                    VerticalLayout {
+                        spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Config:"; color: VxTheme.text-secondary; font-size: 10px; font-weight: 600; }
+                            Text {
+                                text: root.privacy-config-path != "" ? root.privacy-config-path + "/config.json" : "(unknown)";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Log:"; color: VxTheme.text-secondary; font-size: 10px; font-weight: 600; }
+                            Text {
+                                text: root.privacy-config-path != "" ? root.privacy-config-path + "/voxlink.log" : "(unknown)";
+                                color: VxTheme.text-muted;
+                                font-size: 10px;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+
+                    Divider {}
+
+                    // Server data
+                    FieldLabel { text: "Data stored on server"; }
+                    VerticalLayout {
+                        spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.accent; }
+                            Text { text: "Account: email, display name, hashed password"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.accent; }
+                            Text { text: "Messages: text messages in spaces you belong to"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.success; }
+                            Text { text: "No voice data is ever recorded or stored"; color: VxTheme.success; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.success; }
+                            Text { text: "No telemetry or analytics collected"; color: VxTheme.success; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                        }
+                    }
+
+                    Divider {}
+
+                    // Actions
+                    HorizontalLayout {
+                        spacing: 8px;
+                        VxButton {
+                            label: "Clear Local Data";
+                            soft: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.clear-local-data(); }
+                        }
+                        VxButton {
+                            label: "Export My Data";
+                            soft: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.export-my-data(); }
+                        }
+                    }
+                    Text {
+                        text: "Clear resets config to defaults (keeps your login). Export copies config JSON to clipboard.";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
+                        wrap: word-wrap;
+                    }
+                    if root.is-logged-in : Text {
+                        text: "To delete your server account, use the Delete Account option above.";
+                        color: VxTheme.text-muted;
+                        font-size: 9px;
+                        wrap: word-wrap;
                     }
                 }
             }

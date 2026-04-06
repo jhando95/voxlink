@@ -28,16 +28,28 @@ pub fn handle_room_entered(
     let mut s = state.borrow_mut();
     s.room.room_code = room_code.to_string();
 
-    let saved_volumes = &config_store::load_config().peer_volumes;
+    let cfg = config_store::load_config();
+    let saved_volumes = &cfg.peer_volumes;
+    let saved_eq = &cfg.peer_eq_settings;
+    let saved_pan = &cfg.peer_pan;
     s.room.participants = existing_participants
         .iter()
-        .map(|p| Participant {
-            id: p.id.clone(),
-            name: p.name.clone(),
-            is_muted: p.is_muted,
-            is_deafened: false,
-            is_speaking: false,
-            volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
+        .map(|p| {
+            let eq = saved_eq.get(&p.name).copied().unwrap_or([0, 0, 0]);
+            let pan_raw = saved_pan.get(&p.name).copied().unwrap_or(0);
+            Participant {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                is_muted: p.is_muted,
+                is_deafened: false,
+                is_speaking: false,
+                volume: saved_volumes.get(&p.name).copied().unwrap_or(1.0),
+                audio_level: 0,
+                eq_bass: eq[0] as f32 / 1200.0 + 0.5,
+                eq_mid: eq[1] as f32 / 1200.0 + 0.5,
+                eq_treble: eq[2] as f32 / 1200.0 + 0.5,
+                pan: pan_raw as f32 / 200.0 + 0.5,
+            }
         })
         .collect();
     s.room.participants.push(Participant {
@@ -47,6 +59,11 @@ pub fn handle_room_entered(
         is_deafened: false,
         is_speaking: false,
         volume: 1.0,
+        audio_level: 0,
+        eq_bass: 0.5,
+        eq_mid: 0.5,
+        eq_treble: 0.5,
+        pan: 0.5,
     });
 
     s.room.connection = shared_types::ConnectionState::Connected;
@@ -99,8 +116,13 @@ pub fn handle_peer_joined(
     audio: &Arc<TokioMutex<audio_core::AudioEngine>>,
 ) {
     log::info!("Peer joined: {} ({})", peer.name, peer.id);
-    let saved_vol = config_store::load_config().peer_volumes
+    let cfg = config_store::load_config();
+    let saved_vol = cfg.peer_volumes
         .get(&peer.name).copied().unwrap_or(1.0);
+    let saved_eq = cfg.peer_eq_settings
+        .get(&peer.name).copied().unwrap_or([0, 0, 0]);
+    let saved_pan = cfg.peer_pan
+        .get(&peer.name).copied().unwrap_or(0);
     let mut s = state.borrow_mut();
     s.room.participants.push(Participant {
         id: peer.id.clone(),
@@ -109,6 +131,11 @@ pub fn handle_peer_joined(
         is_deafened: false,
         is_speaking: false,
         volume: saved_vol,
+        audio_level: 0,
+        eq_bass: saved_eq[0] as f32 / 1200.0 + 0.5,
+        eq_mid: saved_eq[1] as f32 / 1200.0 + 0.5,
+        eq_treble: saved_eq[2] as f32 / 1200.0 + 0.5,
+        pan: saved_pan as f32 / 200.0 + 0.5,
     });
     ui_shell::set_participants(w, &s.room.participants);
     let count = s.room.participants.len();
@@ -119,6 +146,18 @@ pub fn handle_peer_joined(
     if (saved_vol - 1.0).abs() > 0.01 {
         if let Ok(aud) = audio.try_lock() {
             aud.set_peer_volume(&peer.id, saved_vol);
+        }
+    }
+    // Apply saved EQ to audio engine
+    if saved_eq != [0, 0, 0] {
+        if let Ok(aud) = audio.try_lock() {
+            aud.set_peer_eq(&peer.id, saved_eq[0], saved_eq[1], saved_eq[2]);
+        }
+    }
+    // Apply saved pan to audio engine
+    if saved_pan != 0 {
+        if let Ok(aud) = audio.try_lock() {
+            aud.set_peer_pan(&peer.id, saved_pan);
         }
     }
 

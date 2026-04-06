@@ -10,6 +10,13 @@ export struct ParticipantData {
     volume: float,
     color-index: int,
     is-priority-speaker: bool,
+    audio-level: int,
+    // EQ: 0.0 = -6dB, 0.5 = flat, 1.0 = +6dB
+    eq-bass: float,
+    eq-mid: float,
+    eq-treble: float,
+    // Pan: 0.0 = full left, 0.5 = center, 1.0 = full right
+    pan: float,
 }
 
 export struct PerfData {
