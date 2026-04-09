@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { AuditEntryData, AutomodWordData, ChannelData, MemberData, ScheduledEventData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxStatusPill } from "../components.slint";
 
 export component SpaceView inherits Rectangle {
     in property <bool> wide: false;
@@ -91,6 +91,8 @@ export component SpaceView inherits Rectangle {
     in-out property <int> automod-action-index: 0; // 0=delete, 1=warn
     in property <bool> is-space-public: false;
     callback set-space-public(bool);
+    property <length> side-column-width: clamp(root.width * 0.25, 248px, 292px);
+    property <length> channel-name-max-width: root.wide ? 260px : 180px;
 
     background: transparent;
 
@@ -117,7 +119,7 @@ export component SpaceView inherits Rectangle {
                     Text {
                         text: root.space-description != ""
                             ? root.space-description
-                            : "Channels, members, and chat in one focused workspace.";
+                            : "Channels, members, and moderation in one focused space.";
                         color: VxTheme.text-muted;
                         font-size: 10px;
                     }
@@ -140,11 +142,13 @@ export component SpaceView inherits Rectangle {
                     spacing: 10px;
                     VxButton {
                         label: "Back";
+                        glyph: "BK";
                         soft: true;
                         clicked => { root.navigate(0); }
                     }
                     VxButton {
                         label: root.invite-copied ? "Copied!" : "Copy invite";
+                        glyph: root.invite-copied ? "OK" : "CP";
                         accent: true;
                         clicked => {
                             root.copy-invite-code();
@@ -214,18 +218,15 @@ export component SpaceView inherits Rectangle {
                                     spacing: 10px;
                                     alignment: center;
 
-                                    Text {
-                                        text: "\u{2605}";
-                                        color: VxTheme.warning;
-                                        font-size: 14px;
-                                        vertical-alignment: center;
+                                    VxGlyphTile {
+                                        tile-size: 28px;
+                                        glyph: "FV";
+                                        tone: VxTheme.warning;
                                     }
-                                    Text {
-                                        text: channel.is-voice ? "\u{1F50A}" : "#";
-                                        color: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
-                                        font-size: 12px;
-                                        font-weight: 800;
-                                        vertical-alignment: center;
+                                    VxGlyphTile {
+                                        tile-size: 30px;
+                                        glyph: channel.is-voice ? "VC" : "TX";
+                                        tone: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
                                     }
                                     Text {
                                         text: channel.name;
@@ -347,27 +348,12 @@ export component SpaceView inherits Rectangle {
                                             }
                                         }
 
-                                        Rectangle {
-                                            width: 36px;
-                                            height: 36px;
-                                            border-radius: 10px;
-                                            background: channel.is-active || channel.unread-count > 0
-                                                ? VxTheme.accent-subtle
-                                                : VxTheme.bg-panel;
-                                            border-color: channel.is-active || channel.unread-count > 0
-                                                ? VxTheme.accent-border
-                                                : VxTheme.border-subtle;
-                                            border-width: 1px;
-                                            Text {
-                                                text: "#";
-                                                color: channel.is-active || channel.unread-count > 0
-                                                    ? VxTheme.accent
-                                                    : VxTheme.text-secondary;
-                                                font-size: 16px;
-                                                font-weight: 800;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
-                                            }
+                                        VxGlyphTile {
+                                            tile-size: 36px;
+                                            glyph: "TX";
+                                            tone: channel.is-active || channel.unread-count > 0
+                                                ? VxTheme.accent
+                                                : VxTheme.text-secondary;
                                         }
 
                                         VerticalLayout {
@@ -384,7 +370,7 @@ export component SpaceView inherits Rectangle {
                                                     font-weight: 700;
                                                     vertical-alignment: center;
                                                     overflow: elide;
-                                                    max-width: 180px;
+                                                    max-width: root.channel-name-max-width;
                                                 }
                                                 // Notification override indicator
                                                 if channel.notification-setting == "none" : Text {
@@ -559,6 +545,7 @@ export component SpaceView inherits Rectangle {
 
                                         if root.can-manage-space-channels : VxButton {
                                             label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
+                                            glyph: root.topic-edit-channel-id == channel.id ? "SV" : "TP";
                                             small: true;
                                             soft: root.topic-edit-channel-id != channel.id;
                                             accent: root.topic-edit-channel-id == channel.id;
@@ -575,6 +562,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         if root.can-manage-space-channels : VxButton {
                                             label: root.settings-channel-id == channel.id ? "Close" : "Manage";
+                                            glyph: root.settings-channel-id == channel.id ? "CL" : "MG";
                                             small: true;
                                             ghost: true;
                                             clicked => {
@@ -588,6 +576,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         if root.can-manage-space-channels : VxButton {
                                             label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                            glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                             small: true;
                                             danger: root.confirm-delete-channel-id == channel.id;
                                             soft: root.confirm-delete-channel-id != channel.id;
@@ -619,6 +608,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Cancel";
+                                            glyph: "CN";
                                             small: true;
                                             ghost: true;
                                             clicked => {
@@ -915,26 +905,12 @@ export component SpaceView inherits Rectangle {
                                     spacing: 12px;
                                     alignment: center;
 
-                                    Rectangle {
-                                        width: 36px;
-                                        height: 36px;
-                                        border-radius: 10px;
-                                        background: channel.is-active || channel.peer-count > 0
-                                            ? VxTheme.accent-subtle
-                                            : VxTheme.bg-panel;
-                                        border-color: channel.is-active || channel.peer-count > 0
-                                            ? VxTheme.accent-border
-                                            : VxTheme.border-subtle;
-                                        border-width: 1px;
-                                        Text {
-                                            text: "\u{1F50A}";
-                                            color: channel.is-active || channel.peer-count > 0
-                                                ? VxTheme.accent
-                                                : VxTheme.text-secondary;
-                                            font-size: 14px;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
+                                    VxGlyphTile {
+                                        tile-size: 36px;
+                                        glyph: "VC";
+                                        tone: channel.is-active || channel.peer-count > 0
+                                            ? VxTheme.accent
+                                            : VxTheme.text-secondary;
                                     }
 
                                     VerticalLayout {
@@ -999,6 +975,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     if root.can-manage-space-channels : VxButton {
                                         label: root.settings-channel-id == channel.id ? "Close" : "Manage";
+                                        glyph: root.settings-channel-id == channel.id ? "CL" : "MG";
                                         small: true;
                                         ghost: true;
                                         clicked => {
@@ -1011,6 +988,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     if root.can-manage-space-channels : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                        glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                         small: true;
                                         danger: root.confirm-delete-channel-id == channel.id;
                                         soft: root.confirm-delete-channel-id != channel.id;
@@ -1212,7 +1190,7 @@ export component SpaceView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 304px;
+                    width: root.side-column-width;
                     spacing: 12px;
 
                     // Compact profile card — status + bio
@@ -1236,6 +1214,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Set";
+                                    glyph: "ST";
                                     small: true;
                                     soft: true;
                                     enabled: root.user-status-input != "";
@@ -1262,6 +1241,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Save";
+                                    glyph: "SV";
                                     small: true;
                                     soft: true;
                                     enabled: root.user-bio-input != "";
@@ -1295,12 +1275,14 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Copy";
+                                    glyph: "CP";
                                     small: true;
                                     accent: true;
                                     clicked => { root.copy-invite-code(); }
                                 }
                                 VxButton {
                                     label: "Share";
+                                    glyph: "SH";
                                     small: true;
                                     soft: true;
                                     clicked => { root.copy-share-message(); }
@@ -1459,36 +1441,42 @@ export component SpaceView inherits Rectangle {
                                         spacing: 6px;
                                         if member.is-friend : VxButton {
                                             label: "Message";
+                                            glyph: "DM";
                                             small: true;
                                             accent: true;
                                             clicked => { root.open-direct-message(member.user-id); }
                                         }
                                         if member.has-incoming-request : VxButton {
                                             label: "Accept";
+                                            glyph: "OK";
                                             small: true;
                                             accent: true;
                                             clicked => { root.accept-friend-request(member.user-id); }
                                         }
                                         if member.has-incoming-request : VxButton {
                                             label: "Decline";
+                                            glyph: "NO";
                                             small: true;
                                             soft: true;
                                             clicked => { root.decline-friend-request(member.user-id); }
                                         }
                                         if !member.has-incoming-request && member.has-outgoing-request : VxButton {
                                             label: "Cancel";
+                                            glyph: "CN";
                                             small: true;
                                             soft: true;
                                             clicked => { root.cancel-friend-request(member.user-id); }
                                         }
                                         if !member.has-incoming-request && !member.has-outgoing-request && member.is-friend : VxButton {
                                             label: "Unfriend";
+                                            glyph: "RM";
                                             small: true;
                                             soft: true;
                                             clicked => { root.remove-friend(member.user-id); }
                                         }
                                         if !member.has-incoming-request && !member.has-outgoing-request && !member.is-friend : VxButton {
                                             label: "Add friend";
+                                            glyph: "FR";
                                             small: true;
                                             accent: true;
                                             clicked => { root.send-friend-request(member.user-id); }
@@ -1507,6 +1495,7 @@ export component SpaceView inherits Rectangle {
                                         spacing: 6px;
                                         if member.role-tier == 0 : VxButton {
                                             label: "Mod";
+                                            glyph: "MD";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1514,6 +1503,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         if member.role-tier == 1 : VxButton {
                                             label: "Demote";
+                                            glyph: "DN";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1521,6 +1511,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         if root.is-space-owner && member.role-tier < 2 : VxButton {
                                             label: "Admin";
+                                            glyph: "AD";
                                             small: true;
                                             accent: true;
                                             horizontal-stretch: 1;
@@ -1528,6 +1519,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         if root.is-space-owner && member.role-tier == 2 : VxButton {
                                             label: "Remove admin";
+                                            glyph: "RM";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1539,6 +1531,7 @@ export component SpaceView inherits Rectangle {
                                         spacing: 6px;
                                         VxButton {
                                             label: member.is-server-muted ? "Unmute" : "Mute";
+                                            glyph: member.is-server-muted ? "AU" : "MU";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1546,6 +1539,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Timeout";
+                                            glyph: "TM";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1553,6 +1547,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Kick";
+                                            glyph: "KK";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1560,6 +1555,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Ban";
+                                            glyph: "BN";
                                             small: true;
                                             danger: true;
                                             horizontal-stretch: 1;
@@ -1578,12 +1574,14 @@ export component SpaceView inherits Rectangle {
                             SectionLabel { text: "SPACE ACTIONS"; }
                             VxButton {
                                 label: "Leave space";
+                                glyph: "LV";
                                 soft: true;
                                 horizontal-stretch: 1;
                                 clicked => { root.leave-space(); }
                             }
                             if root.is-space-owner : VxButton {
                                 label: root.confirm-delete-visible ? "Confirm delete" : "Delete space";
+                                glyph: root.confirm-delete-visible ? "OK" : "DL";
                                 danger: true;
                                 horizontal-stretch: 1;
                                 clicked => {
@@ -1629,6 +1627,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Rename";
+                                    glyph: "RN";
                                     small: true;
                                     accent: true;
                                     clicked => {
@@ -1651,6 +1650,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Save";
+                                    glyph: "SV";
                                     small: true;
                                     soft: true;
                                     clicked => {
@@ -1670,6 +1670,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: root.is-space-public ? "Public" : "Private";
+                                    glyph: root.is-space-public ? "PB" : "PR";
                                     small: true;
                                     accent: root.is-space-public;
                                     soft: !root.is-space-public;
@@ -1761,6 +1762,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     VxButton {
                                         label: "Remove";
+                                        glyph: "RM";
                                         small: true;
                                         ghost: true;
                                         clicked => { root.remove-automod-word(entry.word); }
@@ -1791,6 +1793,7 @@ export component SpaceView inherits Rectangle {
                     }
                     VxButton {
                         label: "Set";
+                        glyph: "ST";
                         small: true;
                         soft: true;
                         enabled: root.user-status-input != "";
@@ -1821,12 +1824,14 @@ export component SpaceView inherits Rectangle {
                             }
                             VxButton {
                                 label: "Copy";
+                                glyph: "CP";
                                 small: true;
                                 accent: true;
                                 clicked => { root.copy-invite-code(); }
                             }
                             VxButton {
                                 label: "Share";
+                                glyph: "SH";
                                 small: true;
                                 soft: true;
                                 clicked => { root.copy-share-message(); }
@@ -1868,17 +1873,15 @@ export component SpaceView inherits Rectangle {
                                 height: 44px;
                                 spacing: 8px;
                                 alignment: center;
-                                Text {
-                                    text: "\u{2605}";
-                                    color: VxTheme.warning;
-                                    font-size: 13px;
-                                    vertical-alignment: center;
+                                VxGlyphTile {
+                                    tile-size: 26px;
+                                    glyph: "FV";
+                                    tone: VxTheme.warning;
                                 }
-                                Text {
-                                    text: channel.is-voice ? "VC" : "TXT";
-                                    color: VxTheme.text-secondary;
-                                    font-size: 10px;
-                                    font-weight: 800;
+                                VxGlyphTile {
+                                    tile-size: 28px;
+                                    glyph: channel.is-voice ? "VC" : "TX";
+                                    tone: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
                                 }
                                 Text {
                                     text: channel.name;
@@ -1970,11 +1973,10 @@ export component SpaceView inherits Rectangle {
                                             vertical-alignment: center;
                                         }
                                     }
-                                    Text {
-                                        text: channel.is-voice ? "VC" : "TXT";
-                                        color: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
-                                        font-size: 10px;
-                                        font-weight: 800;
+                                    VxGlyphTile {
+                                        tile-size: 28px;
+                                        glyph: channel.is-voice ? "VC" : "TX";
+                                        tone: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
                                     }
                                     Text {
                                         text: channel.name;
@@ -2049,6 +2051,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     if root.can-manage-space-channels && !channel.is-voice : VxButton {
                                         label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
+                                        glyph: root.topic-edit-channel-id == channel.id ? "SV" : "TP";
                                         small: true;
                                         soft: root.topic-edit-channel-id != channel.id;
                                         accent: root.topic-edit-channel-id == channel.id;
@@ -2077,6 +2080,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     if root.can-manage-space-channels : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
+                                        glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                         small: true;
                                         danger: root.confirm-delete-channel-id == channel.id;
                                         soft: root.confirm-delete-channel-id != channel.id;
@@ -2108,6 +2112,7 @@ export component SpaceView inherits Rectangle {
                                     }
                                     VxButton {
                                         label: "Cancel";
+                                        glyph: "CN";
                                         small: true;
                                         ghost: true;
                                         clicked => {
@@ -2243,6 +2248,7 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Remove";
+                                    glyph: "RM";
                                     small: true;
                                     ghost: true;
                                     clicked => { root.remove-automod-word(entry.word); }
@@ -2260,12 +2266,14 @@ export component SpaceView inherits Rectangle {
                         SectionLabel { text: "SPACE ACTIONS"; }
                         VxButton {
                             label: "Leave space";
+                            glyph: "LV";
                             soft: true;
                             horizontal-stretch: 1;
                             clicked => { root.leave-space(); }
                         }
                         if root.is-space-owner : VxButton {
                             label: root.confirm-delete-visible ? "Confirm delete" : "Delete space";
+                            glyph: root.confirm-delete-visible ? "OK" : "DL";
                             danger: true;
                             horizontal-stretch: 1;
                             clicked => {

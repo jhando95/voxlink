@@ -264,30 +264,29 @@ export component MainWindow inherits Window {
     property <bool> shell-compact: true;
     property <bool> rail-open: desktop-layout || sidebar-expanded;
     changed width => {
-        root.desktop-layout = self.width >= 1040px;
-        root.shell-compact = self.width < 1320px;
+        root.desktop-layout = self.width >= 1180px;
+        root.shell-compact = self.width < 1460px;
         if root.desktop-layout {
             root.sidebar-expanded = false;
         }
-        // Continuous UI scaling: 1.0 at 1180px (preferred), shrinks proportionally
-        // Clamp between 0.65 (very small) and 1.0 (full size)
-        VxTheme.ui-scale = clamp(self.width / 1080px, 0.65, 1.0);
+        // Keep the shell readable as the window narrows instead of over-compressing it.
+        VxTheme.ui-scale = clamp(self.width / 1120px, 0.72, 1.0);
     }
     property <string> context-title:
-        current-view == 0 ? "Home base" :
+        current-view == 0 ? "Home" :
         current-view == 1 ? (in-space-channel && current-space-name != "" ? current-space-name : "Live call") :
         current-view == 2 ? "Settings" :
         current-view == 3 ? "System" :
         current-view == 4 ? current-space-name :
-        chat-channel-name != "" ? (chat-is-direct-message ? chat-channel-name : "# " + chat-channel-name) : "Text chat";
+        chat-channel-name != "" ? (chat-is-direct-message ? chat-channel-name : "# " + chat-channel-name) : "Chat";
     property <string> context-subtitle:
-        current-view == 0 ? "Connect fast, build spaces, or jump into a room." :
+        current-view == 0 ? "Calls, spaces, and direct chat." :
         current-view == 1 ? (room-code != "" ? "Room " + room-code : status-text) :
-        current-view == 2 ? "Devices, keybinds, sound, and capture mode." :
-        current-view == 3 ? "Performance, session health, and runtime posture." :
-        current-view == 4 ? "Channels and members in one workspace." :
+        current-view == 2 ? "Audio, devices, keybinds, and appearance." :
+        current-view == 3 ? "Performance, friends, and session health." :
+        current-view == 4 ? "Channels, members, and moderation in one space." :
         chat-context-subtitle != "" ? chat-context-subtitle :
-        current-space-name != "" ? current-space-name : "Persistent channel chat.";
+        current-space-name != "" ? current-space-name : "Persistent conversation.";
 
     // Callbacks
     callback create-room();
@@ -452,16 +451,42 @@ export component MainWindow inherits Window {
         background: VxTheme.bg-canvas;
 
         Rectangle {
+            x: -parent.width * 0.08;
+            y: -parent.height * 0.02;
+            width: parent.width * 0.56;
+            height: parent.height * 0.34;
+            background: @linear-gradient(135deg, VxTheme.accent-glow 0%, transparent 72%);
+            opacity: VxTheme.dark-mode ? 0.95 : 0.72;
+        }
+
+        Rectangle {
+            x: parent.width * 0.62;
+            y: 0px;
+            width: parent.width * 0.30;
+            height: parent.height * 0.24;
+            background: @linear-gradient(180deg, VxTheme.header-accent-right.transparentize(0.92) 0%, transparent 86%);
+            opacity: VxTheme.dark-mode ? 0.78 : 0.52;
+        }
+
+        Rectangle {
+            y: parent.height * 0.68;
+            width: parent.width;
+            height: parent.height * 0.32;
+            background: @linear-gradient(180deg, transparent 0%, VxTheme.bg-rail.transparentize(VxTheme.dark-mode ? 0.35 : 0.50) 100%);
+            opacity: 0.7;
+        }
+
+        Rectangle {
             width: parent.width;
             height: parent.height;
-            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 14%);
+            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 18%);
         }
 
         HorizontalLayout {
             spacing: 0px;
 
             if root.rail-open : WorkspaceRail {
-                width: root.desktop-layout ? (root.shell-compact ? 236px : 272px) : 248px;
+                width: root.desktop-layout ? (root.shell-compact ? 224px : 252px) : 236px;
                 compact: root.shell-compact;
                 current-view: root.current-view;
                 spaces: root.spaces;
@@ -1201,7 +1226,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: center;
                     VxCard {
-                        width: 320px;
+                        width: clamp(root.width * 0.36, 300px, 364px);
                         VerticalLayout {
                             padding: 24px;
                             spacing: 16px;

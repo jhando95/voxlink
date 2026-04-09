@@ -32,6 +32,7 @@ export component SystemView inherits Rectangle {
 
     property <string> add-friend-input: "";
     property <string> add-friend-status: "";
+    property <length> side-column-width: clamp(root.width * 0.26, 248px, 288px);
 
     background: transparent;
 
@@ -97,8 +98,8 @@ export component SystemView inherits Rectangle {
                             SectionLabel { text: "QUICK ACTIONS"; }
                             Text {
                                 text: root.room-code != ""
-                                    ? "Jump back into the live room, tune the audio stack, or keep the friend radar floating while you work."
-                                    : "Tune the audio stack, keep the friend radar floating, and use this page as the control deck.";
+                                    ? "Resume the live room, tweak audio, or keep the friend pop-out nearby."
+                                    : "Audio controls, friend presence, and session shortcuts live here.";
                                 color: VxTheme.text-secondary;
                                 font-size: 10px;
                                 wrap: word-wrap;
@@ -107,12 +108,14 @@ export component SystemView inherits Rectangle {
                                 spacing: 8px;
                                 if root.room-code != "" : VxButton {
                                     label: "Resume room";
+                                    glyph: "GO";
                                     accent: true;
                                     horizontal-stretch: 1;
                                     clicked => { root.navigate(1); }
                                 }
                                 VxButton {
                                     label: "Audio settings";
+                                    glyph: "IO";
                                     accent: root.room-code == "";
                                     soft: root.room-code != "";
                                     horizontal-stretch: 1;
@@ -121,6 +124,7 @@ export component SystemView inherits Rectangle {
                             }
                             VxButton {
                                 label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                                glyph: root.member-widget-visible ? "CL" : "PO";
                                 accent: !root.member-widget-visible && root.room-code != "";
                                 soft: root.member-widget-visible || root.room-code == "";
                                 horizontal-stretch: 1;
@@ -310,6 +314,7 @@ export component SystemView inherits Rectangle {
                                     }
                                     VxButton {
                                         label: "Open conversation";
+                                        glyph: "DM";
                                         small: true;
                                         accent: true;
                                         horizontal-stretch: 1;
@@ -322,7 +327,7 @@ export component SystemView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 304px;
+                    width: root.side-column-width;
                     spacing: 12px;
 
                     VxCard {
@@ -396,6 +401,7 @@ export component SystemView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Send Request";
+                                    glyph: "FR";
                                     small: true;
                                     accent: true;
                                     clicked => {
@@ -509,6 +515,7 @@ export component SystemView inherits Rectangle {
                                             spacing: 8px;
                                             VxButton {
                                                 label: "Message";
+                                                glyph: "DM";
                                                 small: true;
                                                 accent: true;
                                                 horizontal-stretch: 1;
@@ -516,6 +523,7 @@ export component SystemView inherits Rectangle {
                                             }
                                             VxButton {
                                                 label: "Remove";
+                                                glyph: "RM";
                                                 small: true;
                                                 soft: true;
                                                 horizontal-stretch: 1;
@@ -572,6 +580,7 @@ export component SystemView inherits Rectangle {
                                             spacing: 8px;
                                             VxButton {
                                                 label: "Accept";
+                                                glyph: "OK";
                                                 small: true;
                                                 accent: true;
                                                 horizontal-stretch: 1;
@@ -579,6 +588,7 @@ export component SystemView inherits Rectangle {
                                             }
                                             VxButton {
                                                 label: "Decline";
+                                                glyph: "NO";
                                                 small: true;
                                                 soft: true;
                                                 horizontal-stretch: 1;
@@ -632,6 +642,7 @@ export component SystemView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Cancel request";
+                                            glyph: "CN";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -708,18 +719,21 @@ export component SystemView inherits Rectangle {
                         }
                         if root.room-code != "" : VxButton {
                             label: "Resume room";
+                            glyph: "GO";
                             accent: true;
                             horizontal-stretch: 1;
                             clicked => { root.navigate(1); }
                         }
                         VxButton {
                             label: "Audio settings";
+                            glyph: "IO";
                             soft: true;
                             horizontal-stretch: 1;
                             clicked => { root.navigate(2); }
                         }
                         VxButton {
                             label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                            glyph: root.member-widget-visible ? "CL" : "PO";
                             accent: !root.member-widget-visible;
                             soft: root.member-widget-visible;
                             horizontal-stretch: 1;
@@ -893,6 +907,7 @@ export component SystemView inherits Rectangle {
                             }
                             VxButton {
                                 label: "Send Request";
+                                glyph: "FR";
                                 small: true;
                                 accent: true;
                                 clicked => {
@@ -1018,12 +1033,14 @@ export component SystemView inherits Rectangle {
                                         spacing: 6px;
                                         VxButton {
                                             label: "Message";
+                                            glyph: "DM";
                                             small: true;
                                             accent: true;
                                             clicked => { root.open-direct-message(friend.user-id); }
                                         }
                                         VxButton {
                                             label: "Remove";
+                                            glyph: "RM";
                                             small: true;
                                             soft: true;
                                             clicked => { root.remove-friend(friend.user-id); }
@@ -1062,6 +1079,7 @@ export component SystemView inherits Rectangle {
                                         spacing: 8px;
                                         VxButton {
                                             label: "Accept";
+                                            glyph: "OK";
                                             small: true;
                                             accent: true;
                                             horizontal-stretch: 1;
@@ -1069,6 +1087,7 @@ export component SystemView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Decline";
+                                            glyph: "NO";
                                             small: true;
                                             soft: true;
                                             horizontal-stretch: 1;
@@ -1101,6 +1120,7 @@ export component SystemView inherits Rectangle {
                                     }
                                     VxButton {
                                         label: "Cancel request";
+                                        glyph: "CN";
                                         small: true;
                                         soft: true;
                                         horizontal-stretch: 1;
@@ -1149,6 +1169,7 @@ export component SystemView inherits Rectangle {
                         }
                         VxButton {
                             label: root.member-widget-visible ? "Hide pop-out" : "Open pop-out";
+                            glyph: root.member-widget-visible ? "CL" : "PO";
                             accent: !root.member-widget-visible;
                             soft: root.member-widget-visible;
                             horizontal-stretch: 1;

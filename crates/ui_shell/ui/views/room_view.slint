@@ -1,6 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { ParticipantData, ShareSourceData, SoundboardClipData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxLogoBig, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
 
 export component RoomView inherits Rectangle {
     in property <bool> wide: false;
@@ -97,10 +97,21 @@ export component RoomView inherits Rectangle {
         //  ZONE 1 — Header bar
         // ═══════════════════════════════════════════
         Rectangle {
-            height: 48px * VxTheme.s;
-            background: VxTheme.bg-card;
+            height: 52px * VxTheme.s;
+            background: @linear-gradient(180deg,
+                VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.03 : 0.01) 0%,
+                VxTheme.bg-card 78%,
+                VxTheme.bg-soft.transparentize(VxTheme.dark-mode ? 0.72 : 0.52) 100%);
             border-color: VxTheme.border-subtle;
             border-width: 0px;
+
+            Rectangle {
+                x: -parent.width * 0.05;
+                width: parent.width * 0.34;
+                height: parent.height;
+                background: @linear-gradient(125deg, VxTheme.accent-glow 0%, transparent 76%);
+                opacity: VxTheme.dark-mode ? 0.9 : 0.62;
+            }
 
             // bottom border
             Rectangle {
@@ -243,7 +254,19 @@ export component RoomView inherits Rectangle {
         // ═══════════════════════════════════════════
         Rectangle {
             vertical-stretch: 1;
-            background: VxTheme.bg-panel;
+            background: @linear-gradient(180deg,
+                VxTheme.bg-stage.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
+                VxTheme.bg-stage 62%,
+                VxTheme.bg-panel 100%);
+
+            Rectangle {
+                x: -parent.width * 0.08;
+                y: 0px;
+                width: parent.width * 0.48;
+                height: parent.height * 0.28;
+                background: @linear-gradient(135deg, VxTheme.accent-glow 0%, transparent 74%);
+                opacity: VxTheme.dark-mode ? 0.65 : 0.42;
+            }
 
             VerticalLayout {
                 padding: 16px;
@@ -378,32 +401,48 @@ export component RoomView inherits Rectangle {
                 }
 
                 // When screen share is active, show participants as a compact row below
-                if root.has-screen-share : HorizontalLayout {
-                    height: 50px;
-                    spacing: 8px;
-                    alignment: center;
+                if root.has-screen-share : VxCard {
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
 
-                    for p[idx] in root.participants : Rectangle {
-                        width: 42px;
-                        height: 50px;
-
-                        VxAvatar {
-                            x: (parent.width - self.width) / 2;
-                            y: 0px;
-                            avatar-size: 34px;
-                            initial: p.initial;
-                            color-index: p.color-index;
-                            is-speaking: p.is-speaking;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "LIVE PARTICIPANTS"; }
+                            VxStatusPill {
+                                label: root.participants.length + " connected";
+                                tone: VxTheme.success;
+                                fill: VxTheme.success-dim;
+                            }
                         }
-                        Text {
-                            y: 36px;
-                            width: parent.width;
-                            text: p.id == "self" ? "You" : p.name;
-                            color: p.is-speaking ? VxTheme.success : VxTheme.text-secondary;
-                            font-size: 9px;
-                            font-weight: p.is-speaking ? 800 : 600;
-                            horizontal-alignment: center;
-                            overflow: elide;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
+
+                            for p[idx] in root.participants : Rectangle {
+                                width: 46px;
+                                height: 52px;
+
+                                VxAvatar {
+                                    x: (parent.width - self.width) / 2;
+                                    y: 0px;
+                                    avatar-size: 34px;
+                                    initial: p.initial;
+                                    color-index: p.color-index;
+                                    is-speaking: p.is-speaking;
+                                }
+                                Text {
+                                    y: 36px;
+                                    width: parent.width;
+                                    text: p.id == "self" ? "You" : p.name;
+                                    color: p.is-speaking ? VxTheme.success : VxTheme.text-secondary;
+                                    font-size: 9px;
+                                    font-weight: p.is-speaking ? 800 : 600;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
                         }
                     }
                 }
@@ -415,54 +454,93 @@ export component RoomView inherits Rectangle {
                     // Empty state
                     if root.participants.length <= 1 : VerticalLayout {
                         alignment: center;
-                        spacing: 12px;
+                        spacing: 14px;
                         padding: 24px;
 
-                        if root.participants.length == 1 : VxAvatar {
-                            x: (parent.width - self.width) / 2;
-                            avatar-size: 96px;
-                            initial: root.participants[0].initial;
-                            color-index: root.participants[0].color-index;
-                            is-speaking: root.participants[0].is-speaking;
-                        }
+                        VxCard {
+                            width: clamp(root.width * 0.50, 300px, 460px);
 
-                        Text {
-                            text: root.participants.length == 1
-                                ? (root.participants[0].id == "self" ? root.participants[0].name + " · You" : root.participants[0].name)
-                                : "";
-                            color: VxTheme.text-primary;
-                            font-size: 14px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                        }
+                            VerticalLayout {
+                                padding: 22px;
+                                spacing: 14px;
+                                alignment: center;
 
-                        // Audio level meter for solo view
-                        if root.participants.length == 1 : Rectangle {
-                            height: 3px;
-                            width: 120px;
-                            x: (parent.width - self.width) / 2;
-                            border-radius: 1.5px;
-                            background: VxTheme.bg-raised;
+                                if root.participants.length == 1 : VxAvatar {
+                                    avatar-size: 84px;
+                                    initial: root.participants[0].initial;
+                                    color-index: root.participants[0].color-index;
+                                    is-speaking: root.participants[0].is-speaking;
+                                }
+                                if root.participants.length == 0 : VxLogoBig {
+                                    width: 64px;
+                                    height: 64px;
+                                }
 
-                            Rectangle {
-                                width: parent.width * clamp(root.participants[0].audio-level / 100.0, 0.0, 1.0);
-                                height: parent.height;
-                                border-radius: 1.5px;
-                                background: root.participants[0].audio-level > 80 ? VxTheme.danger :
-                                            root.participants[0].audio-level > 60 ? VxTheme.warning :
-                                            VxTheme.success;
-                                animate width { duration: 60ms; }
-                                animate background { duration: 200ms; }
+                                Text {
+                                    text: root.participants.length == 1
+                                        ? (root.participants[0].id == "self" ? root.participants[0].name + " · You" : root.participants[0].name)
+                                        : "Voice stage ready";
+                                    color: VxTheme.text-primary;
+                                    font-size: 15px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+
+                                // Audio level meter for solo view
+                                if root.participants.length == 1 : Rectangle {
+                                    height: 4px;
+                                    width: 160px;
+                                    x: (parent.width - self.width) / 2;
+                                    border-radius: 2px;
+                                    background: VxTheme.bg-raised;
+
+                                    Rectangle {
+                                        width: parent.width * clamp(root.participants[0].audio-level / 100.0, 0.0, 1.0);
+                                        height: parent.height;
+                                        border-radius: 2px;
+                                        background: root.participants[0].audio-level > 80 ? VxTheme.danger :
+                                                    root.participants[0].audio-level > 60 ? VxTheme.warning :
+                                                    VxTheme.success;
+                                        animate width { duration: 60ms; }
+                                        animate background { duration: 200ms; }
+                                    }
+                                }
+
+                                Text {
+                                    text: root.in-space-channel
+                                        ? "You’re live in the channel. The stage will fill as people join."
+                                        : "Your room is ready. Copy the code or wait for others to drop in.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                    horizontal-alignment: center;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: center;
+
+                                    if root.room-code != "" : VxStatusPill {
+                                        label: root.in-space-channel ? "# " + root.room-code : "Room " + root.room-code;
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                    VxStatusPill {
+                                        label: root.is-open-mic ? "Open mic" : "Push to talk";
+                                        tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
+                                        fill: root.is-open-mic ? VxTheme.success-dim : VxTheme.warning-soft;
+                                    }
+                                }
+
+                                if !root.in-space-channel && root.room-code != "" : VxButton {
+                                    label: root.show-copied ? "Copied room code" : "Copy room code";
+                                    accent: true;
+                                    clicked => {
+                                        root.copy-room-code();
+                                        root.show-copied = true;
+                                    }
+                                }
                             }
-                        }
-
-                        Text {
-                            text: root.in-space-channel
-                                ? "Waiting for others to join the channel..."
-                                : "Share the room code to invite others.";
-                            color: VxTheme.text-muted;
-                            font-size: 11px;
-                            horizontal-alignment: center;
                         }
                     }
 
@@ -661,15 +739,26 @@ export component RoomView inherits Rectangle {
                 }
 
                 // Per-peer audio controls (shows when a peer is selected)
-                if root.selected-peer-id != "" : Rectangle {
-                    border-radius: VxTheme.radius-control;
-                    background: VxTheme.bg-soft;
-                    border-color: VxTheme.accent-border;
-                    border-width: 1px;
+                if root.selected-peer-id != "" : VxCard {
 
                     VerticalLayout {
                         padding: 10px;
-                        spacing: 2px;
+                        spacing: 6px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "PEER MIX"; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                VxGlyphTile { glyph: "MX"; tone: VxTheme.accent; tile-size: 20px; }
+                                VxButton {
+                                    label: "Done";
+                                    small: true;
+                                    ghost: true;
+                                    clicked => { root.selected-peer-id = ""; }
+                                }
+                            }
+                        }
 
                         // Volume row
                         HorizontalLayout {
@@ -851,17 +940,6 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
-                        // Done button
-                        HorizontalLayout {
-                            height: 22px;
-                            alignment: end;
-                            VxButton {
-                                label: "Done";
-                                small: true;
-                                ghost: true;
-                                clicked => { root.selected-peer-id = ""; }
-                            }
-                        }
                     }
                 }
 

@@ -39,6 +39,7 @@ export component HomeView inherits Rectangle {
     callback browse-public-spaces();
     callback join-public-space(string); // invite_code
     property <bool> show-explore: false;
+    property <length> side-column-width: clamp(root.width * 0.26, 248px, 288px);
 
     background: transparent;
 
@@ -63,20 +64,8 @@ export component HomeView inherits Rectangle {
 
                         Text {
                             text: root.user-name != "" && root.user-name != "User"
-                                ? (VxTheme.is-party ? "Welcome back, " + root.user-name + ". Ready to play?" :
-                                   VxTheme.is-space ? "Captain " + root.user-name + ", on deck." :
-                                   VxTheme.is-retro ? "user@voxlink:~$ hello " + root.user-name :
-                                   VxTheme.is-amber ? "> WELCOME, " + root.user-name :
-                                   VxTheme.is-noir  ? root.user-name + ". Good evening." :
-                                   VxTheme.is-arctic ? "Welcome to the tundra, " + root.user-name :
-                                   "Welcome back, " + root.user-name)
-                                : (VxTheme.is-party ? "Ready up." :
-                                   VxTheme.is-space ? "Awaiting crew." :
-                                   VxTheme.is-retro ? "BOOT COMPLETE" :
-                                   VxTheme.is-amber ? "> SYSTEM READY_" :
-                                   VxTheme.is-noir  ? "The line is open." :
-                                   VxTheme.is-arctic ? "Clear signal ahead." :
-                                   "Voice with less drag");
+                                ? "Welcome back, " + root.user-name
+                                : "Voice without the drag";
                             color: VxTheme.text-primary;
                             font-size: 24px;
                             font-weight: VxTheme.is-noir ? 500 : 700;
@@ -84,14 +73,7 @@ export component HomeView inherits Rectangle {
                         }
 
                         Text {
-                            text:
-                                VxTheme.is-party ? "Your 360-style voice party. Jump in, squad up, dominate." :
-                                VxTheme.is-space ? "Deep-space comms array online. All channels nominal." :
-                                VxTheme.is-retro ? "TERMINAL READY // ALL SUBSYSTEMS NOMINAL // VOICE CODEC LOADED" :
-                                VxTheme.is-amber ? "PHOSPHOR DISPLAY ACTIVE. VOICE SUBSYSTEM INITIALIZED." :
-                                VxTheme.is-noir  ? "A quieter kind of voice app. Understated. Reliable." :
-                                VxTheme.is-arctic ? "Crystal-clear comms. Zero noise. Sub-zero latency." :
-                                "A calmer, faster desktop shell for calls, spaces, and chat.";
+                            text: "Fast native calls, persistent spaces, and direct chat in a desktop shell that stays out of the way.";
                             color: VxTheme.text-secondary;
                             font-size: 11px;
                             wrap: word-wrap;
@@ -694,7 +676,7 @@ export component HomeView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 308px;
+                    width: root.side-column-width;
                     spacing: 12px;
 
                     if root.join-code != "" : VxCard {
@@ -723,7 +705,7 @@ export component HomeView inherits Rectangle {
                             padding: 18px;
                             spacing: 12px;
 
-                            SectionLabel { text: "SPACE BUILDER"; }
+                            SectionLabel { text: "SPACES"; }
 
                             VerticalLayout {
                                 spacing: 6px;
@@ -796,7 +778,7 @@ export component HomeView inherits Rectangle {
                             }
 
                             Text {
-                                text: "Fast room codes for ad-hoc voice without a full space.";
+                                text: "Fast room codes for ad-hoc voice without building a full space.";
                                 color: VxTheme.text-muted;
                                 font-size: 10px;
                                 wrap: word-wrap;

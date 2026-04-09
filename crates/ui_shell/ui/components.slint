@@ -1,8 +1,80 @@
 import { LineEdit } from "std-widgets.slint";
 import { VxTheme } from "theme.slint";
+import { VxIcons } from "icons.slint";
+
+export component VxIcon inherits Image {
+    in property <string> glyph: "";
+    in property <image> icon-source;
+    in property <brush> tone: VxTheme.accent;
+    in property <length> icon-size: 16px;
+
+    property <bool> has-explicit-icon: root.icon-source.width > 0 && root.icon-source.height > 0;
+    property <bool> has-mapped-icon:
+        root.glyph == "BK" || root.glyph == "HM" || root.glyph == "IO" || root.glyph == "SY" ||
+        root.glyph == "GO" || root.glyph == "CL" || root.glyph == "PO" || root.glyph == "DM" ||
+        root.glyph == "FR" || root.glyph == "RM" || root.glyph == "OK" || root.glyph == "NO" ||
+        root.glyph == "CN" || root.glyph == "FV" || root.glyph == "VC" || root.glyph == "TX" ||
+        root.glyph == "SV" || root.glyph == "TP" || root.glyph == "MG" || root.glyph == "DL" ||
+        root.glyph == "ST" || root.glyph == "SH" || root.glyph == "MD" || root.glyph == "DN" ||
+        root.glyph == "AD" || root.glyph == "AU" || root.glyph == "MU" || root.glyph == "TM" ||
+        root.glyph == "KK" || root.glyph == "BN" || root.glyph == "LV" || root.glyph == "RN" ||
+        root.glyph == "PB" || root.glyph == "PR" || root.glyph == "SR" || root.glyph == "RP" ||
+        root.glyph == "TH" || root.glyph == "FW" || root.glyph == "PN" || root.glyph == "UP" ||
+        root.glyph == "ED" || root.glyph == "FI" || root.glyph == "LN" || root.glyph == "AT" ||
+        root.glyph == "EM" || root.glyph == "MX" || root.glyph == "CP" || root.glyph == "SD";
+    out property <bool> available: root.has-explicit-icon || root.has-mapped-icon;
+
+    width: root.icon-size;
+    height: root.icon-size;
+    source: root.has-explicit-icon ? root.icon-source :
+        root.glyph == "BK" ? VxIcons.back :
+        root.glyph == "HM" ? VxIcons.home :
+        root.glyph == "IO" ? VxIcons.settings :
+        root.glyph == "SY" ? VxIcons.system :
+        root.glyph == "GO" ? VxIcons.play :
+        root.glyph == "CL" || root.glyph == "NO" || root.glyph == "CN" ? VxIcons.close :
+        root.glyph == "PO" ? VxIcons.popout :
+        root.glyph == "DM" ? VxIcons.dm :
+        root.glyph == "FR" ? VxIcons.user-plus :
+        root.glyph == "RM" || root.glyph == "DN" ? VxIcons.user-minus :
+        root.glyph == "OK" || root.glyph == "SV" || root.glyph == "ST" ? VxIcons.check :
+        root.glyph == "FV" ? VxIcons.star :
+        root.glyph == "VC" || root.glyph == "AU" ? VxIcons.voice :
+        root.glyph == "TX" || root.glyph == "TP" ? VxIcons.text :
+        root.glyph == "MG" ? VxIcons.settings :
+        root.glyph == "DL" ? VxIcons.trash :
+        root.glyph == "SH" ? VxIcons.share :
+        root.glyph == "MD" || root.glyph == "AD" ? VxIcons.shield :
+        root.glyph == "MU" ? VxIcons.mic-off :
+        root.glyph == "TM" ? VxIcons.clock :
+        root.glyph == "KK" || root.glyph == "LV" ? VxIcons.exit :
+        root.glyph == "BN" ? VxIcons.ban :
+        root.glyph == "RN" || root.glyph == "ED" ? VxIcons.edit :
+        root.glyph == "PB" ? VxIcons.globe :
+        root.glyph == "PR" ? VxIcons.lock :
+        root.glyph == "SR" ? VxIcons.search :
+        root.glyph == "RP" ? VxIcons.reply :
+        root.glyph == "TH" ? VxIcons.thread :
+        root.glyph == "FW" ? VxIcons.forward :
+        root.glyph == "PN" ? VxIcons.pin :
+        root.glyph == "UP" ? VxIcons.pin-off :
+        root.glyph == "FI" ? VxIcons.file :
+        root.glyph == "LN" ? VxIcons.link :
+        root.glyph == "AT" ? VxIcons.mention :
+        root.glyph == "EM" ? VxIcons.emoji :
+        root.glyph == "MX" ? VxIcons.levels :
+        root.glyph == "CP" ? VxIcons.copy :
+        root.glyph == "SD" ? VxIcons.send :
+        VxIcons.home;
+    colorize: root.tone;
+    image-fit: contain;
+    visible: root.available;
+}
 
 export component VxButton inherits Rectangle {
     in property <string> label: "";
+    in property <string> glyph: "";
+    in property <image> icon-source;
     in property <bool> accent: false;
     in property <bool> danger: false;
     in property <bool> small: false;
@@ -44,6 +116,22 @@ export component VxButton inherits Rectangle {
         opacity: root.ghost ? 0 : 1;
     }
 
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: @linear-gradient(180deg, #ffffff18 0%, transparent 42%, #00000012 100%);
+        opacity: root.ghost || !root.enabled ? 0 : (root.accent || root.danger ? 1.0 : 0.68);
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: root.ghost ? transparent :
+            (root.accent || root.danger ? #00000022 : VxTheme.border-subtle.transparentize(0.55));
+        opacity: root.enabled ? 1.0 : 0.45;
+    }
+
     touch := TouchArea {
         mouse-cursor: root.enabled ? pointer : default;
         clicked => {
@@ -56,6 +144,42 @@ export component VxButton inherits Rectangle {
         spacing: 6px;
         padding-left: root.small ? 8px : 12px;
         padding-right: root.small ? 8px : 12px;
+
+        if root.glyph != "" || (root.icon-source.width > 0 && root.icon-source.height > 0) : Rectangle {
+            width: root.small ? 15px : 17px;
+            height: root.small ? 15px : 17px;
+            border-radius: root.small ? 4px : 5px;
+            background: root.ghost ? VxTheme.bg-soft :
+                root.accent || root.danger ? #ffffff1e :
+                VxTheme.accent-subtle;
+            border-color: root.ghost ? VxTheme.border-subtle :
+                root.accent || root.danger ? #ffffff26 :
+                VxTheme.accent-border;
+            border-width: 1px;
+
+            icon-preview := VxIcon {
+                x: (parent.width - self.width) * 0.5;
+                y: (parent.height - self.height) * 0.5;
+                glyph: root.glyph;
+                icon-source: root.icon-source;
+                icon-size: root.small ? 11px : 12px;
+                tone: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
+                    !root.enabled ? VxTheme.text-muted :
+                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
+            }
+
+            if !icon-preview.available && root.glyph != "" : Text {
+                text: root.glyph;
+                color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
+                    !root.enabled ? VxTheme.text-muted :
+                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
+                font-size: (root.small ? 8px : 9px) * VxTheme.s;
+                font-weight: 800;
+                letter-spacing: 0.6px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
 
         Text {
             text: root.label;
@@ -72,11 +196,45 @@ export component VxButton inherits Rectangle {
 }
 
 export component VxCard inherits Rectangle {
-    background: VxTheme.bg-card;
+    background: @linear-gradient(180deg,
+        VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.03 : 0.01) 0%,
+        VxTheme.bg-card 46%,
+        VxTheme.bg-soft.transparentize(VxTheme.dark-mode ? 0.40 : 0.18) 100%);
     border-radius: VxTheme.radius-card;
     border-color: VxTheme.card-border;
     border-width: VxTheme.btn-border-width;
     clip: true;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: @linear-gradient(125deg,
+            VxTheme.accent-subtle.transparentize(0.12) 0%,
+            transparent 36%,
+            transparent 70%,
+            VxTheme.header-accent-right.transparentize(0.94) 100%);
+        opacity: VxTheme.dark-mode ? 1.0 : 0.72;
+    }
+
+    Rectangle {
+        x: parent.width - parent.width * 0.32;
+        width: parent.width * 0.32;
+        height: parent.height * 0.34;
+        background: @linear-gradient(180deg, VxTheme.accent-glow 0%, transparent 100%);
+        opacity: VxTheme.dark-mode ? 0.55 : 0.38;
+    }
+
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        border-radius: VxTheme.radius-card;
+        background: transparent;
+        border-color: VxTheme.dark-mode ? #ffffff06 : #ffffffb8;
+        border-width: 1px;
+        opacity: 0.65;
+    }
 
     // Default accent bar
     Rectangle {
@@ -133,9 +291,11 @@ export component VxInput inherits Rectangle {
     in property <bool> enabled: true;
     callback accepted();
 
-    height: 36px;
+    height: 38px;
     border-radius: VxTheme.radius-control;
-    background: VxTheme.bg-input;
+    background: @linear-gradient(180deg,
+        VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
+        VxTheme.bg-input 100%);
     border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
     border-width: inner.has-focus ? 2px : 1px;
     clip: true;
@@ -150,11 +310,19 @@ export component VxInput inherits Rectangle {
         background: inner.has-focus ? VxTheme.accent-border : VxTheme.accent-subtle;
     }
 
+    Rectangle {
+        width: 3px;
+        height: parent.height;
+        background: inner.has-focus ? VxTheme.border-focus : transparent;
+        opacity: inner.has-focus ? 1.0 : 0.0;
+        animate opacity { duration: 100ms; easing: ease-out; }
+    }
+
     inner := LineEdit {
-        x: 10px;
-        y: 7px;
-        width: parent.width - 20px;
-        height: parent.height - 14px;
+        x: 12px;
+        y: 8px;
+        width: parent.width - 24px;
+        height: parent.height - 16px;
         placeholder-text: root.placeholder;
         input-type: root.input-type;
         enabled: root.enabled;
@@ -248,18 +416,25 @@ export component VxStatusPill inherits Rectangle {
 
     height: 24px;
     border-radius: VxTheme.radius-pill;
-    background: root.fill;
+    background: @linear-gradient(180deg, root.fill.brighter(0.03) 0%, root.fill 100%);
     border-color: root.tone.transparentize(0.45);
     border-width: 1px;
 
+    Rectangle {
+        width: parent.width;
+        height: 1px;
+        background: root.tone.transparentize(0.76);
+        opacity: 0.7;
+    }
+
     HorizontalLayout {
-        padding-left: 10px;
+        padding-left: 9px;
         padding-right: 10px;
-        spacing: 6px;
+        spacing: 5px;
         Rectangle {
-            width: 6px;
-            height: 6px;
-            border-radius: 3px;
+            width: 5px;
+            height: 5px;
+            border-radius: 2.5px;
             background: root.tone;
         }
         Text {
@@ -306,6 +481,55 @@ export component VxStatBlock inherits Rectangle {
             font-size: 10px * VxTheme.s;
             wrap: word-wrap;
         }
+    }
+}
+
+export component VxGlyphTile inherits Rectangle {
+    in property <string> glyph: "";
+    in property <image> icon-source;
+    in property <color> tone: VxTheme.accent;
+    in property <length> tile-size: 30px;
+
+    width: root.tile-size;
+    height: root.tile-size;
+    border-radius: root.tile-size * 0.28;
+    background: @linear-gradient(160deg,
+        root.tone.transparentize(0.84) 0%,
+        root.tone.transparentize(0.91) 100%);
+    border-color: root.tone.transparentize(0.48);
+    border-width: 1px;
+    clip: true;
+
+    Rectangle {
+        width: parent.width;
+        height: 2px;
+        background: @linear-gradient(90deg, #ffffff20 0%, root.tone 100%);
+        opacity: 0.9;
+    }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: @linear-gradient(180deg, #ffffff14 0%, transparent 42%, #00000010 100%);
+    }
+
+    tile-icon := VxIcon {
+        x: (parent.width - self.width) * 0.5;
+        y: (parent.height - self.height) * 0.5;
+        glyph: root.glyph;
+        icon-source: root.icon-source;
+        icon-size: root.tile-size * 0.46;
+        tone: root.tone;
+    }
+
+    if !tile-icon.available : Text {
+        text: root.glyph;
+        color: root.tone;
+        font-size: root.tile-size * 0.32;
+        font-weight: 800;
+        letter-spacing: 0.7px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 }
 
@@ -374,9 +598,26 @@ export component VxOptionRow inherits Rectangle {
                 touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
     border-color: root.selected ? VxTheme.accent-border : VxTheme.border-subtle;
     border-width: 1px;
+    clip: true;
 
     animate background { duration: 80ms; easing: ease-out; }
     animate border-color { duration: 80ms; easing: ease-out; }
+
+    Rectangle {
+        width: parent.width;
+        height: 1px;
+        background: root.selected ? VxTheme.accent-subtle : #ffffff08;
+        opacity: 0.75;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: 6px;
+        width: 3px;
+        height: parent.height - 12px;
+        border-radius: 2px;
+        background: root.selected ? VxTheme.accent : transparent;
+    }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -384,7 +625,7 @@ export component VxOptionRow inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 10px;
+        padding-left: 12px;
         padding-right: 10px;
         padding-top: 8px;
         padding-bottom: 8px;

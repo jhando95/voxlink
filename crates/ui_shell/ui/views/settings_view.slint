@@ -13,20 +13,30 @@ component ThemePresetCard inherits Rectangle {
 
     horizontal-stretch: 1;
     border-radius: VxTheme.radius-card;
-    background: root.selected ? root.tone.transparentize(0.88) :
-                touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+    background: root.selected
+        ? @linear-gradient(180deg, root.tone.transparentize(0.90) 0%, root.tone.transparentize(0.94) 100%)
+        : touch.has-hover
+            ? @linear-gradient(180deg, VxTheme.card-hover-bg.brighter(0.02) 0%, VxTheme.card-hover-bg 100%)
+            : @linear-gradient(180deg, VxTheme.bg-soft.brighter(0.02) 0%, VxTheme.bg-soft 100%);
     border-color: root.selected ? root.tone.transparentize(0.42) : VxTheme.border-subtle;
     border-width: 1px;
     clip: true;
-    height: 38px;
+    height: 54px;
 
     animate background { duration: 90ms; easing: ease-out; }
     animate border-color { duration: 90ms; easing: ease-out; }
 
     Rectangle {
         width: parent.width;
-        height: 2px;
-        background: root.selected ? root.tone : VxTheme.accent-subtle;
+        height: 3px;
+        background: @linear-gradient(90deg, root.swatch-a 0%, root.swatch-b 58%, root.swatch-c 100%);
+    }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: @linear-gradient(125deg, root.tone.transparentize(0.92) 0%, transparent 56%, VxTheme.header-accent-right.transparentize(0.96) 100%);
+        opacity: root.selected ? 1.0 : 0.6;
     }
 
     touch := TouchArea {
@@ -34,23 +44,33 @@ component ThemePresetCard inherits Rectangle {
         clicked => { root.clicked(); }
     }
 
-    HorizontalLayout {
+    VerticalLayout {
         padding-left: 10px;
         padding-right: 10px;
-        padding-top: 0;
-        padding-bottom: 0;
+        padding-top: 8px;
+        padding-bottom: 8px;
         spacing: 6px;
-        alignment: center;
 
-        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-a; }
-        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-b; }
-        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.swatch-c; }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-a; }
+            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-b; }
+            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-c; }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.selected ? root.tone : VxTheme.border-subtle;
+            }
+        }
 
         Text {
             text: root.label;
             color: root.selected ? root.tone : VxTheme.text-primary;
             font-size: 11px;
-            font-weight: root.selected ? 700 : 500;
+            font-weight: root.selected ? 700 : 600;
             overflow: elide;
         }
     }
@@ -126,6 +146,7 @@ export component SettingsView inherits Rectangle {
     callback change-password(string, string);
     callback change-display-name(string);
     callback delete-account();
+    property <length> side-column-width: clamp(root.width * 0.26, 252px, 296px);
     in-out property <string> acct-old-pw: "";
     in-out property <string> acct-new-pw: "";
     in-out property <string> acct-new-name: "";
@@ -595,7 +616,7 @@ export component SettingsView inherits Rectangle {
                 }
 
                 VerticalLayout {
-                    width: 320px;
+                    width: root.side-column-width;
                     spacing: 12px;
 
                     VxCard {

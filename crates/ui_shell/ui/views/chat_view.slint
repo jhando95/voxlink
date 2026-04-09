@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { ChatMessage, VxTheme } from "../theme.slint";
-import { Divider, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxStatusPill } from "../components.slint";
+import { Divider, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogoBig, VxStatusPill } from "../components.slint";
 
 export component ChatView inherits Rectangle {
     in property <bool> wide: false;
@@ -52,6 +52,10 @@ export component ChatView inherits Rectangle {
     property <int> emoji-tab: 0; // 0=Recent 1=Smileys 2=People 3=Nature 4=Food 5=Objects 6=Symbols
     property <string> emoji-search-text: "";
     property <bool> typing-active: false;
+    property <length> side-panel-width: clamp(root.width * 0.28, 280px, 336px);
+    property <length> emoji-picker-width: clamp(root.width * 0.34, 300px, 360px);
+    property <length> emoji-picker-height: clamp(root.height * 0.52, 320px, 400px);
+    property <bool> show-chat-meta: root.wide && !root.compact-mode;
     changed chat-input => {
         let next = root.chat-input != "";
         if next != root.typing-active {
@@ -86,18 +90,27 @@ export component ChatView inherits Rectangle {
             spacing: 8px;
 
             HorizontalLayout {
+                min-width: 0px;
+                horizontal-stretch: 1;
                 alignment: start;
                 spacing: 8px;
+                VxGlyphTile {
+                    tile-size: 30px;
+                    glyph: root.chat-is-direct-message ? "DM" : "TX";
+                    tone: root.chat-is-direct-message ? VxTheme.warning : VxTheme.accent;
+                }
                 Text {
-                    text: root.chat-is-direct-message ? root.chat-channel-name : "# " + root.chat-channel-name;
+                    text: root.chat-channel-name;
                     color: VxTheme.text-primary;
                     font-size: 16px;
                     font-weight: 700;
                     overflow: elide;
-                    max-width: 240px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    max-width: root.wide ? 360px : 220px;
                     vertical-alignment: center;
                 }
-                if root.chat-context-subtitle != "" || !root.chat-is-direct-message : Text {
+                if root.show-chat-meta && (root.chat-context-subtitle != "" || !root.chat-is-direct-message) : Text {
                     text: root.chat-context-subtitle != ""
                         ? root.chat-context-subtitle
                         : (root.current-space-name != "" ? root.current-space-name : "Text chat");
@@ -105,8 +118,8 @@ export component ChatView inherits Rectangle {
                     font-size: 10px;
                     vertical-alignment: center;
                 }
-                VxStatusPill {
-                    label: root.chat-messages.length + "";
+                if root.show-chat-meta : VxStatusPill {
+                    label: root.chat-messages.length + " messages";
                     tone: VxTheme.accent;
                     fill: VxTheme.accent-subtle;
                 }
@@ -116,12 +129,14 @@ export component ChatView inherits Rectangle {
                 spacing: 6px;
                 VxButton {
                     label: "Back";
+                    glyph: "BK";
                     small: true;
                     soft: true;
                     clicked => { root.navigate(root.chat-back-view); }
                 }
                 if !root.chat-is-direct-message : VxButton {
                     label: root.show-search-panel ? "Close" : "Search";
+                    glyph: root.show-search-panel ? "CL" : "SR";
                     small: true;
                     soft: true;
                     clicked => {
@@ -190,6 +205,7 @@ export component ChatView inherits Rectangle {
                         }
                         VxButton {
                             label: "Cancel";
+                            glyph: "CN";
                             small: true;
                             ghost: true;
                             clicked => {
@@ -283,6 +299,7 @@ export component ChatView inherits Rectangle {
                             }
                             VxButton {
                                 label: "Go";
+                                glyph: "GO";
                                 small: true;
                                 clicked => {
                                     if root.chat-search-query != "" {
@@ -354,24 +371,61 @@ export component ChatView inherits Rectangle {
                         if root.chat-messages.length == 0 : VerticalLayout {
                             alignment: center;
                             vertical-stretch: 1;
-                            spacing: 6px;
+                            spacing: 10px;
                             padding: 24px;
-                            Text {
-                                text: root.chat-is-direct-message
-                                    ? "No messages yet"
-                                    : "This channel is brand new";
-                                color: VxTheme.text-secondary;
-                                font-size: 13px;
-                                font-weight: 700;
-                                horizontal-alignment: center;
-                            }
-                            Text {
-                                text: root.chat-is-direct-message
-                                    ? "Be the first to say something!"
-                                    : "Start the conversation — say hello below.";
-                                color: VxTheme.text-muted;
-                                font-size: 10px;
-                                horizontal-alignment: center;
+                            VxCard {
+                                width: clamp(root.width * 0.50, 280px, 420px);
+
+                                VerticalLayout {
+                                    padding: 22px;
+                                    spacing: 14px;
+                                    alignment: center;
+
+                                    VxLogoBig {
+                                        width: 58px;
+                                        height: 58px;
+                                    }
+
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        alignment: center;
+
+                                        Text {
+                                            text: root.chat-is-direct-message
+                                                ? "Start the conversation"
+                                                : "This channel is ready";
+                                            color: VxTheme.text-primary;
+                                            font-size: 15px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                        }
+                                        Text {
+                                            text: root.chat-is-direct-message
+                                                ? "Drop the first message and this thread becomes a real conversation."
+                                                : "Say hello, drop context, or pin the first thing people should see.";
+                                            color: VxTheme.text-muted;
+                                            font-size: 10px;
+                                            wrap: word-wrap;
+                                            horizontal-alignment: center;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: center;
+
+                                        VxStatusPill {
+                                            label: root.chat-is-direct-message ? "Direct message" : "Channel chat";
+                                            tone: VxTheme.accent;
+                                            fill: VxTheme.accent-subtle;
+                                        }
+                                        if root.chat-channel-name != "" : VxStatusPill {
+                                            label: root.chat-is-direct-message ? root.chat-channel-name : "# " + root.chat-channel-name;
+                                            tone: VxTheme.text-secondary;
+                                            fill: VxTheme.bg-soft;
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -469,7 +523,7 @@ export component ChatView inherits Rectangle {
                                                 font-size: 11px;
                                                 font-weight: 700;
                                                 overflow: elide;
-                                                max-width: 200px;
+                                                max-width: root.wide ? 260px : 180px;
                                             }
                                         }
                                         Text {
@@ -502,16 +556,16 @@ export component ChatView inherits Rectangle {
 
                                         // Compact hover toolbar (Discord-style)
                                         if msg-hover.has-hover : Rectangle {
-                                            height: 26px;
+                                            height: 32px;
                                             border-radius: VxTheme.radius-pill;
                                             background: VxTheme.bg-raised;
                                             border-color: VxTheme.border-subtle;
                                             border-width: 1px;
 
                                             HorizontalLayout {
-                                                padding-left: 4px;
-                                                padding-right: 4px;
-                                                spacing: 2px;
+                                                padding-left: 3px;
+                                                padding-right: 3px;
+                                                spacing: 3px;
                                                 alignment: center;
 
                                                 // Quick reactions
@@ -555,153 +609,75 @@ export component ChatView inherits Rectangle {
                                                 // Separator
                                                 Rectangle { width: 1px; height: 16px; background: VxTheme.border-subtle; }
 
-                                                // Reply
-                                                Rectangle {
-                                                    width: reply-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: reply-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    reply-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => {
-                                                            root.editing-message-id = "";
-                                                            root.editing-original-content = "";
-                                                            root.reply-target-message-id = msg.message-id;
-                                                            root.reply-target-sender-name = msg.sender-name;
-                                                            root.reply-target-preview = msg.content;
-                                                        }
-                                                    }
-                                                    reply-lbl := Text {
-                                                        text: "Reply";
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
+                                                VxButton {
+                                                    label: "Reply";
+                                                    glyph: "RP";
+                                                    small: true;
+                                                    ghost: true;
+                                                    clicked => {
+                                                        root.editing-message-id = "";
+                                                        root.editing-original-content = "";
+                                                        root.reply-target-message-id = msg.message-id;
+                                                        root.reply-target-sender-name = msg.sender-name;
+                                                        root.reply-target-preview = msg.content;
                                                     }
                                                 }
 
-                                                // Copy
-                                                Rectangle {
-                                                    width: copy-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: copy-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    copy-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.copy-message-text(msg.content); }
-                                                    }
-                                                    copy-lbl := Text {
-                                                        text: "Copy";
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
+                                                VxButton {
+                                                    label: "Copy";
+                                                    glyph: "CP";
+                                                    small: true;
+                                                    ghost: true;
+                                                    clicked => { root.copy-message-text(msg.content); }
                                                 }
 
-                                                if msg.reply-count > 0 : Rectangle {
-                                                    width: thread-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: thread-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    thread-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.open-thread(msg.message-id, msg.channel-name); }
-                                                    }
-                                                    thread-lbl := Text {
-                                                        text: msg.reply-count + " replies";
-                                                        color: VxTheme.accent;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
+                                                if msg.reply-count > 0 : VxButton {
+                                                    label: msg.reply-count + " replies";
+                                                    glyph: "TH";
+                                                    small: true;
+                                                    soft: true;
+                                                    clicked => { root.open-thread(msg.message-id, msg.channel-name); }
                                                 }
 
-                                                if !root.chat-is-direct-message : Rectangle {
-                                                    width: fwd-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: fwd-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    fwd-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.forward-message(msg.message-id); }
-                                                    }
-                                                    fwd-lbl := Text {
-                                                        text: "Fwd";
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
+                                                if !root.chat-is-direct-message : VxButton {
+                                                    label: "Forward";
+                                                    glyph: "FW";
+                                                    small: true;
+                                                    ghost: true;
+                                                    clicked => { root.forward-message(msg.message-id); }
                                                 }
 
-                                                if !root.chat-is-direct-message : Rectangle {
-                                                    width: pin-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: pin-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    pin-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
-                                                    }
-                                                    pin-lbl := Text {
-                                                        text: msg.is-pinned ? "Unpin" : "Pin";
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
+                                                if !root.chat-is-direct-message : VxButton {
+                                                    label: msg.is-pinned ? "Unpin" : "Pin";
+                                                    glyph: msg.is-pinned ? "UP" : "PN";
+                                                    small: true;
+                                                    soft: msg.is-pinned;
+                                                    ghost: !msg.is-pinned;
+                                                    clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
                                                 }
 
                                                 if msg.is-self : Rectangle {
                                                     width: 1px; height: 16px; background: VxTheme.border-subtle;
                                                 }
 
-                                                if msg.is-self : Rectangle {
-                                                    width: edit-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: edit-act.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    edit-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => {
-                                                            root.editing-message-id = msg.message-id;
-                                                            root.editing-original-content = msg.content;
-                                                            root.chat-input = msg.content;
-                                                        }
-                                                    }
-                                                    edit-lbl := Text {
-                                                        text: "Edit";
-                                                        color: VxTheme.text-secondary;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
+                                                if msg.is-self : VxButton {
+                                                    label: "Edit";
+                                                    glyph: "ED";
+                                                    small: true;
+                                                    ghost: true;
+                                                    clicked => {
+                                                        root.editing-message-id = msg.message-id;
+                                                        root.editing-original-content = msg.content;
+                                                        root.chat-input = msg.content;
                                                     }
                                                 }
 
-                                                if msg.is-self : Rectangle {
-                                                    width: del-lbl.preferred-width + 12px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: del-act.has-hover ? VxTheme.danger-hover : transparent;
-                                                    del-act := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.delete-text-message(msg.message-id); }
-                                                    }
-                                                    del-lbl := Text {
-                                                        text: "Del";
-                                                        color: del-act.has-hover ? VxTheme.text-inverse : VxTheme.danger;
-                                                        font-size: 10px;
-                                                        font-weight: 600;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
+                                                if msg.is-self : VxButton {
+                                                    label: "Delete";
+                                                    glyph: "DL";
+                                                    small: true;
+                                                    soft: true;
+                                                    clicked => { root.delete-text-message(msg.message-id); }
                                                 }
                                             }
                                         }
@@ -710,18 +686,17 @@ export component ChatView inherits Rectangle {
                                     if msg.forwarded-from != "" : Rectangle {
                                         background: VxTheme.bg-panel;
                                         border-radius: VxTheme.radius-control;
-                                        height: 22px;
+                                        height: 28px;
 
                                         HorizontalLayout {
                                             padding-left: 8px;
                                             padding-right: 8px;
                                             alignment: start;
-                                            spacing: 4px;
-                                            Text {
-                                                text: "↪";
-                                                color: VxTheme.text-muted;
-                                                font-size: 10px;
-                                                vertical-alignment: center;
+                                            spacing: 6px;
+                                            VxGlyphTile {
+                                                tile-size: 18px;
+                                                glyph: "FW";
+                                                tone: VxTheme.text-secondary;
                                             }
                                             Text {
                                                 text: "Forwarded from";
@@ -731,7 +706,7 @@ export component ChatView inherits Rectangle {
                                                 vertical-alignment: center;
                                             }
                                             Text {
-                                                text: "#" + msg.forwarded-from;
+                                                text: msg.forwarded-from;
                                                 color: VxTheme.accent;
                                                 font-size: 9px;
                                                 font-weight: 700;
@@ -814,30 +789,25 @@ export component ChatView inherits Rectangle {
                                         border-radius: VxTheme.radius-control;
                                         border-width: 1px;
                                         border-color: VxTheme.border-subtle;
-                                        height: 44px;
+                                        height: 52px;
 
                                         HorizontalLayout {
                                             padding: 10px;
                                             spacing: 10px;
 
-                                            Rectangle {
-                                                width: 28px;
-                                                height: 28px;
-                                                border-radius: 6px;
-                                                background: VxTheme.accent-subtle;
-
-                                                Text {
-                                                    text: "📎";
-                                                    font-size: 14px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
+                                            VxGlyphTile { glyph: "FI"; tone: VxTheme.accent; tile-size: 30px; }
 
                                             VerticalLayout {
                                                 spacing: 2px;
                                                 alignment: center;
 
+                                                Text {
+                                                    text: "Attachment";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 8px;
+                                                    font-weight: 700;
+                                                    letter-spacing: 0.8px;
+                                                }
                                                 Text {
                                                     text: msg.attachment-name;
                                                     color: VxTheme.accent;
@@ -860,33 +830,33 @@ export component ChatView inherits Rectangle {
                                         border-radius: VxTheme.radius-control;
                                         border-width: 1px;
                                         border-color: VxTheme.accent-border;
-                                        height: 36px;
+                                        height: 44px;
 
                                         HorizontalLayout {
                                             padding: 8px;
                                             spacing: 8px;
 
-                                            Rectangle {
-                                                width: 22px;
-                                                height: 22px;
-                                                border-radius: 5px;
-                                                background: VxTheme.accent-subtle;
+                                            VxGlyphTile { glyph: "LN"; tone: VxTheme.accent; tile-size: 26px; }
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                spacing: 2px;
 
                                                 Text {
-                                                    text: "🔗";
-                                                    font-size: 12px;
-                                                    horizontal-alignment: center;
+                                                    text: "Link preview";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 8px;
+                                                    font-weight: 700;
+                                                    letter-spacing: 0.8px;
+                                                }
+                                                Text {
+                                                    text: msg.link-url;
+                                                    color: VxTheme.accent;
+                                                    font-size: 10px;
+                                                    font-weight: 600;
+                                                    overflow: elide;
                                                     vertical-alignment: center;
                                                 }
-                                            }
-
-                                            Text {
-                                                text: msg.link-url;
-                                                color: VxTheme.accent;
-                                                font-size: 10px;
-                                                font-weight: 600;
-                                                overflow: elide;
-                                                vertical-alignment: center;
                                             }
                                         }
                                     }
@@ -1043,6 +1013,7 @@ export component ChatView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Cancel";
+                                    glyph: "CN";
                                     small: true;
                                     ghost: true;
                                     clicked => {
@@ -1143,11 +1114,10 @@ export component ChatView inherits Rectangle {
                                         padding-right: 10px;
                                         spacing: 8px;
                                         alignment: center;
-                                        Text {
-                                            text: "@";
-                                            color: VxTheme.accent;
-                                            font-size: 11px;
-                                            font-weight: 700;
+                                        VxGlyphTile {
+                                            tile-size: 18px;
+                                            glyph: "AT";
+                                            tone: VxTheme.accent;
                                         }
                                         Text {
                                             text: suggestion;
@@ -1215,12 +1185,26 @@ export component ChatView inherits Rectangle {
                                 }
                             }
 
-                            VxButton {
-                                label: "\u{1F600}";
-                                ghost: true;
-                                clicked => {
-                                    root.emoji-picker-target-message-id = "";
-                                    root.show-emoji-picker = !root.show-emoji-picker;
+                            Rectangle {
+                                width: 38px;
+                                height: 36px;
+                                border-radius: VxTheme.radius-control;
+                                background: emoji-toggle-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                border-color: root.show-emoji-picker ? VxTheme.accent-border : transparent;
+                                border-width: root.show-emoji-picker ? 1px : 0px;
+                                emoji-toggle-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.emoji-picker-target-message-id = "";
+                                        root.show-emoji-picker = !root.show-emoji-picker;
+                                    }
+                                }
+                                VxGlyphTile {
+                                    x: 4px;
+                                    y: 3px;
+                                    tile-size: 30px;
+                                    glyph: "EM";
+                                    tone: root.show-emoji-picker ? VxTheme.accent : VxTheme.text-secondary;
                                 }
                             }
                             if root.slow-mode-remaining > 0 : VxStatusPill {
@@ -1231,6 +1215,8 @@ export component ChatView inherits Rectangle {
                             VxButton {
                                 label: root.editing-message-id != "" ? "Save" :
                                        root.reply-target-message-id != "" ? "Reply" : "Send";
+                                glyph: root.editing-message-id != "" ? "SV" :
+                                       root.reply-target-message-id != "" ? "RP" : "SD";
                                 accent: true;
                                 enabled: root.chat-input != "" && (root.slow-mode-remaining <= 0 || root.editing-message-id != "");
                                 clicked => {
@@ -1267,7 +1253,7 @@ export component ChatView inherits Rectangle {
 
         // Thread side panel
         if root.thread-panel-visible : Rectangle {
-            width: 320px;
+            width: root.side-panel-width;
             background: VxTheme.bg-surface;
             border-color: VxTheme.border-subtle;
             border-width: 1px;
@@ -1294,6 +1280,7 @@ export component ChatView inherits Rectangle {
                         }
                         VxButton {
                             label: "Close";
+                            glyph: "CL";
                             small: true;
                             ghost: true;
                             clicked => {
@@ -1403,10 +1390,10 @@ export component ChatView inherits Rectangle {
 
     // ─── Full emoji picker overlay ───
     if root.show-emoji-picker : Rectangle {
-        x: root.wide ? root.width - 380px : root.width / 2 - 175px;
-        y: root.height - 440px;
-        width: 350px;
-        height: 400px;
+        x: root.wide ? root.width - root.emoji-picker-width - 24px : root.width / 2 - root.emoji-picker-width / 2;
+        y: root.height - root.emoji-picker-height - 24px;
+        width: root.emoji-picker-width;
+        height: root.emoji-picker-height;
         background: VxTheme.bg-surface;
         border-color: VxTheme.border-subtle;
         border-width: 1px;
@@ -1426,11 +1413,12 @@ export component ChatView inherits Rectangle {
                     font-weight: 700;
                     horizontal-stretch: 1;
                 }
-                TouchArea {
-                    width: 20px; height: 20px;
-                    mouse-cursor: pointer;
+                VxButton {
+                    label: "";
+                    glyph: "CL";
+                    small: true;
+                    ghost: true;
                     clicked => { root.show-emoji-picker = false; root.emoji-search-text = ""; }
-                    Text { text: "\u{2715}"; color: VxTheme.text-muted; font-size: 12px; }
                 }
             }
 
