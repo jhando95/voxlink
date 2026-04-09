@@ -52,7 +52,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
-    in-out property <string> version-text: "0.10.1";
+    in-out property <string> version-text: "0.10.2";
     in-out property <string> uptime-text: "0s";
     in-out property <string> listening-keybind: "";
     in-out property <string> ptt-key-display: "Space";
@@ -270,7 +270,7 @@ export component MainWindow inherits Window {
             root.sidebar-expanded = false;
         }
         // Keep the shell readable as the window narrows instead of over-compressing it.
-        VxTheme.ui-scale = clamp(self.width / 1120px, 0.72, 1.0);
+        VxTheme.ui-scale = clamp(self.width / 1120px, 0.80, 1.0);
     }
     property <string> context-title:
         current-view == 0 ? "Home" :

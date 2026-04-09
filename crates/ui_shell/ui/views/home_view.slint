@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { DirectMessageThreadData, PublicSpaceData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
     in property <bool> wide: false;
@@ -39,7 +39,7 @@ export component HomeView inherits Rectangle {
     callback browse-public-spaces();
     callback join-public-space(string); // invite_code
     property <bool> show-explore: false;
-    property <length> side-column-width: clamp(root.width * 0.26, 248px, 288px);
+    property <length> side-column-width: clamp(root.width * 0.24, 232px, 276px);
 
     background: transparent;
 
@@ -53,9 +53,31 @@ export component HomeView inherits Rectangle {
             VxCard {
                 HorizontalLayout {
                     padding: root.wide ? 20px : 16px;
-                    spacing: 12px;
+                    spacing: 14px;
+                    alignment: center;
 
-                    VxLogo { logo-size: 58px; }
+                    Rectangle {
+                        width: root.wide ? 72px : 60px;
+                        height: root.wide ? 72px : 60px;
+                        border-radius: VxTheme.radius-card;
+                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
+                        border-color: VxTheme.accent-border;
+                        border-width: 1px;
+                        clip: true;
+
+                        Rectangle {
+                            width: parent.width;
+                            height: 2px;
+                            background: VxTheme.accent;
+                            opacity: 0.85;
+                        }
+
+                        VxLogo {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            logo-size: root.wide ? 42px : 34px;
+                        }
+                    }
 
                     VerticalLayout {
                         alignment: center;
@@ -67,13 +89,13 @@ export component HomeView inherits Rectangle {
                                 ? "Welcome back, " + root.user-name
                                 : "Voice without the drag";
                             color: VxTheme.text-primary;
-                            font-size: 24px;
+                            font-size: root.wide ? 25px : 22px;
                             font-weight: VxTheme.is-noir ? 500 : 700;
                             wrap: word-wrap;
                         }
 
                         Text {
-                            text: "Fast native calls, persistent spaces, and direct chat in a desktop shell that stays out of the way.";
+                            text: "Fast native calls, persistent spaces, and direct chat in a calm desktop shell that stays out of the way.";
                             color: VxTheme.text-secondary;
                             font-size: 11px;
                             wrap: word-wrap;
@@ -94,6 +116,16 @@ export component HomeView inherits Rectangle {
                                 label: root.spaces.length + " spaces";
                                 tone: VxTheme.accent;
                                 fill: VxTheme.accent-subtle;
+                            }
+                            if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                label: root.unread-direct-messages-count + " unread";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                            if root.direct-message-threads.length > 0 : VxStatusPill {
+                                label: root.direct-message-threads.length + " chats";
+                                tone: VxTheme.text-secondary;
+                                fill: VxTheme.bg-soft;
                             }
                         }
                     }
@@ -339,15 +371,28 @@ export component HomeView inherits Rectangle {
                                 spacing: 4px;
                                 FieldLabel { text: "Saved servers"; }
                                 for server[idx] in root.saved-servers : Rectangle {
-                                    height: 32px;
-                                    border-radius: VxTheme.radius-card;
-                                    background: server-touch.has-hover ? VxTheme.bg-raised : transparent;
+                                    height: 36px;
+                                    border-radius: VxTheme.radius-control;
+                                    background: server-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                                    border-color: server.is-default ? VxTheme.accent-border :
+                                                  server-touch.has-hover ? VxTheme.border-subtle : transparent;
+                                    border-width: 1px;
+                                    clip: true;
 
                                     server-touch := TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => {
                                             root.server-address = server.address;
                                         }
+                                    }
+
+                                    Rectangle {
+                                        x: 0px;
+                                        y: 6px;
+                                        width: 3px;
+                                        height: parent.height - 12px;
+                                        border-radius: 2px;
+                                        background: server.is-default ? VxTheme.accent : transparent;
                                     }
 
                                     HorizontalLayout {
@@ -472,15 +517,26 @@ export component HomeView inherits Rectangle {
                             }
 
                             for space in root.spaces : Rectangle {
-                                height: 60px;
-                                border-radius: VxTheme.radius-card;
-                                background: space-wide-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: space-wide-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
+                                height: 54px;
+                                border-radius: VxTheme.radius-control;
+                                background: space-wide-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
+                                border-color: space.has-unread ? VxTheme.accent-border :
+                                              space-wide-touch.has-hover ? VxTheme.border-subtle : VxTheme.border-subtle;
                                 border-width: 1px;
+                                clip: true;
 
                                 space-wide-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.select-space(space.id); }
+                                }
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: 8px;
+                                    width: 3px;
+                                    height: parent.height - 16px;
+                                    border-radius: 2px;
+                                    background: space.has-unread ? VxTheme.accent : transparent;
                                 }
 
                                 HorizontalLayout {
@@ -514,11 +570,10 @@ export component HomeView inherits Rectangle {
                                         }
                                     }
 
-                                    if space.has-unread : Rectangle {
-                                        width: 8px;
-                                        height: 8px;
-                                        border-radius: 4px;
-                                        background: VxTheme.accent;
+                                    if space.has-unread : VxStatusPill {
+                                        label: "New";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
                                     }
                                     VxStatusPill {
                                         label: "Open";
@@ -569,17 +624,28 @@ export component HomeView inherits Rectangle {
                             }
 
                             for thread in root.direct-message-threads : Rectangle {
-                                border-radius: VxTheme.radius-card;
-                                background: dm-wide-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-radius: VxTheme.radius-control;
+                                background: dm-wide-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
                                 border-color: thread.unread-count > 0 ? VxTheme.accent-border :
                                               thread.is-in-voice ? VxTheme.speaking-border :
-                                              dm-wide-touch.has-hover ? VxTheme.card-hover-border :
+                                              dm-wide-touch.has-hover ? VxTheme.border-subtle :
                                               thread.is-online ? VxTheme.border-strong : VxTheme.border-subtle;
                                 border-width: 1px;
+                                clip: true;
 
                                 dm-wide-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.open-direct-message(thread.user-id); }
+                                }
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: 8px;
+                                    width: 3px;
+                                    height: parent.height - 16px;
+                                    border-radius: 2px;
+                                    background: thread.unread-count > 0 ? VxTheme.accent :
+                                        thread.is-in-voice ? VxTheme.speaking-border : transparent;
                                 }
 
                                 HorizontalLayout {
@@ -634,8 +700,8 @@ export component HomeView inherits Rectangle {
                                     }
 
                                     if dm-wide-touch.has-hover : Rectangle {
-                                        width: 22px;
-                                        height: 22px;
+                                        width: 28px;
+                                        height: 28px;
                                         border-radius: 4px;
                                         background: dm-call-wide.has-hover ? VxTheme.success.transparentize(0.8) : transparent;
                                         dm-call-wide := TouchArea {
@@ -643,7 +709,7 @@ export component HomeView inherits Rectangle {
                                             clicked => { root.call-user(thread.user-id); }
                                         }
                                         Text {
-                                            text: "Call";
+                                            text: "Go";
                                             color: dm-call-wide.has-hover ? VxTheme.success : VxTheme.text-muted;
                                             font-size: 9px;
                                             font-weight: 700;
@@ -653,8 +719,8 @@ export component HomeView inherits Rectangle {
                                     }
 
                                     if dm-wide-touch.has-hover : Rectangle {
-                                        width: 22px;
-                                        height: 22px;
+                                        width: 28px;
+                                        height: 28px;
                                         border-radius: 4px;
                                         background: dm-close-wide.has-hover ? VxTheme.bg-elevated : transparent;
                                         dm-close-wide := TouchArea {
@@ -866,22 +932,35 @@ export component HomeView inherits Rectangle {
                         // Saved servers list (narrow)
                         if root.saved-servers.length > 0 : VerticalLayout {
                             spacing: 4px;
-                            FieldLabel { text: "Saved servers"; }
-                            for server[idx] in root.saved-servers : Rectangle {
-                                height: 32px;
-                                border-radius: VxTheme.radius-card;
-                                background: narrow-server-touch.has-hover ? VxTheme.bg-raised : transparent;
+                                FieldLabel { text: "Saved servers"; }
+                                for server[idx] in root.saved-servers : Rectangle {
+                                    height: 36px;
+                                    border-radius: VxTheme.radius-control;
+                                    background: narrow-server-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                                    border-color: server.is-default ? VxTheme.accent-border :
+                                                  narrow-server-touch.has-hover ? VxTheme.border-subtle : transparent;
+                                    border-width: 1px;
+                                    clip: true;
 
-                                narrow-server-touch := TouchArea {
-                                    mouse-cursor: pointer;
+                                    narrow-server-touch := TouchArea {
+                                        mouse-cursor: pointer;
                                     clicked => {
                                         root.server-address = server.address;
+                                        }
                                     }
-                                }
 
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 6px;
+                                    Rectangle {
+                                        x: 0px;
+                                        y: 6px;
+                                        width: 3px;
+                                        height: parent.height - 12px;
+                                        border-radius: 2px;
+                                        background: server.is-default ? VxTheme.accent : transparent;
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 6px;
                                     spacing: 8px;
                                     alignment: center;
 
@@ -1086,14 +1165,25 @@ export component HomeView inherits Rectangle {
                         SectionLabel { text: "SPACES"; }
                         for space in root.spaces : Rectangle {
                             height: 54px;
-                            border-radius: VxTheme.radius-card;
-                            background: space-compact-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                            border-color: VxTheme.border-subtle;
+                            border-radius: VxTheme.radius-control;
+                            background: space-compact-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
+                            border-color: space.has-unread ? VxTheme.accent-border :
+                                          space-compact-touch.has-hover ? VxTheme.border-subtle : VxTheme.border-subtle;
                             border-width: 1px;
+                            clip: true;
 
                             space-compact-touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.select-space(space.id); }
+                            }
+
+                            Rectangle {
+                                x: 0px;
+                                y: 8px;
+                                width: 3px;
+                                height: parent.height - 16px;
+                                border-radius: 2px;
+                                background: space.has-unread ? VxTheme.accent : transparent;
                             }
 
                             HorizontalLayout {
@@ -1124,11 +1214,10 @@ export component HomeView inherits Rectangle {
                                         font-size: 9px;
                                     }
                                 }
-                                if space.has-unread : Rectangle {
-                                    width: 8px;
-                                    height: 8px;
-                                    border-radius: 4px;
-                                    background: VxTheme.accent;
+                                if space.has-unread : VxStatusPill {
+                                    label: "New";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.accent-subtle;
                                 }
                             }
                         }
@@ -1168,15 +1257,26 @@ export component HomeView inherits Rectangle {
                             }
 
                             for ps in root.public-spaces : Rectangle {
-                                height: 64px;
-                                border-radius: VxTheme.radius-card;
-                                background: ps-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: VxTheme.border-subtle;
+                                height: 62px;
+                                border-radius: VxTheme.radius-control;
+                                background: ps-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
+                                border-color: ps.online-count > 0 ? VxTheme.success.transparentize(0.55) :
+                                              ps-touch.has-hover ? VxTheme.border-subtle : VxTheme.border-subtle;
                                 border-width: 1px;
+                                clip: true;
 
                                 ps-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.join-public-space(ps.invite-code); }
+                                }
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: 8px;
+                                    width: 3px;
+                                    height: parent.height - 16px;
+                                    border-radius: 2px;
+                                    background: ps.online-count > 0 ? VxTheme.success : transparent;
                                 }
 
                                 HorizontalLayout {
@@ -1266,15 +1366,26 @@ export component HomeView inherits Rectangle {
                         }
 
                         for thread in root.direct-message-threads : Rectangle {
-                            border-radius: VxTheme.radius-card;
-                            background: dm-compact-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                            border-radius: VxTheme.radius-control;
+                            background: dm-compact-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
                             border-color: thread.unread-count > 0 ? VxTheme.accent-border :
-                                          dm-compact-touch.has-hover ? VxTheme.card-hover-border : VxTheme.border-subtle;
+                                          dm-compact-touch.has-hover ? VxTheme.border-subtle : VxTheme.border-subtle;
                             border-width: 1px;
+                            clip: true;
 
                             dm-compact-touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.open-direct-message(thread.user-id); }
+                            }
+
+                            Rectangle {
+                                x: 0px;
+                                y: 8px;
+                                width: 3px;
+                                height: parent.height - 16px;
+                                border-radius: 2px;
+                                background: thread.unread-count > 0 ? VxTheme.accent :
+                                    thread.is-in-voice ? VxTheme.speaking-border : transparent;
                             }
 
                             VerticalLayout {
@@ -1316,8 +1427,8 @@ export component HomeView inherits Rectangle {
                                     }
 
                                     if dm-compact-touch.has-hover : Rectangle {
-                                        width: 22px;
-                                        height: 22px;
+                                        width: 28px;
+                                        height: 28px;
                                         border-radius: 4px;
                                         background: dm-call-compact.has-hover ? VxTheme.success.transparentize(0.8) : transparent;
                                         dm-call-compact := TouchArea {
@@ -1325,7 +1436,7 @@ export component HomeView inherits Rectangle {
                                             clicked => { root.call-user(thread.user-id); }
                                         }
                                         Text {
-                                            text: "Call";
+                                            text: "Go";
                                             color: dm-call-compact.has-hover ? VxTheme.success : VxTheme.text-muted;
                                             font-size: 9px;
                                             font-weight: 700;

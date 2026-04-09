@@ -52,7 +52,9 @@ export component ChatView inherits Rectangle {
     property <int> emoji-tab: 0; // 0=Recent 1=Smileys 2=People 3=Nature 4=Food 5=Objects 6=Symbols
     property <string> emoji-search-text: "";
     property <bool> typing-active: false;
-    property <length> side-panel-width: clamp(root.width * 0.28, 280px, 336px);
+    property <length> side-panel-width: root.wide
+        ? clamp(root.width * 0.34, 360px, 468px)
+        : clamp(root.width * 0.42, 320px, 420px);
     property <length> emoji-picker-width: clamp(root.width * 0.34, 300px, 360px);
     property <length> emoji-picker-height: clamp(root.height * 0.52, 320px, 400px);
     property <bool> show-chat-meta: root.wide && !root.compact-mode;
@@ -95,33 +97,35 @@ export component ChatView inherits Rectangle {
                 alignment: start;
                 spacing: 8px;
                 VxGlyphTile {
-                    tile-size: 30px;
+                    tile-size: 28px;
                     glyph: root.chat-is-direct-message ? "DM" : "TX";
                     tone: root.chat-is-direct-message ? VxTheme.warning : VxTheme.accent;
                 }
                 Text {
                     text: root.chat-channel-name;
                     color: VxTheme.text-primary;
-                    font-size: 16px;
+                    font-size: 17px;
                     font-weight: 700;
                     overflow: elide;
-                    horizontal-stretch: 1;
                     min-width: 0px;
-                    max-width: root.wide ? 360px : 220px;
+                    max-width: root.wide ? 300px : 220px;
                     vertical-alignment: center;
+                }
+                if root.show-chat-meta && (root.chat-context-subtitle != "" || !root.chat-is-direct-message) : Rectangle {
+                    width: 1px;
+                    height: 18px;
+                    background: VxTheme.border-subtle;
                 }
                 if root.show-chat-meta && (root.chat-context-subtitle != "" || !root.chat-is-direct-message) : Text {
                     text: root.chat-context-subtitle != ""
                         ? root.chat-context-subtitle
                         : (root.current-space-name != "" ? root.current-space-name : "Text chat");
                     color: VxTheme.text-muted;
-                    font-size: 10px;
+                    font-size: 11px;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
                     vertical-alignment: center;
-                }
-                if root.show-chat-meta : VxStatusPill {
-                    label: root.chat-messages.length + " messages";
-                    tone: VxTheme.accent;
-                    fill: VxTheme.accent-subtle;
                 }
             }
 
@@ -365,8 +369,8 @@ export component ChatView inherits Rectangle {
                     vertical-stretch: 1;
 
                     VerticalLayout {
-                        padding: root.wide ? 14px : (root.compact-mode ? 6px : 10px);
-                        spacing: root.compact-mode ? 2px : 5px;
+                        padding: root.wide ? 12px : (root.compact-mode ? 6px : 8px);
+                        spacing: root.compact-mode ? 1px : 0px;
 
                         if root.chat-messages.length == 0 : VerticalLayout {
                             alignment: center;
@@ -462,35 +466,46 @@ export component ChatView inherits Rectangle {
                                 Rectangle { height: 1px; background: VxTheme.accent; horizontal-stretch: 1; }
                             }
 
-                            // ─── Message bubble ───
+                            // ─── Message row ───
                             if msg.date-separator == "" : Rectangle {
-                            border-radius: msg.show-header ? VxTheme.radius-card : VxTheme.radius-control;
+                            border-radius: 0px;
+                            clip: true;
                             background: msg-hover.has-hover
-                                ? (msg.is-self ? VxTheme.msg-self-bg.darker(0.03) : VxTheme.msg-other-bg.darker(0.03))
-                                : (msg.mentions-self && !msg.is-self ? VxTheme.accent-subtle :
-                                   msg.is-self ? VxTheme.msg-self-bg : VxTheme.msg-other-bg);
-                            border-color: root.editing-message-id == msg.message-id || (msg.mentions-self && !msg.is-self)
-                                ? VxTheme.accent-border
-                                : msg-hover.has-hover ? VxTheme.border-subtle.darker(0.1) : VxTheme.border-subtle;
-                            border-width: msg.show-header ? 1px : 0px;
+                                ? VxTheme.card-hover-bg
+                                : (msg.mentions-self && !msg.is-self
+                                    ? VxTheme.warning-soft.transparentize(VxTheme.dark-mode ? 0.10 : 0.00)
+                                    : transparent);
+                            border-color: transparent;
+                            border-width: 0px;
 
-                            msg-hover := TouchArea {}
+                            msg-hover := TouchArea {
+                                mouse-cursor: default;
+                            }
+
+                            if msg.mentions-self && !msg.is-self : Rectangle {
+                                x: 0px;
+                                y: 4px;
+                                width: 3px;
+                                height: parent.height - 8px;
+                                border-radius: 1.5px;
+                                background: VxTheme.warning;
+                            }
 
                             HorizontalLayout {
-                                padding-left: root.compact-mode ? 6px : 10px;
-                                padding-right: root.compact-mode ? 6px : 10px;
-                                padding-top: msg.show-header ? (root.compact-mode ? 4px : 8px) : 1px;
-                                padding-bottom: msg.show-header ? (root.compact-mode ? 4px : 8px) : 1px;
+                                padding-left: root.compact-mode ? 8px : 12px;
+                                padding-right: root.compact-mode ? 8px : 12px;
+                                padding-top: msg.show-header ? (root.compact-mode ? 4px : 7px) : 1px;
+                                padding-bottom: msg.show-header ? (root.compact-mode ? 4px : 7px) : 1px;
                                 spacing: root.compact-mode ? 6px : 10px;
 
                                 if !root.compact-mode && msg.show-header : VxAvatar {
-                                    avatar-size: 30px;
+                                    avatar-size: 36px;
                                     initial: msg.sender-initial;
                                     color-index: msg.color-index;
                                 }
                                 // Spacer — shows timestamp on hover (like Discord)
                                 if !root.compact-mode && !msg.show-header : Rectangle {
-                                    width: 30px;
+                                    width: 36px;
                                     Text {
                                         text: msg.timestamp;
                                         color: VxTheme.text-muted;
@@ -520,10 +535,10 @@ export component ChatView inherits Rectangle {
                                                 color: sender-name-touch.has-hover
                                                     ? VxTheme.accent-hover
                                                     : (msg.is-self ? VxTheme.accent : VxTheme.text-primary);
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
-                                                max-width: root.wide ? 260px : 180px;
+                                                max-width: root.wide ? 280px : 200px;
                                             }
                                         }
                                         Text {
@@ -556,9 +571,9 @@ export component ChatView inherits Rectangle {
 
                                         // Compact hover toolbar (Discord-style)
                                         if msg-hover.has-hover : Rectangle {
-                                            height: 32px;
-                                            border-radius: VxTheme.radius-pill;
-                                            background: VxTheme.bg-raised;
+                                            height: 30px;
+                                            border-radius: 10px;
+                                            background: VxTheme.bg-panel;
                                             border-color: VxTheme.border-subtle;
                                             border-width: 1px;
 
@@ -684,7 +699,7 @@ export component ChatView inherits Rectangle {
                                     }
 
                                     if msg.forwarded-from != "" : Rectangle {
-                                        background: VxTheme.bg-panel;
+                                        background: VxTheme.bg-soft;
                                         border-radius: VxTheme.radius-control;
                                         height: 28px;
 
@@ -717,7 +732,7 @@ export component ChatView inherits Rectangle {
 
                                     if msg.reply-sender-name != "" : Rectangle {
                                         border-radius: VxTheme.radius-control;
-                                        background: reply-quote-touch.has-hover ? VxTheme.bg-raised : VxTheme.bg-panel;
+                                        background: reply-quote-touch.has-hover ? VxTheme.bg-soft : transparent;
                                         border-width: 0px;
                                         height: reply-col.preferred-height + 16px;
 
@@ -1186,8 +1201,8 @@ export component ChatView inherits Rectangle {
                             }
 
                             Rectangle {
-                                width: 38px;
-                                height: 36px;
+                                width: 42px * VxTheme.s;
+                                height: 40px * VxTheme.s;
                                 border-radius: VxTheme.radius-control;
                                 background: emoji-toggle-touch.has-hover ? VxTheme.card-hover-bg : transparent;
                                 border-color: root.show-emoji-picker ? VxTheme.accent-border : transparent;
@@ -1200,9 +1215,9 @@ export component ChatView inherits Rectangle {
                                     }
                                 }
                                 VxGlyphTile {
-                                    x: 4px;
-                                    y: 3px;
-                                    tile-size: 30px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    tile-size: 32px * VxTheme.s;
                                     glyph: "EM";
                                     tone: root.show-emoji-picker ? VxTheme.accent : VxTheme.text-secondary;
                                 }
@@ -1264,17 +1279,19 @@ export component ChatView inherits Rectangle {
                 // Thread panel header
                 Rectangle {
                     background: VxTheme.bg-panel;
-                    height: 48px;
+                    height: 56px * VxTheme.s;
                     HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 12px;
+                        padding-left: 18px;
+                        padding-right: 14px;
                         alignment: space-between;
                         VerticalLayout {
                             alignment: center;
+                            spacing: 1px;
+                            SectionLabel { text: "THREAD"; }
                             Text {
                                 text: "Thread";
                                 color: VxTheme.text-primary;
-                                font-size: 14px;
+                                font-size: 15px;
                                 font-weight: 700;
                             }
                         }
@@ -1297,29 +1314,29 @@ export component ChatView inherits Rectangle {
                 Rectangle {
                     background: VxTheme.bg-soft;
                     VerticalLayout {
-                        padding: 12px;
-                        spacing: 4px;
+                        padding: 14px;
+                        spacing: 6px;
                         HorizontalLayout {
                             spacing: 8px;
                             Text {
                                 text: root.thread-parent-sender;
                                 color: VxTheme.accent;
-                                font-size: 11px;
+                                font-size: 12px;
                                 font-weight: 700;
                                 overflow: elide;
-                                max-width: 160px;
+                                max-width: root.side-panel-width - 140px;
                             }
                             Text {
                                 text: root.thread-parent-timestamp;
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 vertical-alignment: center;
                             }
                         }
                         Text {
                             text: root.thread-parent-content;
                             color: VxTheme.text-primary;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                     }
@@ -1332,35 +1349,37 @@ export component ChatView inherits Rectangle {
                     vertical-stretch: 1;
                     VerticalLayout {
                         alignment: start;
-                        spacing: 2px;
-                        padding: 8px;
+                        spacing: 6px;
+                        padding: 12px;
                         for reply in root.thread-messages : Rectangle {
                             border-radius: VxTheme.radius-control;
-                            background: reply.is-self ? VxTheme.accent-subtle : transparent;
+                            background: reply.is-self ? VxTheme.accent-subtle : VxTheme.bg-soft.transparentize(0.55);
+                            border-color: reply.is-self ? VxTheme.accent-border.transparentize(0.45) : VxTheme.border-subtle.transparentize(0.35);
+                            border-width: 1px;
                             VerticalLayout {
-                                padding: 8px;
-                                spacing: 2px;
+                                padding: 10px;
+                                spacing: 4px;
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Text {
                                         text: reply.sender-name;
                                         color: VxTheme.accent;
-                                        font-size: 10px;
+                                        font-size: 11px;
                                         font-weight: 700;
                                         overflow: elide;
-                                        max-width: 160px;
+                                        max-width: root.side-panel-width - 140px;
                                     }
                                     Text {
                                         text: reply.timestamp;
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 10px;
                                         vertical-alignment: center;
                                     }
                                 }
                                 Text {
                                     text: reply.content;
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                 }
                             }
@@ -1370,15 +1389,16 @@ export component ChatView inherits Rectangle {
 
                 // Reply count
                 Rectangle {
-                    height: 28px;
+                    height: 34px * VxTheme.s;
                     background: VxTheme.bg-panel;
                     HorizontalLayout {
                         padding-left: 16px;
+                        padding-right: 16px;
                         alignment: start;
                         Text {
                             text: root.thread-messages.length + " replies";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 11px;
                             font-weight: 600;
                             vertical-alignment: center;
                         }

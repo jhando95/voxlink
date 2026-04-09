@@ -92,7 +92,9 @@ export component SpaceView inherits Rectangle {
     in property <bool> is-space-public: false;
     callback set-space-public(bool);
     property <length> side-column-width: clamp(root.width * 0.25, 248px, 292px);
-    property <length> channel-name-max-width: root.wide ? 260px : 180px;
+    property <length> channel-name-max-width: root.wide ? 300px : 200px;
+    property <length> rail-row-height: 52px * VxTheme.s;
+    property <length> rail-favorite-row-height: 44px * VxTheme.s;
 
     background: transparent;
 
@@ -189,16 +191,25 @@ export component SpaceView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
-                            SectionLabel { text: "FAVORITES"; }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "FAVORITES"; }
+                                VxStatusPill {
+                                    label: root.visible-favorite-channels + "";
+                                    tone: VxTheme.warning;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
 
                             for channel in root.channels : Rectangle {
                                 visible: channel.is-favorite && !channel.is-category-header;
-                                height: channel.is-favorite && !channel.is-category-header ? 48px : 0px;
-                                border-radius: VxTheme.radius-card;
+                                height: channel.is-favorite && !channel.is-category-header ? root.rail-favorite-row-height : 0px;
+                                border-radius: 12px;
                                 background: channel.is-active ? VxTheme.tab-active-bg :
-                                            fav-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                                border-color: channel.is-active ? VxTheme.accent-border : VxTheme.border-subtle;
-                                border-width: 1px;
+                                            fav-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                                border-color: channel.is-active ? VxTheme.accent-border : transparent;
+                                border-width: channel.is-active ? 1px : 0px;
+                                clip: true;
 
                                 fav-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -214,19 +225,21 @@ export component SpaceView inherits Rectangle {
                                 HorizontalLayout {
                                     padding-left: 12px;
                                     padding-right: 12px;
-                                    height: 48px;
-                                    spacing: 10px;
+                                    height: root.rail-favorite-row-height;
+                                    spacing: 8px;
                                     alignment: center;
 
-                                    VxGlyphTile {
-                                        tile-size: 28px;
-                                        glyph: "FV";
-                                        tone: VxTheme.warning;
+                                    if channel.is-active || channel.unread-count > 0 : Rectangle {
+                                        width: 3px;
+                                        height: 22px;
+                                        border-radius: 1.5px;
+                                        background: channel.is-active ? VxTheme.accent : VxTheme.warning;
                                     }
+
                                     VxGlyphTile {
-                                        tile-size: 30px;
+                                        tile-size: 24px;
                                         glyph: channel.is-voice ? "VC" : "TX";
-                                        tone: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                                        tone: channel.is-active || channel.unread-count > 0 ? VxTheme.accent : VxTheme.text-secondary;
                                     }
                                     Text {
                                         text: channel.name;
@@ -238,7 +251,7 @@ export component SpaceView inherits Rectangle {
                                         overflow: elide;
                                     }
                                     if channel.unread-count > 0 : VxStatusPill {
-                                        label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
+                                        label: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
                                         tone: VxTheme.accent;
                                         fill: VxTheme.accent-subtle;
                                     }
@@ -256,7 +269,15 @@ export component SpaceView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
-                            SectionLabel { text: "TEXT CHANNELS"; }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "TEXT CHANNELS"; }
+                                VxStatusPill {
+                                    label: root.visible-text-channels + "";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
 
                             if root.visible-text-channels == 0 : VerticalLayout {
                                 spacing: 4px;
@@ -277,29 +298,32 @@ export component SpaceView inherits Rectangle {
 
                             for channel[idx] in root.channels : Rectangle {
                                 property <bool> is-focused: idx == root.focused-channel-index;
-                                height: channel.is-category-header ? 28px :
+                                height: channel.is-category-header ? 24px :
                                     channel.is-voice ? 0px :
                                     channel.category-collapsed ? 0px :
-                                    (root.topic-edit-channel-id == channel.id ? 100px :
-                                     root.can-manage-space-channels && root.settings-channel-id == channel.id ? 156px : 58px);
+                                    (root.topic-edit-channel-id == channel.id ? 94px :
+                                     root.can-manage-space-channels && root.settings-channel-id == channel.id ? 150px : root.rail-row-height);
                                 visible: channel.is-category-header ? true :
                                     channel.category-collapsed ? false : !channel.is-voice;
-                                border-radius: channel.is-category-header ? 0px : VxTheme.radius-card;
+                                border-radius: channel.is-category-header ? 0px : 12px;
                                 background: channel.is-category-header ? transparent :
-                                            is-focused ? VxTheme.surface-active :
                                             channel.is-active ? VxTheme.tab-active-bg :
-                                            channel.unread-count > 0 ? VxTheme.accent-subtle :
-                                            text-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                            is-focused ? VxTheme.surface-active :
+                                            text-channel-touch.has-hover ? VxTheme.row-hover-bg :
+                                            channel.mention-count > 0 ? VxTheme.warning-soft.transparentize(0.08) :
+                                            channel.unread-count > 0 ? VxTheme.bg-soft : transparent;
                                 border-color: channel.is-category-header ? transparent :
-                                    is-focused || channel.is-active || channel.unread-count > 0
+                                    is-focused || channel.is-active
                                     ? VxTheme.accent-border
-                                    : VxTheme.border-subtle;
-                                border-width: channel.is-category-header ? 0px : 1px;
+                                    : transparent;
+                                border-width: channel.is-category-header ? 0px : (is-focused || channel.is-active ? 1px : 0px);
+                                clip: true;
 
                                 if channel.is-category-header : HorizontalLayout {
-                                    padding-left: 4px;
+                                    padding-left: 6px;
+                                    padding-right: 4px;
                                     alignment: start;
-                                    spacing: 4px;
+                                    spacing: 6px;
                                     Text {
                                         text: channel.category-collapsed ? "▶" : "▼";
                                         color: VxTheme.text-muted;
@@ -314,6 +338,11 @@ export component SpaceView inherits Rectangle {
                                         letter-spacing: 0.5px;
                                         overflow: elide;
                                     }
+                                    Rectangle {
+                                        height: 1px;
+                                        horizontal-stretch: 1;
+                                        background: VxTheme.border-subtle.transparentize(0.35);
+                                    }
                                 }
 
                                 text-channel-touch := TouchArea {
@@ -327,29 +356,39 @@ export component SpaceView inherits Rectangle {
                                     }
                                 }
 
+                                if !channel.is-category-header && (channel.is-active || channel.unread-count > 0 || channel.mention-count > 0) : Rectangle {
+                                    x: 0px;
+                                    y: 8px;
+                                    width: 3px;
+                                    height: root.rail-row-height - 16px;
+                                    border-radius: 1.5px;
+                                    background: channel.mention-count > 0 ? VxTheme.warning :
+                                        channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                                }
+
                                 if !channel.is-category-header : VerticalLayout {
                                     HorizontalLayout {
                                         padding-left: 10px;
                                         padding-right: 14px;
-                                        height: 58px;
+                                        height: root.rail-row-height;
                                         spacing: 8px;
                                         alignment: center;
 
                                         TouchArea {
-                                            width: 18px;
+                                            width: 20px;
                                             mouse-cursor: pointer;
                                             clicked => { root.toggle-favorite-channel(channel.id); }
-                                            Text {
-                                                text: channel.is-favorite ? "\u{2605}" : "\u{2606}";
-                                                color: channel.is-favorite ? VxTheme.warning : VxTheme.text-muted;
-                                                font-size: 14px;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+                                            VxGlyphTile {
+                                                x: 1px;
+                                                y: 9px;
+                                                tile-size: 18px;
+                                                glyph: "FV";
+                                                tone: channel.is-favorite ? VxTheme.warning : VxTheme.text-muted;
                                             }
                                         }
 
                                         VxGlyphTile {
-                                            tile-size: 36px;
+                                            tile-size: 30px;
                                             glyph: "TX";
                                             tone: channel.is-active || channel.unread-count > 0
                                                 ? VxTheme.accent
@@ -391,10 +430,10 @@ export component SpaceView inherits Rectangle {
                                                 text: channel.topic != ""
                                                     ? channel.topic
                                                     : channel.unread-count > 0
-                                                        ? channel.unread-count + " new messages"
+                                                        ? channel.unread-count + " unread"
                                                         : "";
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 10px;
                                                 overflow: elide;
                                             }
                                         }
@@ -405,7 +444,7 @@ export component SpaceView inherits Rectangle {
                                             fill: VxTheme.danger.transparentize(0.85);
                                         }
                                         if channel.unread-count > 0 : VxStatusPill {
-                                            label: channel.unread-count > 99 ? "99+" : channel.unread-count + " new";
+                                            label: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
                                             tone: VxTheme.accent;
                                             fill: VxTheme.accent-subtle;
                                             opacity: root.unread-pulse ? 0.6 : 1.0;
@@ -418,7 +457,7 @@ export component SpaceView inherits Rectangle {
                                         }
 
                                         // ── Notification bell ──
-                                        Rectangle {
+                                        if text-channel-touch.has-hover || root.notification-popup-channel-id == channel.id || channel.notification-setting == "none" || channel.notification-setting == "mentions" : Rectangle {
                                             width: 22px;
                                             height: 22px;
                                             border-radius: 6px;
@@ -543,7 +582,7 @@ export component SpaceView inherits Rectangle {
                                             }
                                         }
 
-                                        if root.can-manage-space-channels : VxButton {
+                                        if root.can-manage-space-channels && (text-channel-touch.has-hover || root.topic-edit-channel-id == channel.id || root.settings-channel-id == channel.id) : VxButton {
                                             label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
                                             glyph: root.topic-edit-channel-id == channel.id ? "SV" : "TP";
                                             small: true;
@@ -560,7 +599,7 @@ export component SpaceView inherits Rectangle {
                                                 }
                                             }
                                         }
-                                        if root.can-manage-space-channels : VxButton {
+                                        if root.can-manage-space-channels && (text-channel-touch.has-hover || root.settings-channel-id == channel.id) : VxButton {
                                             label: root.settings-channel-id == channel.id ? "Close" : "Manage";
                                             glyph: root.settings-channel-id == channel.id ? "CL" : "MG";
                                             small: true;
@@ -574,7 +613,7 @@ export component SpaceView inherits Rectangle {
                                                 }
                                             }
                                         }
-                                        if root.can-manage-space-channels : VxButton {
+                                        if root.can-manage-space-channels && (text-channel-touch.has-hover || root.confirm-delete-channel-id == channel.id) : VxButton {
                                             label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                             glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                             small: true;
@@ -841,7 +880,15 @@ export component SpaceView inherits Rectangle {
                         VerticalLayout {
                             padding: 18px;
                             spacing: 12px;
-                            SectionLabel { text: "VOICE CHANNELS"; }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "VOICE CHANNELS"; }
+                                VxStatusPill {
+                                    label: root.visible-voice-channels + "";
+                                    tone: VxTheme.success;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
 
                             if root.visible-voice-channels == 0 : VerticalLayout {
                                 spacing: 4px;
@@ -863,28 +910,37 @@ export component SpaceView inherits Rectangle {
                             for channel[idx] in root.channels : Rectangle {
                                 property <bool> is-focused: idx == root.focused-channel-index;
                                 property <bool> show-settings: root.can-manage-space-channels && root.settings-channel-id == channel.id;
-                                height: channel.is-voice ? (show-settings ? 160px : 62px) : 0px;
+                                height: channel.is-voice ? (show-settings ? 154px : 58px * VxTheme.s) : 0px;
                                 visible: channel.is-voice;
-                                border-radius: VxTheme.radius-card;
-                                background: is-focused ? VxTheme.surface-active :
-                                            channel.is-active ? VxTheme.tab-active-bg :
-                                            channel.peer-count > 0 ? VxTheme.speaking-row-bg :
-                                            voice-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
+                                border-radius: 12px;
+                                background: channel.is-active ? VxTheme.tab-active-bg :
+                                            is-focused ? VxTheme.surface-active :
+                                            voice-touch.has-hover ? VxTheme.row-hover-bg :
+                                            channel.peer-count > 0 ? VxTheme.speaking-row-bg.transparentize(0.12) : transparent;
                                 border-color: is-focused || channel.is-active ? VxTheme.accent-border :
-                                              channel.peer-count > 0 ? VxTheme.speaking-border : VxTheme.border-subtle;
-                                border-width: 1px;
+                                              channel.peer-count > 0 ? VxTheme.speaking-border.transparentize(0.35) : transparent;
+                                border-width: is-focused || channel.is-active || channel.peer-count > 0 ? 1px : 0px;
                                 clip: true;
 
                                 voice-touch := TouchArea {
-                                    height: 62px;
+                                    height: 58px * VxTheme.s;
                                     mouse-cursor: pointer;
                                     clicked => { root.join-channel(channel.id); }
+                                }
+
+                                if channel.is-active || channel.peer-count > 0 : Rectangle {
+                                    x: 0px;
+                                    y: 10px;
+                                    width: 3px;
+                                    height: 38px * VxTheme.s;
+                                    border-radius: 1.5px;
+                                    background: channel.is-active ? VxTheme.accent : VxTheme.success;
                                 }
 
                                 // Favorite star overlay (top-left of voice channel row)
                                 TouchArea {
                                     x: 4px;
-                                    y: (62px - 18px) / 2;
+                                    y: (58px * VxTheme.s - 18px) / 2;
                                     width: 18px;
                                     height: 18px;
                                     mouse-cursor: pointer;
@@ -899,14 +955,14 @@ export component SpaceView inherits Rectangle {
                                 }
 
                                 HorizontalLayout {
-                                    height: 62px;
+                                    height: 58px * VxTheme.s;
                                     padding-left: 14px;
                                     padding-right: 14px;
-                                    spacing: 12px;
+                                    spacing: 10px;
                                     alignment: center;
 
                                     VxGlyphTile {
-                                        tile-size: 36px;
+                                        tile-size: 30px;
                                         glyph: "VC";
                                         tone: channel.is-active || channel.peer-count > 0
                                             ? VxTheme.accent
@@ -931,7 +987,7 @@ export component SpaceView inherits Rectangle {
                                                 : channel.is-active ? "Connected right now" :
                                                   channel.peer-count > 0 ? channel.peer-count + " currently inside" : "Instant voice channel";
                                             color: channel.status != "" ? VxTheme.accent : VxTheme.text-muted;
-                                            font-size: 9px;
+                                            font-size: 10px;
                                             overflow: elide;
                                         }
                                     }
@@ -969,11 +1025,11 @@ export component SpaceView inherits Rectangle {
                                         fill: VxTheme.accent-subtle;
                                     }
                                     if channel.peer-count > 0 : VxStatusPill {
-                                        label: channel.peer-count + " live";
+                                        label: channel.peer-count + "";
                                         tone: VxTheme.success;
                                         fill: VxTheme.success-dim;
                                     }
-                                    if root.can-manage-space-channels : VxButton {
+                                    if root.can-manage-space-channels && (voice-touch.has-hover || show-settings) : VxButton {
                                         label: root.settings-channel-id == channel.id ? "Close" : "Manage";
                                         glyph: root.settings-channel-id == channel.id ? "CL" : "MG";
                                         small: true;
@@ -986,7 +1042,7 @@ export component SpaceView inherits Rectangle {
                                             }
                                         }
                                     }
-                                    if root.can-manage-space-channels : VxButton {
+                                    if root.can-manage-space-channels && (voice-touch.has-hover || root.confirm-delete-channel-id == channel.id) : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                         glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                         small: true;
@@ -1005,8 +1061,8 @@ export component SpaceView inherits Rectangle {
 
                                 // ── Channel management controls ──
                                 if show-settings : VerticalLayout {
-                                    y: 62px;
-                                    height: 98px;
+                                    y: 58px * VxTheme.s;
+                                    height: 96px;
                                     padding-left: 14px;
                                     padding-right: 14px;
                                     padding-bottom: 8px;
@@ -1845,16 +1901,25 @@ export component SpaceView inherits Rectangle {
                     VerticalLayout {
                         padding: 14px;
                         spacing: 8px;
-                        SectionLabel { text: "FAVORITES"; }
+                        HorizontalLayout {
+                            alignment: space-between;
+                            SectionLabel { text: "FAVORITES"; }
+                            VxStatusPill {
+                                label: root.visible-favorite-channels + "";
+                                tone: VxTheme.warning;
+                                fill: VxTheme.bg-soft;
+                            }
+                        }
 
                         for channel in root.channels : Rectangle {
                             visible: channel.is-favorite && !channel.is-category-header;
-                            height: channel.is-favorite && !channel.is-category-header ? 44px : 0px;
-                            border-radius: VxTheme.radius-card;
+                            height: channel.is-favorite && !channel.is-category-header ? 42px * VxTheme.s : 0px;
+                            border-radius: 12px;
                             background: channel.is-active ? VxTheme.tab-active-bg :
-                                        compact-fav-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                            border-color: channel.is-active ? VxTheme.accent-border : VxTheme.border-subtle;
-                            border-width: 1px;
+                                        compact-fav-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                            border-color: channel.is-active ? VxTheme.accent-border : transparent;
+                            border-width: channel.is-active ? 1px : 0px;
+                            clip: true;
 
                             compact-fav-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -1870,18 +1935,19 @@ export component SpaceView inherits Rectangle {
                             HorizontalLayout {
                                 padding-left: 10px;
                                 padding-right: 10px;
-                                height: 44px;
+                                height: 42px * VxTheme.s;
                                 spacing: 8px;
                                 alignment: center;
-                                VxGlyphTile {
-                                    tile-size: 26px;
-                                    glyph: "FV";
-                                    tone: VxTheme.warning;
+                                if channel.is-active || channel.unread-count > 0 : Rectangle {
+                                    width: 3px;
+                                    height: 22px;
+                                    border-radius: 1.5px;
+                                    background: channel.is-active ? VxTheme.accent : VxTheme.warning;
                                 }
                                 VxGlyphTile {
-                                    tile-size: 28px;
+                                    tile-size: 24px;
                                     glyph: channel.is-voice ? "VC" : "TX";
-                                    tone: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                                    tone: channel.is-active || channel.unread-count > 0 ? VxTheme.accent : VxTheme.text-secondary;
                                 }
                                 Text {
                                     text: channel.name;
@@ -1894,7 +1960,7 @@ export component SpaceView inherits Rectangle {
                                 if channel.unread-count > 0 : Text {
                                     text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
                                     color: VxTheme.accent;
-                                    font-size: 10px;
+                                    font-size: 11px;
                                     font-weight: 700;
                                 }
                                 if channel.is-voice && channel.peer-count > 0 : Text {
@@ -1912,7 +1978,15 @@ export component SpaceView inherits Rectangle {
                     VerticalLayout {
                         padding: 18px;
                         spacing: 12px;
-                        SectionLabel { text: "CHANNELS"; }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                SectionLabel { text: "CHANNELS"; }
+                                VxStatusPill {
+                                    label: (root.visible-text-channels + root.visible-voice-channels) + "";
+                                    tone: VxTheme.accent;
+                                    fill: VxTheme.bg-soft;
+                                }
+                            }
                         if root.channels.length == 0 : VerticalLayout {
                             spacing: 4px;
                             Text {
@@ -1933,15 +2007,17 @@ export component SpaceView inherits Rectangle {
                             }
                         }
                         for channel in root.channels : Rectangle {
-                            height: !channel.is-voice && root.topic-edit-channel-id == channel.id ? 96px : 56px;
-                            border-radius: VxTheme.radius-card;
+                            height: !channel.is-voice && root.topic-edit-channel-id == channel.id ? 94px : 52px * VxTheme.s;
+                            border-radius: 12px;
                             background: channel.is-active ? VxTheme.tab-active-bg :
-                                        channel.unread-count > 0 ? VxTheme.accent-subtle :
-                                        compact-channel-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                            border-color: channel.is-active || channel.unread-count > 0
+                                        compact-channel-touch.has-hover ? VxTheme.row-hover-bg :
+                                        channel.mention-count > 0 ? VxTheme.warning-soft.transparentize(0.08) :
+                                        channel.unread-count > 0 ? VxTheme.bg-soft : transparent;
+                            border-color: channel.is-active
                                 ? VxTheme.accent-border
-                                : VxTheme.border-subtle;
-                            border-width: 1px;
+                                : transparent;
+                            border-width: channel.is-active ? 1px : 0px;
+                            clip: true;
 
                             compact-channel-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -1954,11 +2030,21 @@ export component SpaceView inherits Rectangle {
                                 }
                             }
 
+                            if channel.is-active || channel.unread-count > 0 || channel.mention-count > 0 : Rectangle {
+                                x: 0px;
+                                y: 9px;
+                                width: 3px;
+                                height: 34px * VxTheme.s;
+                                border-radius: 1.5px;
+                                background: channel.mention-count > 0 ? VxTheme.warning :
+                                    channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                            }
+
                             VerticalLayout {
                                 HorizontalLayout {
                                     padding-left: 6px;
                                     padding-right: 12px;
-                                    height: 56px;
+                                    height: 52px * VxTheme.s;
                                     spacing: 6px;
                                     alignment: center;
                                     TouchArea {
@@ -1974,7 +2060,7 @@ export component SpaceView inherits Rectangle {
                                         }
                                     }
                                     VxGlyphTile {
-                                        tile-size: 28px;
+                                        tile-size: 26px;
                                         glyph: channel.is-voice ? "VC" : "TX";
                                         tone: channel.is-active || channel.is-voice ? VxTheme.accent : VxTheme.text-secondary;
                                     }
@@ -2001,7 +2087,7 @@ export component SpaceView inherits Rectangle {
                                     if channel.unread-count > 0 : Text {
                                         text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
                                         color: VxTheme.accent;
-                                        font-size: 10px;
+                                        font-size: 11px;
                                         font-weight: 700;
                                     }
                                     if channel.is-voice && channel.user-limit > 0 : Text {
@@ -2019,7 +2105,7 @@ export component SpaceView inherits Rectangle {
                                         font-weight: 700;
                                     }
                                     // Compact notification bell (text channels only)
-                                    if !channel.is-voice : Rectangle {
+                                    if !channel.is-voice && (compact-channel-touch.has-hover || channel.notification-setting == "none" || channel.notification-setting == "mentions") : Rectangle {
                                         width: 20px;
                                         height: 20px;
                                         border-radius: 5px;
@@ -2049,7 +2135,7 @@ export component SpaceView inherits Rectangle {
                                                  : VxTheme.text-secondary;
                                         }
                                     }
-                                    if root.can-manage-space-channels && !channel.is-voice : VxButton {
+                                    if root.can-manage-space-channels && !channel.is-voice && (compact-channel-touch.has-hover || root.topic-edit-channel-id == channel.id) : VxButton {
                                         label: root.topic-edit-channel-id == channel.id ? "Save" : "Topic";
                                         glyph: root.topic-edit-channel-id == channel.id ? "SV" : "TP";
                                         small: true;
@@ -2066,19 +2152,19 @@ export component SpaceView inherits Rectangle {
                                             }
                                         }
                                     }
-                                    if root.can-manage-space-channels : VxButton {
+                                    if root.can-manage-space-channels && compact-channel-touch.has-hover : VxButton {
                                         label: "\u{25B2}";
                                         small: true;
                                         ghost: true;
                                         clicked => { root.move-channel-up(channel.id); }
                                     }
-                                    if root.can-manage-space-channels : VxButton {
+                                    if root.can-manage-space-channels && compact-channel-touch.has-hover : VxButton {
                                         label: "\u{25BC}";
                                         small: true;
                                         ghost: true;
                                         clicked => { root.move-channel-down(channel.id); }
                                     }
-                                    if root.can-manage-space-channels : VxButton {
+                                    if root.can-manage-space-channels && (compact-channel-touch.has-hover || root.confirm-delete-channel-id == channel.id) : VxButton {
                                         label: root.confirm-delete-channel-id == channel.id ? "Confirm" : "Delete";
                                         glyph: root.confirm-delete-channel-id == channel.id ? "OK" : "DL";
                                         small: true;

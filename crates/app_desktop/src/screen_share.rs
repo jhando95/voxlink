@@ -12,6 +12,8 @@ use xcap::{Monitor, Window};
 
 const SCREEN_SHARE_QUEUE_CAPACITY: usize = 2;
 const SCREEN_PRESSURE_THRESHOLD: u8 = 3;
+const SCREEN_SHARE_PREVIEW_MAX_WIDTH: u32 = 420;
+const SCREEN_SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(90);
 
 const SHARE_PROFILES: [ShareProfile; 4] = [
     ShareProfile {
@@ -188,6 +190,13 @@ struct ShareUiStatus {
     quality_detail: String,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PreviewFrame {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
 impl Default for ShareUiStatus {
     fn default() -> Self {
         let profile = SHARE_PROFILES[0];
@@ -207,6 +216,7 @@ pub struct ScreenShareController {
     selected_profile_index: Mutex<usize>,
     cached_sources: Mutex<Vec<ScreenShareSourceDescriptor>>,
     ui_status: Mutex<ShareUiStatus>,
+    preview_frame: Arc<Mutex<Option<PreviewFrame>>>,
 }
 
 impl ScreenShareController {
@@ -312,6 +322,27 @@ impl ScreenShareController {
         window.set_screen_share_quality_detail(ui_state.quality_detail.into());
     }
 
+    pub fn apply_latest_preview(&self, window: &MainWindow) {
+        let preview = self
+            .preview_frame
+            .lock()
+            .ok()
+            .and_then(|mut frame| frame.take());
+        let Some(preview) = preview else {
+            return;
+        };
+        if preview.width == 0 || preview.height == 0 || preview.pixels.is_empty() {
+            return;
+        }
+
+        let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+            &preview.pixels,
+            preview.width,
+            preview.height,
+        );
+        window.set_screen_share_image(slint::Image::from_rgba8(buffer));
+    }
+
     pub fn ui_state(&self) -> ScreenShareUiState {
         let sources = self
             .cached_sources
@@ -398,10 +429,14 @@ impl ScreenShareController {
         }
         let profile = self.selected_profile();
         probe_source(&source.target)?;
+        if let Ok(mut preview) = self.preview_frame.lock() {
+            *preview = None;
+        }
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = stop.clone();
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SCREEN_SHARE_QUEUE_CAPACITY);
+        let preview_frame = self.preview_frame.clone();
         let status = Arc::new(Mutex::new(ShareUiStatus {
             source_label: source.label.clone(),
             source_detail: format!("{} live in this room.", source.detail),
@@ -431,6 +466,7 @@ impl ScreenShareController {
 
         std::thread::spawn(move || {
             let mut adaptive = AdaptiveQuality::new(profile);
+            let mut last_preview_at = Instant::now() - SCREEN_SHARE_PREVIEW_INTERVAL;
             while !stop_for_thread.load(Ordering::Relaxed) {
                 let preset = adaptive.current();
                 if let Ok(mut state) = status_for_thread.lock() {
@@ -443,22 +479,32 @@ impl ScreenShareController {
                 let mut pressure = false;
 
                 match capture_frame(&source.target) {
-                    Ok(image) => match encode_frame(image, preset) {
-                        Ok(encoded) => {
-                            if encoded.len()
-                                > shared_types::MAX_SCREEN_FRAME_SIZE.saturating_mul(3) / 4
-                            {
-                                pressure = true;
+                    Ok(image) => {
+                        if last_preview_at.elapsed() >= SCREEN_SHARE_PREVIEW_INTERVAL {
+                            let preview =
+                                build_preview_frame(&image, SCREEN_SHARE_PREVIEW_MAX_WIDTH);
+                            if let Ok(mut slot) = preview_frame.lock() {
+                                *slot = Some(preview);
                             }
-                            if tx.try_send(encoded).is_err() {
+                            last_preview_at = Instant::now();
+                        }
+                        match encode_frame(image, preset) {
+                            Ok(encoded) => {
+                                if encoded.len()
+                                    > shared_types::MAX_SCREEN_FRAME_SIZE.saturating_mul(3) / 4
+                                {
+                                    pressure = true;
+                                }
+                                if tx.try_send(encoded).is_err() {
+                                    pressure = true;
+                                }
+                            }
+                            Err(e) => {
                                 pressure = true;
+                                log::warn!("Failed to encode screen frame: {e}");
                             }
                         }
-                        Err(e) => {
-                            pressure = true;
-                            log::warn!("Failed to encode screen frame: {e}");
-                        }
-                    },
+                    }
                     Err(e) => {
                         pressure = true;
                         log::warn!("Failed to capture screen frame: {e}");
@@ -493,6 +539,9 @@ impl ScreenShareController {
             if let Some(stop) = state.take() {
                 stop.store(true, Ordering::Relaxed);
             }
+        }
+        if let Ok(mut preview) = self.preview_frame.lock() {
+            *preview = None;
         }
         self.refresh_idle_status();
     }
@@ -732,6 +781,22 @@ fn capture_frame(source: &CaptureTarget) -> Result<xcap::image::RgbaImage, Strin
     }
 }
 
+fn build_preview_frame(image: &xcap::image::RgbaImage, max_width: u32) -> PreviewFrame {
+    let (width, height) = image.dimensions();
+    let preview = if width > max_width {
+        let target_height = ((height as u64 * max_width as u64) / width as u64).max(1) as u32;
+        xcap::image::imageops::resize(image, max_width, target_height, FilterType::Triangle)
+    } else {
+        image.clone()
+    };
+    let (preview_width, preview_height) = preview.dimensions();
+    PreviewFrame {
+        width: preview_width,
+        height: preview_height,
+        pixels: preview.into_raw(),
+    }
+}
+
 fn encode_frame(image: xcap::image::RgbaImage, preset: QualityPreset) -> Result<Vec<u8>, String> {
     let (width, height) = image.dimensions();
     let target = if width > preset.max_width {
@@ -758,7 +823,8 @@ fn encode_frame(image: xcap::image::RgbaImage, preset: QualityPreset) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{AdaptiveQuality, SHARE_PROFILES};
+    use super::{build_preview_frame, AdaptiveQuality, SHARE_PROFILES};
+    use xcap::image::{Rgba, RgbaImage};
 
     #[test]
     fn adaptive_quality_steps_down_under_pressure() {
@@ -782,5 +848,14 @@ mod tests {
             adaptive.record_frame(false);
         }
         assert_eq!(adaptive.current().name, "720p / 30 fps");
+    }
+
+    #[test]
+    fn preview_frame_downscales_large_capture() {
+        let image = RgbaImage::from_pixel(1920, 1080, Rgba([4, 8, 12, 255]));
+        let preview = build_preview_frame(&image, 420);
+        assert_eq!(preview.width, 420);
+        assert_eq!(preview.height, 236);
+        assert_eq!(preview.pixels.len(), (preview.width * preview.height * 4) as usize);
     }
 }

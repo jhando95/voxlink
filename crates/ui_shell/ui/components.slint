@@ -83,8 +83,8 @@ export component VxButton inherits Rectangle {
     in property <bool> soft: false;
     callback clicked();
 
-    height: (root.small ? 30px : 36px) * VxTheme.s;
-    min-width: (root.small ? 48px : 80px) * VxTheme.s;
+    height: (root.small ? 34px : 40px) * VxTheme.s;
+    min-width: (root.small ? 56px : 92px) * VxTheme.s;
     border-radius: root.small ? (10px * VxTheme.s) : VxTheme.radius-control;
     clip: true;
     background: root.ghost ? transparent :
@@ -142,12 +142,12 @@ export component VxButton inherits Rectangle {
     HorizontalLayout {
         alignment: center;
         spacing: 6px;
-        padding-left: root.small ? 8px : 12px;
-        padding-right: root.small ? 8px : 12px;
+        padding-left: root.small ? 10px : 14px;
+        padding-right: root.small ? 10px : 14px;
 
         if root.glyph != "" || (root.icon-source.width > 0 && root.icon-source.height > 0) : Rectangle {
-            width: root.small ? 15px : 17px;
-            height: root.small ? 15px : 17px;
+            width: root.small ? 16px : 18px;
+            height: root.small ? 16px : 18px;
             border-radius: root.small ? 4px : 5px;
             background: root.ghost ? VxTheme.bg-soft :
                 root.accent || root.danger ? #ffffff1e :
@@ -162,7 +162,7 @@ export component VxButton inherits Rectangle {
                 y: (parent.height - self.height) * 0.5;
                 glyph: root.glyph;
                 icon-source: root.icon-source;
-                icon-size: root.small ? 11px : 12px;
+                icon-size: root.small ? 12px : 13px;
                 tone: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                     !root.enabled ? VxTheme.text-muted :
                     root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
@@ -173,7 +173,7 @@ export component VxButton inherits Rectangle {
                 color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                     !root.enabled ? VxTheme.text-muted :
                     root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
-                font-size: (root.small ? 8px : 9px) * VxTheme.s;
+                font-size: (root.small ? 9px : 10px) * VxTheme.s;
                 font-weight: 800;
                 letter-spacing: 0.6px;
                 horizontal-alignment: center;
@@ -186,7 +186,7 @@ export component VxButton inherits Rectangle {
             color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                    !root.enabled ? VxTheme.text-muted :
                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.text-primary;
-            font-size: (root.small ? 11px : 12px) * VxTheme.s;
+            font-size: (root.small ? 11px : 13px) * VxTheme.s;
             font-weight: root.accent || root.danger ? 700 : 600;
             letter-spacing: VxTheme.btn-uppercase ? 1.0px : (root.small ? 0.1px : 0.15px);
             horizontal-alignment: center;
@@ -291,7 +291,7 @@ export component VxInput inherits Rectangle {
     in property <bool> enabled: true;
     callback accepted();
 
-    height: 38px;
+    height: 42px * VxTheme.s;
     border-radius: VxTheme.radius-control;
     background: @linear-gradient(180deg,
         VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
@@ -319,10 +319,10 @@ export component VxInput inherits Rectangle {
     }
 
     inner := LineEdit {
-        x: 12px;
-        y: 8px;
-        width: parent.width - 24px;
-        height: parent.height - 16px;
+        x: 12px * VxTheme.s;
+        y: 8px * VxTheme.s;
+        width: parent.width - 24px * VxTheme.s;
+        height: parent.height - 16px * VxTheme.s;
         placeholder-text: root.placeholder;
         input-type: root.input-type;
         enabled: root.enabled;

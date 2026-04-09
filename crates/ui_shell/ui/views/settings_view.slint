@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { SoundboardClipData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxInput, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxGlyphTile, VxInput, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
 component ThemePresetCard inherits Rectangle {
     in property <string> label: "";
@@ -146,7 +146,7 @@ export component SettingsView inherits Rectangle {
     callback change-password(string, string);
     callback change-display-name(string);
     callback delete-account();
-    property <length> side-column-width: clamp(root.width * 0.26, 252px, 296px);
+    property <length> side-column-width: clamp(root.width * 0.24, 236px, 284px);
     in-out property <string> acct-old-pw: "";
     in-out property <string> acct-new-pw: "";
     in-out property <string> acct-new-name: "";
@@ -177,18 +177,80 @@ export component SettingsView inherits Rectangle {
             padding: root.wide ? 16px : 12px;
             spacing: 12px;
 
-            HorizontalLayout {
-                alignment: space-between;
-                Text {
-                    text: "Audio and preferences";
-                    color: VxTheme.text-primary;
-                    font-size: 24px;
-                    font-weight: 700;
-                }
-                if root.previous-view == 1 : VxButton {
-                    label: "Back to call";
-                    soft: true;
-                    clicked => { root.navigate(root.previous-view); }
+            VxCard {
+                HorizontalLayout {
+                    padding: 18px;
+                    spacing: 14px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: root.wide ? 66px : 56px;
+                        height: root.wide ? 66px : 56px;
+                        border-radius: VxTheme.radius-card;
+                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
+                        border-color: VxTheme.accent-border;
+                        border-width: 1px;
+                        clip: true;
+
+                        Rectangle {
+                            width: parent.width;
+                            height: 2px;
+                            background: VxTheme.accent;
+                            opacity: 0.85;
+                        }
+
+                        VxGlyphTile {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            tile-size: root.wide ? 38px : 32px;
+                            glyph: "IO";
+                            tone: VxTheme.accent;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        spacing: 6px;
+
+                        Text {
+                            text: "Audio and preferences";
+                            color: VxTheme.text-primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Tune devices, voice behavior, and alerts without adding runtime drag.";
+                            color: VxTheme.text-secondary;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.dark-mode ? "Dark shell" : "Light shell";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                            VxStatusPill {
+                                label: root.is-open-mic ? "Open mic" : "Push to talk";
+                                tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
+                                fill: root.is-open-mic ? VxTheme.success-dim : VxTheme.warning-soft;
+                            }
+                            if root.input-devices.length > 0 || root.output-devices.length > 0 : VxStatusPill {
+                                label: root.input-devices.length + " in · " + root.output-devices.length + " out";
+                                tone: VxTheme.text-secondary;
+                                fill: VxTheme.bg-soft;
+                            }
+                        }
+                    }
+
+                    if root.previous-view == 1 : VxButton {
+                        label: "Back to call";
+                        glyph: "GO";
+                        soft: true;
+                        clicked => { root.navigate(root.previous-view); }
+                    }
                 }
             }
 
@@ -625,14 +687,36 @@ export component SettingsView inherits Rectangle {
                             spacing: 14px;
                             SectionLabel { text: "OUTPUT CHECK"; }
 
-                            Text {
-                                text: root.speaker-test-active
-                                    ? "Playing a short tone on " + (root.output-devices.length > 0 ? root.output-devices[root.selected-output] : "your selected output")
-                                    : "Play a local speaker test";
-                                color: VxTheme.text-primary;
-                                font-size: 15px;
-                                font-weight: 700;
-                                wrap: word-wrap;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: center;
+
+                                VxGlyphTile {
+                                    glyph: "SP";
+                                    tone: root.speaker-test-active ? VxTheme.success : VxTheme.accent;
+                                    tile-size: 30px;
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: root.speaker-test-active
+                                            ? "Playing a short tone"
+                                            : "Play a local speaker test";
+                                        color: VxTheme.text-primary;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: root.output-devices.length > 0 ? root.output-devices[root.selected-output] : "No output route selected";
+                                        color: root.output-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
                             }
 
                             Text {
@@ -681,14 +765,36 @@ export component SettingsView inherits Rectangle {
                             spacing: 14px;
                             SectionLabel { text: "MIC CHECK"; }
 
-                            Text {
-                                text: root.mic-preview-active
-                                    ? "Listening on " + (root.input-devices.length > 0 ? root.input-devices[root.selected-input] : "your selected input")
-                                    : "Start a local mic check";
-                                color: VxTheme.text-primary;
-                                font-size: 15px;
-                                font-weight: 700;
-                                wrap: word-wrap;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: center;
+
+                                VxGlyphTile {
+                                    glyph: "MC";
+                                    tone: root.mic-preview-active ? VxTheme.success : VxTheme.accent;
+                                    tile-size: 30px;
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: root.mic-preview-active
+                                            ? "Listening on " + (root.input-devices.length > 0 ? root.input-devices[root.selected-input] : "your selected input")
+                                            : "Start a local mic check";
+                                        color: VxTheme.text-primary;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: root.input-devices.length > 0 ? "Capture stays local to settings." : "No microphone route selected";
+                                        color: root.input-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
                             }
 
                             Text {
@@ -755,11 +861,39 @@ export component SettingsView inherits Rectangle {
                             padding: 18px;
                             spacing: 14px;
                             SectionLabel { text: "VOICE MODE"; }
-                            Text {
-                                text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
-                                color: VxTheme.text-primary;
-                                font-size: 15px;
-                                font-weight: 700;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: center;
+
+                                VxGlyphTile {
+                                    glyph: "VM";
+                                    tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
+                                    tile-size: 30px;
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
+                                        color: VxTheme.text-primary;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                    }
+                                    Text {
+                                        text: root.is-open-mic ? "Natural flow for quieter rooms." : "Tighter transmit control when you need it.";
+                                        color: VxTheme.text-secondary;
+                                        font-size: 10px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+
+                                VxStatusPill {
+                                    label: root.is-open-mic ? "Live" : "PTT";
+                                    tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
+                                    fill: root.is-open-mic ? VxTheme.success-dim : VxTheme.warning-soft;
+                                }
                             }
                             Text {
                                 text: root.is-open-mic
@@ -1342,11 +1476,31 @@ export component SettingsView inherits Rectangle {
                         padding: 18px;
                         spacing: 12px;
                         SectionLabel { text: "OUTPUT CHECK"; }
-                        Text {
-                            text: root.speaker-test-active ? "Playing a local sample." : "Play a local speaker test.";
-                            color: VxTheme.text-primary;
-                            font-size: 12px;
-                            font-weight: 700;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            VxGlyphTile {
+                                glyph: "SP";
+                                tone: root.speaker-test-active ? VxTheme.success : VxTheme.accent;
+                                tile-size: 28px;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: root.speaker-test-active ? "Playing a local sample." : "Play a local speaker test.";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: root.output-devices.length > 0 ? "Confirms the selected route before a call." : "Choose an output route first.";
+                                    color: root.output-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
                         Text {
                             text: root.output-devices.length > 0
@@ -1372,11 +1526,31 @@ export component SettingsView inherits Rectangle {
                         padding: 18px;
                         spacing: 12px;
                         SectionLabel { text: "MIC CHECK"; }
-                        Text {
-                            text: root.mic-preview-active ? "Mic check is live." : "Start a local mic check.";
-                            color: VxTheme.text-primary;
-                            font-size: 12px;
-                            font-weight: 700;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            VxGlyphTile {
+                                glyph: "MC";
+                                tone: root.mic-preview-active ? VxTheme.success : VxTheme.accent;
+                                tile-size: 28px;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: root.mic-preview-active ? "Mic check is live." : "Start a local mic check.";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: root.input-devices.length > 0 ? "Capture stays local to settings." : "Choose an input route first.";
+                                    color: root.input-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
                         Rectangle {
                             height: 10px;
@@ -1409,6 +1583,32 @@ export component SettingsView inherits Rectangle {
                         padding: 18px;
                         spacing: 12px;
                         SectionLabel { text: "VOICE MODE"; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            VxGlyphTile {
+                                glyph: "VM";
+                                tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
+                                tile-size: 28px;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: root.is-open-mic ? "Natural flow for quieter rooms." : "Tighter transmit control when needed.";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                         VxButton {
                             label: root.is-open-mic ? "Switch to push to talk" : "Switch to open mic";
                             accent: true;

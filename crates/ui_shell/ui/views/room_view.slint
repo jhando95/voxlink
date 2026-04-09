@@ -89,6 +89,9 @@ export component RoomView inherits Rectangle {
         (root.participants.length + root.cols - 1) / root.cols;
     property <length> grid-w: root.cols * root.tile-w + (root.cols - 1) * root.tile-gap;
     property <length> grid-h: root.row-count * root.tile-h + (root.row-count <= 1 ? 0px : (root.row-count - 1) * root.tile-gap);
+    property <length> share-preview-card-width: clamp(root.width * 0.30, 236px, 352px);
+    property <length> share-preview-frame-height: clamp(root.share-preview-card-width * 0.58, 136px, 204px);
+    property <length> share-preview-card-height: root.share-preview-frame-height + 86px;
 
     VerticalLayout {
         spacing: 0px;
@@ -309,97 +312,6 @@ export component RoomView inherits Rectangle {
                     }
                 }
 
-                // Self-stream preview: when YOU are sharing, show a preview of your stream
-                if root.is-sharing-screen : Rectangle {
-                    vertical-stretch: 1;
-                    border-radius: VxTheme.radius-card;
-                    background: VxTheme.bg-stage;
-                    border-color: VxTheme.success.transparentize(0.5);
-                    border-width: 2px;
-                    clip: true;
-
-                    Image {
-                        width: parent.width;
-                        height: parent.height;
-                        source: root.screen-share-image;
-                        image-fit: contain;
-                    }
-
-                    // "You are sharing" badge top-left
-                    Rectangle {
-                        x: 8px;
-                        y: 8px;
-                        height: 26px;
-                        width: self-share-row.preferred-width + 20px;
-                        border-radius: 13px;
-                        background: VxTheme.success.transparentize(0.15);
-
-                        self-share-row := HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            spacing: 6px;
-                            alignment: center;
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: white;
-                                animate opacity { duration: 800ms; }
-                                opacity: mod(animation-tick() / 800ms, 2) < 1 ? 1.0 : 0.3;
-                            }
-                            Text {
-                                text: "LIVE — Your screen";
-                                color: white;
-                                font-size: 10px;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-
-                    // Source info bottom-left
-                    if root.screen-share-source-label != "" : Rectangle {
-                        x: 8px;
-                        y: parent.height - self.height - 8px;
-                        height: 22px;
-                        width: source-info-text.preferred-width + 16px;
-                        border-radius: 11px;
-                        background: VxTheme.bg-panel.transparentize(0.2);
-                        source-info-text := Text {
-                            text: root.screen-share-source-label;
-                            color: VxTheme.text-secondary;
-                            font-size: 9px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            max-width: 200px;
-                        }
-                    }
-
-                    // Stop button bottom-right
-                    Rectangle {
-                        x: parent.width - self.width - 8px;
-                        y: parent.height - self.height - 8px;
-                        width: stop-share-text.preferred-width + 24px;
-                        height: 28px;
-                        border-radius: 14px;
-                        background: stop-touch.has-hover ? VxTheme.danger : VxTheme.danger.transparentize(0.15);
-                        stop-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.toggle-screen-share(); }
-                        }
-                        stop-share-text := Text {
-                            text: "Stop Sharing";
-                            color: white;
-                            font-size: 10px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
                 // When screen share is active, show participants as a compact row below
                 if root.has-screen-share : VxCard {
                     VerticalLayout {
@@ -447,8 +359,8 @@ export component RoomView inherits Rectangle {
                     }
                 }
 
-                // No screen share: avatar grid is the stage
-                if !root.has-screen-share : Rectangle {
+                // No screen share, or the local sharer previewing from the side: avatar grid is the stage
+                if !root.has-screen-share || root.is-sharing-screen : Rectangle {
                     vertical-stretch: 1;
 
                     // Empty state
@@ -736,20 +648,139 @@ export component RoomView inherits Rectangle {
                             }
                         }
                     }
+
+                    if root.is-sharing-screen : Rectangle {
+                        x: parent.width - self.width - 18px;
+                        y: 18px;
+                        width: root.share-preview-card-width;
+                        height: root.share-preview-card-height;
+                        border-radius: VxTheme.radius-card;
+                        background: VxTheme.bg-card.transparentize(VxTheme.dark-mode ? 0.04 : 0.01);
+                        border-color: VxTheme.success.transparentize(0.45);
+                        border-width: 1px;
+                        clip: true;
+
+                        Rectangle {
+                            width: parent.width;
+                            height: 1px;
+                            background: VxTheme.success.transparentize(0.35);
+                        }
+
+                        VerticalLayout {
+                            padding: 10px;
+                            spacing: 10px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                spacing: 8px;
+
+                                VxStatusPill {
+                                    label: "You’re sharing";
+                                    tone: VxTheme.success;
+                                    fill: VxTheme.success-dim;
+                                }
+
+                                VxButton {
+                                    label: "Stop";
+                                    glyph: "CL";
+                                    small: true;
+                                    danger: true;
+                                    clicked => { root.toggle-screen-share(); }
+                                }
+                            }
+
+                            Rectangle {
+                                height: root.share-preview-frame-height;
+                                border-radius: VxTheme.radius-control;
+                                background: VxTheme.bg-stage;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+                                clip: true;
+
+                                Image {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    source: root.screen-share-image;
+                                    image-fit: contain;
+                                }
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: parent.width;
+                                    height: 30px;
+                                    background: @linear-gradient(180deg, #00000052 0%, transparent 100%);
+                                }
+
+                                Rectangle {
+                                    x: 10px;
+                                    y: 10px;
+                                    height: 20px;
+                                    width: preview-badge.preferred-width + 16px;
+                                    border-radius: 10px;
+                                    background: VxTheme.bg-panel.transparentize(0.18);
+
+                                    preview-badge := Text {
+                                        text: "LIVE PREVIEW";
+                                        color: VxTheme.text-primary;
+                                        font-size: 8px;
+                                        font-weight: 800;
+                                        letter-spacing: 0.8px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 3px;
+
+                                Text {
+                                    text: root.screen-share-source-label != "" ? root.screen-share-source-label : "Preparing local preview";
+                                    color: VxTheme.text-primary;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Share quality pending";
+                                    color: VxTheme.text-secondary;
+                                    font-size: 9px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Your stage stays visible while the preview mirrors what others see.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 9px;
+                                    wrap: word-wrap;
+                                    max-height: 28px;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Per-peer audio controls (shows when a peer is selected)
                 if root.selected-peer-id != "" : VxCard {
 
                     VerticalLayout {
-                        padding: 10px;
-                        spacing: 6px;
+                        padding: 14px;
+                        spacing: 10px;
 
                         HorizontalLayout {
                             alignment: space-between;
                             SectionLabel { text: "PEER MIX"; }
                             HorizontalLayout {
                                 spacing: 6px;
+                                VxStatusPill {
+                                    label: "Local only";
+                                    tone: VxTheme.text-secondary;
+                                    fill: VxTheme.bg-soft;
+                                }
                                 VxGlyphTile { glyph: "MX"; tone: VxTheme.accent; tile-size: 20px; }
                                 VxButton {
                                     label: "Done";
@@ -760,18 +791,25 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
+                        Text {
+                            text: "Shape one voice lane locally. These changes only affect what you hear.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+
                         // Volume row
                         HorizontalLayout {
-                            height: 24px;
+                            height: 28px;
                             spacing: 8px;
                             alignment: center;
 
                             Text {
-                                text: "Vol";
+                                text: "Volume";
                                 color: VxTheme.text-secondary;
                                 font-size: 10px;
                                 font-weight: 600;
-                                min-width: 32px;
+                                min-width: 46px;
                                 vertical-alignment: center;
                             }
 
@@ -795,18 +833,21 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
+                        Divider {}
+                        SectionLabel { text: "EQ"; }
+
                         // Bass EQ row
                         HorizontalLayout {
-                            height: 20px;
+                            height: 24px;
                             spacing: 8px;
                             alignment: center;
 
                             Text {
                                 text: "Bass";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
-                                min-width: 32px;
+                                min-width: 46px;
                                 vertical-alignment: center;
                             }
 
@@ -822,7 +863,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-bass - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-bass - 0.5) * 12) : Math.round((root.selected-peer-bass - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -832,16 +873,16 @@ export component RoomView inherits Rectangle {
 
                         // Mid EQ row
                         HorizontalLayout {
-                            height: 20px;
+                            height: 24px;
                             spacing: 8px;
                             alignment: center;
 
                             Text {
                                 text: "Mid";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
-                                min-width: 32px;
+                                min-width: 46px;
                                 vertical-alignment: center;
                             }
 
@@ -857,7 +898,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-mid - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-mid - 0.5) * 12) : Math.round((root.selected-peer-mid - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -867,16 +908,16 @@ export component RoomView inherits Rectangle {
 
                         // Treble EQ row
                         HorizontalLayout {
-                            height: 20px;
+                            height: 24px;
                             spacing: 8px;
                             alignment: center;
 
                             Text {
                                 text: "Treble";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
-                                min-width: 32px;
+                                min-width: 46px;
                                 vertical-alignment: center;
                             }
 
@@ -892,7 +933,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-treble - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-treble - 0.5) * 12) : Math.round((root.selected-peer-treble - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -900,18 +941,20 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
+                        Divider {}
+
                         // Pan row
                         HorizontalLayout {
-                            height: 20px;
+                            height: 24px;
                             spacing: 8px;
                             alignment: center;
 
                             Text {
                                 text: "Pan";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
-                                min-width: 32px;
+                                min-width: 46px;
                                 vertical-alignment: center;
                             }
 
@@ -932,7 +975,7 @@ export component RoomView inherits Rectangle {
                                         "R" + Math.round((root.selected-peer-pan - 0.5) * 200);
                                 }
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 10px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -946,12 +989,21 @@ export component RoomView inherits Rectangle {
                 // Screen share configuration (expandable)
                 if root.show-share-config : VxCard {
                     VerticalLayout {
-                        padding: 14px;
-                        spacing: 10px;
+                        padding: 16px;
+                        spacing: 12px;
 
                         HorizontalLayout {
                             alignment: space-between;
-                            SectionLabel { text: "SHARE SOURCE"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                VxGlyphTile {
+                                    glyph: "SC";
+                                    tone: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
+                                    tile-size: 22px;
+                                }
+                                SectionLabel { text: "SHARE SOURCE"; }
+                            }
                             HorizontalLayout {
                                 spacing: 8px;
                                 VxButton {
@@ -969,8 +1021,29 @@ export component RoomView inherits Rectangle {
                             }
                         }
 
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VxStatusPill {
+                                label: root.screen-share-source-label != "" ? root.screen-share-source-label : "Choose a source";
+                                tone: root.screen-share-source-label != "" ? VxTheme.accent : VxTheme.text-muted;
+                                fill: root.screen-share-source-label != "" ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                            }
+                            VxStatusPill {
+                                label: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Efficient";
+                                tone: VxTheme.text-secondary;
+                                fill: VxTheme.bg-soft;
+                            }
+                        }
+
+                        Text {
+                            text: "Sharing stays lazy until you start. Pick a source and quality preset that fits the moment.";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+
                         Rectangle {
-                            height: 120px;
+                            height: 136px;
                             clip: true;
                             if root.screen-share-sources.length > 0 : ListView {
                                 for source[idx] in root.screen-share-sources : VxOptionRow {

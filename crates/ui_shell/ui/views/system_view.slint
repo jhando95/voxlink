@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, VxTheme } from "../theme.slint";
-import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxInput, VxLogo, VxStatusPill } from "../components.slint";
+import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatusPill } from "../components.slint";
 
 export component SystemView inherits Rectangle {
     in property <bool> wide: false;
@@ -32,7 +32,7 @@ export component SystemView inherits Rectangle {
 
     property <string> add-friend-input: "";
     property <string> add-friend-status: "";
-    property <length> side-column-width: clamp(root.width * 0.26, 248px, 288px);
+    property <length> side-column-width: clamp(root.width * 0.24, 232px, 276px);
 
     background: transparent;
 
@@ -47,21 +47,45 @@ export component SystemView inherits Rectangle {
                 HorizontalLayout {
                     padding: 20px;
                     spacing: 16px;
+                    alignment: center;
 
-                    VxLogo { logo-size: 54px; }
+                    Rectangle {
+                        width: root.wide ? 68px : 58px;
+                        height: root.wide ? 68px : 58px;
+                        border-radius: VxTheme.radius-card;
+                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
+                        border-color: VxTheme.accent-border;
+                        border-width: 1px;
+                        clip: true;
+
+                        Rectangle {
+                            width: parent.width;
+                            height: 2px;
+                            background: VxTheme.accent;
+                            opacity: 0.85;
+                        }
+
+                        VxGlyphTile {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            tile-size: root.wide ? 40px : 34px;
+                            glyph: "SY";
+                            tone: VxTheme.accent;
+                        }
+                    }
 
                     VerticalLayout {
                         alignment: center;
                         spacing: 6px;
                         horizontal-stretch: 1;
                         Text {
-                            text: "System overview";
+                            text: "Control deck";
                             color: VxTheme.text-primary;
                             font-size: 24px;
                             font-weight: 700;
                         }
                         Text {
-                            text: "Keep the UI light, the audio fast, and the network honest.";
+                            text: "Keep the UI light, the audio fast, and the network honest without burying everyday actions.";
                             color: VxTheme.text-secondary;
                             font-size: 11px;
                             wrap: word-wrap;
@@ -78,6 +102,21 @@ export component SystemView inherits Rectangle {
                                 tone: root.ping-ms < 60 ? VxTheme.success :
                                       root.ping-ms < 150 ? VxTheme.warning : VxTheme.danger;
                                 fill: VxTheme.bg-soft;
+                            }
+                            if root.room-code != "" : VxStatusPill {
+                                label: "Room " + root.room-code;
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                            if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                label: root.unread-direct-messages-count + " unread";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
+                            if root.online-friends-count > 0 : VxStatusPill {
+                                label: root.online-friends-count + " online";
+                                tone: VxTheme.success;
+                                fill: VxTheme.success-dim;
                             }
                         }
                     }
@@ -263,61 +302,75 @@ export component SystemView inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             for thread in root.direct-message-threads : Rectangle {
-                                border-radius: VxTheme.radius-card;
+                                border-radius: VxTheme.radius-control;
                                 background: VxTheme.bg-soft;
                                 border-color: thread.unread-count > 0 ? VxTheme.accent-border :
                                               thread.is-in-voice ? VxTheme.speaking-border :
                                               thread.is-online ? VxTheme.border-strong : VxTheme.border-subtle;
                                 border-width: 1px;
-                                VerticalLayout {
+                                clip: true;
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: 8px;
+                                    width: 3px;
+                                    height: parent.height - 16px;
+                                    border-radius: 2px;
+                                    background: thread.unread-count > 0 ? VxTheme.accent :
+                                        thread.is-in-voice ? VxTheme.speaking-border : transparent;
+                                }
+
+                                HorizontalLayout {
                                     padding: 12px;
-                                    spacing: 8px;
-                                    HorizontalLayout {
-                                        spacing: 10px;
+                                    spacing: 10px;
+                                    alignment: center;
+
+                                    VxAvatar {
+                                        avatar-size: 30px;
+                                        initial: thread.initial;
+                                        color-index: thread.color-index;
+                                        show-status: true;
+                                        is-online: thread.is-online;
+                                        is-speaking: thread.is-in-voice;
+                                    }
+                                    VerticalLayout {
                                         alignment: center;
-                                        VxAvatar {
-                                            avatar-size: 30px;
-                                            initial: thread.initial;
-                                            color-index: thread.color-index;
-                                            show-status: true;
-                                            is-online: thread.is-online;
-                                            is-speaking: thread.is-in-voice;
-                                        }
-                                        VerticalLayout {
-                                            alignment: center;
-                                            horizontal-stretch: 1;
-                                            spacing: 2px;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
                                             Text {
                                                 text: thread.name;
                                                 color: VxTheme.text-primary;
                                                 font-size: 11px;
                                                 font-weight: 700;
+                                                overflow: elide;
                                             }
                                             Text {
                                                 text: thread.meta;
                                                 color: VxTheme.text-muted;
                                                 font-size: 9px;
+                                                vertical-alignment: center;
                                             }
                                         }
-                                        if thread.unread-count > 0 : VxStatusPill {
-                                            label: thread.unread-count + "";
-                                            tone: VxTheme.accent;
-                                            fill: VxTheme.accent-subtle;
+                                        Text {
+                                            text: thread.preview;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 10px;
+                                            overflow: elide;
                                         }
                                     }
-                                    Text {
-                                        text: thread.preview;
-                                        color: VxTheme.text-secondary;
-                                        font-size: 10px;
-                                        wrap: word-wrap;
-                                        max-height: 28px;
+                                    if thread.unread-count > 0 : VxStatusPill {
+                                        label: thread.unread-count + "";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
                                     }
                                     VxButton {
-                                        label: "Open conversation";
+                                        label: "Open";
                                         glyph: "DM";
                                         small: true;
                                         accent: true;
-                                        horizontal-stretch: 1;
                                         clicked => { root.open-direct-message(thread.user-id); }
                                     }
                                 }
@@ -462,73 +515,79 @@ export component SystemView inherits Rectangle {
                             if root.favorite-friends.length > 0 : VerticalLayout {
                                 spacing: 8px;
                                 for friend in root.favorite-friends : Rectangle {
-                                    border-radius: VxTheme.radius-card;
+                                    border-radius: VxTheme.radius-control;
                                     background: VxTheme.bg-soft;
                                     border-color: friend.is-in-voice ? VxTheme.speaking-border :
                                                   friend.is-online ? VxTheme.accent-border : VxTheme.border-subtle;
                                     border-width: 1px;
-                                    VerticalLayout {
+                                    clip: true;
+
+                                    Rectangle {
+                                        x: 0px;
+                                        y: 8px;
+                                        width: 3px;
+                                        height: parent.height - 16px;
+                                        border-radius: 2px;
+                                        background: friend.is-in-voice ? VxTheme.speaking-border :
+                                            friend.is-online ? VxTheme.success : transparent;
+                                    }
+
+                                    HorizontalLayout {
                                         padding: 12px;
-                                        spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 10px;
+                                        spacing: 10px;
+                                        alignment: center;
+
+                                        VxAvatar {
+                                            avatar-size: 28px;
+                                            initial: friend.initial;
+                                            color-index: friend.color-index;
+                                            show-status: true;
+                                            is-online: friend.is-online;
+                                            is-speaking: friend.is-in-voice;
+                                        }
+                                        VerticalLayout {
                                             alignment: center;
-                                            VxAvatar {
-                                                avatar-size: 28px;
-                                                initial: friend.initial;
-                                                color-index: friend.color-index;
-                                                show-status: true;
-                                                is-online: friend.is-online;
-                                                is-speaking: friend.is-in-voice;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: friend.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                overflow: elide;
                                             }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                horizontal-stretch: 1;
-                                                spacing: 2px;
-                                                Text {
-                                                    text: friend.name;
-                                                    color: VxTheme.text-primary;
-                                                    font-size: 11px;
-                                                    font-weight: 700;
-                                                }
-                                                Text {
-                                                    text: friend.detail;
-                                                    color: VxTheme.text-muted;
-                                                    font-size: 9px;
-                                                    overflow: elide;
-                                                }
-                                                if !friend.is-online && friend.last-seen != "" : Text {
-                                                    text: friend.last-seen;
-                                                    color: VxTheme.text-muted;
-                                                    font-size: 8px;
-                                                }
+                                            Text {
+                                                text: friend.detail;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                overflow: elide;
                                             }
-                                            VxStatusPill {
-                                                label: friend.status-label;
-                                                tone: friend.is-in-voice ? VxTheme.success :
-                                                      friend.is-online ? VxTheme.text-secondary : VxTheme.text-muted;
-                                                fill: friend.is-in-voice ? VxTheme.success-dim :
-                                                      friend.is-online ? VxTheme.bg-panel : VxTheme.bg-soft;
+                                            if !friend.is-online && friend.last-seen != "" : Text {
+                                                text: friend.last-seen;
+                                                color: VxTheme.text-muted;
+                                                font-size: 8px;
                                             }
                                         }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            VxButton {
-                                                label: "Message";
-                                                glyph: "DM";
-                                                small: true;
-                                                accent: true;
-                                                horizontal-stretch: 1;
-                                                clicked => { root.open-direct-message(friend.user-id); }
-                                            }
-                                            VxButton {
-                                                label: "Remove";
-                                                glyph: "RM";
-                                                small: true;
-                                                soft: true;
-                                                horizontal-stretch: 1;
-                                                clicked => { root.remove-friend(friend.user-id); }
-                                            }
+                                        VxStatusPill {
+                                            label: friend.status-label;
+                                            tone: friend.is-in-voice ? VxTheme.success :
+                                                  friend.is-online ? VxTheme.text-secondary : VxTheme.text-muted;
+                                            fill: friend.is-in-voice ? VxTheme.success-dim :
+                                                  friend.is-online ? VxTheme.bg-panel : VxTheme.bg-soft;
+                                        }
+                                        VxButton {
+                                            label: "Message";
+                                            glyph: "DM";
+                                            small: true;
+                                            accent: true;
+                                            clicked => { root.open-direct-message(friend.user-id); }
+                                        }
+                                        VxButton {
+                                            label: "Remove";
+                                            glyph: "RM";
+                                            small: true;
+                                            soft: true;
+                                            clicked => { root.remove-friend(friend.user-id); }
                                         }
                                     }
                                 }
@@ -543,57 +602,52 @@ export component SystemView inherits Rectangle {
                                 spacing: 8px;
                                 SectionLabel { text: "INCOMING"; }
                                 for request in root.incoming-friend-requests : Rectangle {
-                                    border-radius: VxTheme.radius-card;
+                                    border-radius: VxTheme.radius-control;
                                     background: VxTheme.bg-soft;
                                     border-color: VxTheme.border-subtle;
                                     border-width: 1px;
-                                    VerticalLayout {
+                                    clip: true;
+                                    HorizontalLayout {
                                         padding: 12px;
-                                        spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 10px;
+                                        spacing: 10px;
+                                        alignment: center;
+                                        VxAvatar {
+                                            avatar-size: 28px;
+                                            initial: request.initial;
+                                            color-index: request.color-index;
+                                            show-status: false;
+                                        }
+                                        VerticalLayout {
                                             alignment: center;
-                                            VxAvatar {
-                                                avatar-size: 28px;
-                                                initial: request.initial;
-                                                color-index: request.color-index;
-                                                show-status: false;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: request.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                overflow: elide;
                                             }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                horizontal-stretch: 1;
-                                                spacing: 2px;
-                                                Text {
-                                                    text: request.name;
-                                                    color: VxTheme.text-primary;
-                                                    font-size: 11px;
-                                                    font-weight: 700;
-                                                }
-                                                Text {
-                                                    text: request.detail;
-                                                    color: VxTheme.text-muted;
-                                                    font-size: 9px;
-                                                }
+                                            Text {
+                                                text: request.detail;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                overflow: elide;
                                             }
                                         }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            VxButton {
-                                                label: "Accept";
-                                                glyph: "OK";
-                                                small: true;
-                                                accent: true;
-                                                horizontal-stretch: 1;
-                                                clicked => { root.accept-friend-request(request.user-id); }
-                                            }
-                                            VxButton {
-                                                label: "Decline";
-                                                glyph: "NO";
-                                                small: true;
-                                                soft: true;
-                                                horizontal-stretch: 1;
-                                                clicked => { root.decline-friend-request(request.user-id); }
-                                            }
+                                        VxButton {
+                                            label: "Accept";
+                                            glyph: "OK";
+                                            small: true;
+                                            accent: true;
+                                            clicked => { root.accept-friend-request(request.user-id); }
+                                        }
+                                        VxButton {
+                                            label: "Decline";
+                                            glyph: "NO";
+                                            small: true;
+                                            soft: true;
+                                            clicked => { root.decline-friend-request(request.user-id); }
                                         }
                                     }
                                 }
@@ -602,50 +656,49 @@ export component SystemView inherits Rectangle {
                                 spacing: 8px;
                                 SectionLabel { text: "OUTGOING"; }
                                 for request in root.outgoing-friend-requests : Rectangle {
-                                    border-radius: VxTheme.radius-card;
+                                    border-radius: VxTheme.radius-control;
                                     background: VxTheme.bg-soft;
                                     border-color: VxTheme.border-subtle;
                                     border-width: 1px;
-                                    VerticalLayout {
+                                    clip: true;
+                                    HorizontalLayout {
                                         padding: 12px;
-                                        spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 10px;
+                                        spacing: 10px;
+                                        alignment: center;
+                                        VxAvatar {
+                                            avatar-size: 28px;
+                                            initial: request.initial;
+                                            color-index: request.color-index;
+                                            show-status: false;
+                                        }
+                                        VerticalLayout {
                                             alignment: center;
-                                            VxAvatar {
-                                                avatar-size: 28px;
-                                                initial: request.initial;
-                                                color-index: request.color-index;
-                                                show-status: false;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            Text {
+                                                text: request.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                overflow: elide;
                                             }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                horizontal-stretch: 1;
-                                                spacing: 2px;
-                                                Text {
-                                                    text: request.name;
-                                                    color: VxTheme.text-primary;
-                                                    font-size: 11px;
-                                                    font-weight: 700;
-                                                }
-                                                Text {
-                                                    text: request.detail;
-                                                    color: VxTheme.text-muted;
-                                                    font-size: 9px;
-                                                }
-                                            }
-                                            VxStatusPill {
-                                                label: "Pending";
-                                                tone: VxTheme.text-secondary;
-                                                fill: VxTheme.bg-panel;
+                                            Text {
+                                                text: request.detail;
+                                                color: VxTheme.text-muted;
+                                                font-size: 9px;
+                                                overflow: elide;
                                             }
                                         }
+                                        VxStatusPill {
+                                            label: "Pending";
+                                            tone: VxTheme.text-secondary;
+                                            fill: VxTheme.bg-panel;
+                                        }
                                         VxButton {
-                                            label: "Cancel request";
+                                            label: "Cancel";
                                             glyph: "CN";
                                             small: true;
                                             soft: true;
-                                            horizontal-stretch: 1;
                                             clicked => { root.cancel-friend-request(request.user-id); }
                                         }
                                     }

@@ -442,6 +442,7 @@ pub fn start(
                                     {
                                         let screen_timer_window = window_weak.clone();
                                         let screen_timer_network = network.clone();
+                                        let screen_timer_share = screen_share.clone();
                                         move || {
                                             let Some(w) = screen_timer_window.upgrade() else {
                                                 return;
@@ -449,10 +450,14 @@ pub fn start(
                                             if !w.get_has_screen_share() {
                                                 return;
                                             }
-                                            signal_handler::connection::drain_screen_share_frame(
-                                                &screen_timer_network,
-                                                &w,
-                                            );
+                                            if w.get_is_sharing_screen() {
+                                                screen_timer_share.apply_latest_preview(&w);
+                                            } else {
+                                                signal_handler::connection::drain_screen_share_frame(
+                                                    &screen_timer_network,
+                                                    &w,
+                                                );
+                                            }
                                         }
                                     },
                                 );

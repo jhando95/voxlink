@@ -18,10 +18,10 @@ export component TopBar inherits Rectangle {
     in property <string> update-version: "";
     callback nav-toggle();
 
-    height: (root.compact ? 50px : 56px) * VxTheme.s;
+    height: (root.compact ? 52px : 58px) * VxTheme.s;
     background: @linear-gradient(180deg,
-        VxTheme.bg-panel.brighter(VxTheme.dark-mode ? 0.03 : 0.01) 0%,
-        VxTheme.bg-panel 78%,
+        VxTheme.bg-panel.brighter(VxTheme.dark-mode ? 0.04 : 0.02) 0%,
+        VxTheme.bg-panel 72%,
         VxTheme.bg-soft.transparentize(VxTheme.dark-mode ? 0.78 : 0.60) 100%);
 
     Rectangle {
@@ -48,22 +48,23 @@ export component TopBar inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: 14px;
+        padding-right: 14px;
         alignment: space-between;
-        spacing: root.compact ? 8px : 12px;
+        spacing: root.compact ? 8px : 10px;
 
         HorizontalLayout {
-            spacing: root.compact ? 8px : 10px;
+            spacing: root.compact ? 8px : 12px;
             alignment: center;
 
             if root.show-nav-button : Rectangle {
-                width: root.compact ? 34px : 36px;
-                height: root.compact ? 34px : 36px;
+                width: root.compact ? 36px : 40px;
+                height: root.compact ? 36px : 40px;
                 border-radius: VxTheme.radius-control;
-                background: nav-button-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-                border-color: VxTheme.border-subtle;
+                background: nav-button-touch.has-hover ? VxTheme.tab-active-bg : VxTheme.bg-soft;
+                border-color: nav-button-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
                 border-width: 1px;
+                clip: true;
 
                 accessible-role: button;
                 accessible-label: "Toggle sidebar navigation";
@@ -76,6 +77,11 @@ export component TopBar inherits Rectangle {
                 VerticalLayout {
                     alignment: center;
                     spacing: 4px;
+                    Rectangle {
+                        width: parent.width;
+                        height: 2px;
+                        background: nav-button-touch.has-hover ? VxTheme.accent : #ffffff18;
+                    }
                     for row in [0, 1, 2] : Rectangle {
                         width: 18px;
                         height: 2px;
@@ -85,24 +91,23 @@ export component TopBar inherits Rectangle {
                 }
             }
 
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 3px;
-
+            VerticalLayout {
+                alignment: center;
+                spacing: root.subtitle != "" ? 2px : 0px;
                 Text {
                     text: root.title;
                     color: VxTheme.text-primary;
-                    font-size: root.compact ? 16px : 18px;
+                    font-size: root.compact ? 16px : 19px;
                     font-weight: 700;
                     vertical-alignment: center;
                 }
-                Text {
+                if root.subtitle != "" : Text {
                     text: root.subtitle;
                     color: VxTheme.text-muted;
-                    font-size: 9px;
-                    font-weight: 500;
+                    font-size: 10px;
+                    font-weight: 600;
                     vertical-alignment: center;
-                    visible: !root.compact || root.subtitle != "";
+                    overflow: elide;
                 }
             }
         }
@@ -142,11 +147,19 @@ export component TopBar inherits Rectangle {
             }
 
             Rectangle {
-                height: 30px;
+                height: 32px;
                 border-radius: VxTheme.radius-pill;
                 background: VxTheme.bg-soft;
                 border-color: VxTheme.border-subtle;
                 border-width: 1px;
+                clip: true;
+
+                Rectangle {
+                    width: parent.width;
+                    height: 1px;
+                    background: VxTheme.dark-mode ? #ffffff0a : #ffffffc4;
+                    opacity: 0.78;
+                }
 
                 HorizontalLayout {
                     padding-left: 10px;
@@ -179,13 +192,6 @@ export component TopBar inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
-
-                Rectangle {
-                    width: parent.width;
-                    height: 1px;
-                    background: VxTheme.dark-mode ? #ffffff08 : #ffffffc0;
-                    opacity: 0.75;
-                }
             }
         }
     }
@@ -210,8 +216,17 @@ export component WorkspaceRail inherits Rectangle {
     callback select-space(string);
     callback show-shortcuts();
 
-    width: root.compact ? 216px : 248px;
+    width: root.compact ? 212px : 240px;
     background: VxTheme.bg-rail;
+
+    Rectangle {
+        x: -parent.width * 0.18;
+        y: 0px;
+        width: parent.width * 0.92;
+        height: 220px;
+        background: @linear-gradient(150deg, VxTheme.accent-glow.transparentize(0.28) 0%, transparent 72%);
+        opacity: VxTheme.dark-mode ? 0.42 : 0.28;
+    }
 
     Rectangle {
         x: parent.width - 1px;
@@ -224,12 +239,12 @@ export component WorkspaceRail inherits Rectangle {
         spacing: 0px;
 
         Rectangle {
-            height: root.compact ? 56px : 64px;
+            height: root.compact ? 58px : 66px;
             background: transparent;
 
             HorizontalLayout {
-                padding-left: root.compact ? 14px : 18px;
-                padding-right: root.compact ? 14px : 18px;
+                padding-left: root.compact ? 14px : 16px;
+                padding-right: root.compact ? 14px : 16px;
                 spacing: root.compact ? 10px : 12px;
                 alignment: center;
 
@@ -270,15 +285,19 @@ export component WorkspaceRail inherits Rectangle {
             vertical-stretch: 1;
 
             VerticalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
+                padding-left: 10px;
+                padding-right: 10px;
                 padding-bottom: 14px;
-                spacing: root.compact ? 10px : 14px;
+                spacing: root.compact ? 10px : 12px;
 
                 Rectangle {
                     border-radius: VxTheme.radius-card;
-                    background: @linear-gradient(135deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 70%, transparent 100%);
-                    border-color: session-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
+                    background: root.room-code != ""
+                        ? @linear-gradient(140deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 72%, transparent 100%)
+                        : @linear-gradient(140deg, VxTheme.bg-soft.brighter(0.03) 0%, VxTheme.bg-soft 78%, transparent 100%);
+                    border-color: root.room-code != ""
+                        ? VxTheme.accent-border
+                        : session-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
                     border-width: 1px;
                     clip: true;
 
@@ -290,70 +309,90 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        width: parent.width;
-                        height: 2px;
+                        x: 0px;
+                        y: 8px;
+                        width: 3px;
+                        height: parent.height - 16px;
+                        border-radius: 2px;
                         background: root.room-code != "" ? VxTheme.accent : VxTheme.border-subtle;
                     }
 
-                    VerticalLayout {
-                        padding: 14px;
-                        spacing: 8px;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 10px;
+                        alignment: center;
 
-                        HorizontalLayout {
-                            alignment: space-between;
-                            spacing: 8px;
-
-                            SectionLabel {
-                                text: "SESSION";
-                            }
-
-                            if root.room-code != "" : VxStatusPill {
-                                label: "Live";
-                                tone: VxTheme.success;
-                                fill: VxTheme.success-dim;
-                            }
+                        VxGlyphTile {
+                            tile-size: root.compact ? 34px : 36px;
+                            glyph: root.room-code != "" ? "VC" : "SY";
+                            tone: root.room-code != "" ? VxTheme.accent : VxTheme.text-secondary;
                         }
 
-                        Text {
-                            text: root.room-code != ""
-                                ? "Room " + root.room-code + " is ready."
-                                : "Calls and messages stay close.";
-                            color: VxTheme.text-primary;
-                            font-size: 12px;
-                            font-weight: 700;
-                            wrap: word-wrap;
-                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 4px;
 
-                        Text {
-                            text: root.room-code != ""
-                                ? (root.compact
-                                    ? "Resume in one click."
-                                    : "Jump back into voice or the inbox without digging through the shell.")
-                                : (root.compact
-                                    ? "Inbox and friends."
-                                    : "Unread messages, friend presence, and your active room stay one step away.");
-                            color: VxTheme.text-secondary;
-                            font-size: 9px;
-                            wrap: word-wrap;
-                        }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                spacing: 6px;
 
-                        HorizontalLayout {
-                            spacing: 8px;
+                                SectionLabel {
+                                    text: root.room-code != "" ? "ACTIVE ROOM" : "SESSION";
+                                }
 
-                            VxStatusPill {
-                                label: root.unread-direct-messages-count > 0
-                                    ? root.unread-direct-messages-count + " unread"
-                                    : "Inbox clear";
-                                tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
-                                fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                VxStatusPill {
+                                    label: root.room-code != ""
+                                        ? "Live"
+                                        : root.unread-direct-messages-count > 0 ? "Inbox" : "Ready";
+                                    tone: root.room-code != "" ? VxTheme.success :
+                                        root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                    fill: root.room-code != "" ? VxTheme.success-dim :
+                                        root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                }
                             }
 
-                            VxStatusPill {
-                                label: root.favorite-friends-count > 0
-                                    ? root.online-friends-count + " online"
-                                    : "No friends yet";
-                                tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
-                                fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                            Text {
+                                text: root.room-code != ""
+                                    ? "Room " + root.room-code
+                                    : "Keep voice, inbox, and friends close";
+                                color: VxTheme.text-primary;
+                                font-size: 12px;
+                                font-weight: 800;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.room-code != ""
+                                    ? (root.compact
+                                        ? "Resume without leaving the rail."
+                                        : "Jump back into the live room without leaving the shell.")
+                                    : (root.compact
+                                        ? "Unread messages and favorites stay one tap away."
+                                        : "Unread direct messages, favorite friends, and your current room stay one step away.");
+                                color: VxTheme.text-secondary;
+                                font-size: 9px;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 6px;
+
+                                VxStatusPill {
+                                    label: root.unread-direct-messages-count > 0
+                                        ? root.unread-direct-messages-count + " unread"
+                                        : "Inbox clear";
+                                    tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
+                                    fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                }
+
+                                VxStatusPill {
+                                    label: root.favorite-friends-count > 0
+                                        ? root.online-friends-count + " online"
+                                        : "No favorites";
+                                    tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
+                                    fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
+                                }
                             }
                         }
                     }
@@ -361,17 +400,28 @@ export component WorkspaceRail inherits Rectangle {
 
                 VerticalLayout {
                     spacing: 6px;
-                    SectionLabel {
-                        text: "NAVIGATION";
+                    HorizontalLayout {
+                        alignment: space-between;
+                        spacing: 6px;
+                        SectionLabel {
+                            text: "NAVIGATION";
+                        }
+                        VxStatusPill {
+                            label: "3";
+                            tone: VxTheme.text-muted;
+                            fill: VxTheme.bg-soft;
+                        }
                     }
 
                     Rectangle {
-                        height: 40px;
+                        height: 44px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 0 ? VxTheme.tab-active-bg :
                                     home-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                        border-color: root.current-view == 0 ? VxTheme.accent-border : transparent;
+                        border-color: root.current-view == 0 ? VxTheme.accent-border :
+                            home-rail-touch.has-hover ? VxTheme.border-subtle : transparent;
                         border-width: 1px;
+                        clip: true;
 
                         accessible-role: button;
                         accessible-label: "Home — Dashboard and spaces";
@@ -381,14 +431,23 @@ export component WorkspaceRail inherits Rectangle {
                             clicked => { root.navigate(0); }
                         }
 
+                        Rectangle {
+                            x: 0px;
+                            y: 7px;
+                            width: 3px;
+                            height: parent.height - 14px;
+                            border-radius: 2px;
+                            background: root.current-view == 0 ? VxTheme.accent : transparent;
+                        }
+
                         HorizontalLayout {
-                            padding-left: 12px;
+                            padding-left: 10px;
                             padding-right: 12px;
-                            spacing: 12px;
+                            spacing: 10px;
                             alignment: center;
 
                             VxGlyphTile {
-                                tile-size: 34px;
+                                tile-size: 30px;
                                 glyph: "HM";
                                 tone: root.current-view == 0 ? VxTheme.accent : VxTheme.text-secondary;
                             }
@@ -413,12 +472,14 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        height: 40px;
+                        height: 44px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 2 ? VxTheme.tab-active-bg :
                                     settings-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                        border-color: root.current-view == 2 ? VxTheme.accent-border : transparent;
+                        border-color: root.current-view == 2 ? VxTheme.accent-border :
+                            settings-rail-touch.has-hover ? VxTheme.border-subtle : transparent;
                         border-width: 1px;
+                        clip: true;
 
                         accessible-role: button;
                         accessible-label: "Settings — Audio, devices, keybinds";
@@ -428,14 +489,23 @@ export component WorkspaceRail inherits Rectangle {
                             clicked => { root.navigate(2); }
                         }
 
+                        Rectangle {
+                            x: 0px;
+                            y: 7px;
+                            width: 3px;
+                            height: parent.height - 14px;
+                            border-radius: 2px;
+                            background: root.current-view == 2 ? VxTheme.accent : transparent;
+                        }
+
                         HorizontalLayout {
-                            padding-left: 12px;
+                            padding-left: 10px;
                             padding-right: 12px;
-                            spacing: 12px;
+                            spacing: 10px;
                             alignment: center;
 
                             VxGlyphTile {
-                                tile-size: 34px;
+                                tile-size: 30px;
                                 glyph: "IO";
                                 tone: root.current-view == 2 ? VxTheme.accent : VxTheme.text-secondary;
                             }
@@ -460,12 +530,14 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     Rectangle {
-                        height: 40px;
+                        height: 44px;
                         border-radius: VxTheme.radius-control;
                         background: root.current-view == 3 ? VxTheme.tab-active-bg :
                                     system-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-                        border-color: root.current-view == 3 ? VxTheme.accent-border : transparent;
+                        border-color: root.current-view == 3 ? VxTheme.accent-border :
+                            system-rail-touch.has-hover ? VxTheme.border-subtle : transparent;
                         border-width: 1px;
+                        clip: true;
 
                         accessible-role: button;
                         accessible-label: "System — Performance, friends, session";
@@ -475,14 +547,23 @@ export component WorkspaceRail inherits Rectangle {
                             clicked => { root.navigate(3); }
                         }
 
+                        Rectangle {
+                            x: 0px;
+                            y: 7px;
+                            width: 3px;
+                            height: parent.height - 14px;
+                            border-radius: 2px;
+                            background: root.current-view == 3 ? VxTheme.accent : transparent;
+                        }
+
                         HorizontalLayout {
-                            padding-left: 12px;
+                            padding-left: 10px;
                             padding-right: 12px;
-                            spacing: 12px;
+                            spacing: 10px;
                             alignment: center;
 
                             VxGlyphTile {
-                                tile-size: 34px;
+                                tile-size: 30px;
                                 glyph: "SY";
                                 tone: root.current-view == 3 ? VxTheme.accent : VxTheme.text-secondary;
                             }
@@ -522,7 +603,16 @@ export component WorkspaceRail inherits Rectangle {
                     VerticalLayout {
                         spacing: 6px;
 
-                    SectionLabel { text: "SPACES"; }
+                    HorizontalLayout {
+                        alignment: space-between;
+                        spacing: 6px;
+                        SectionLabel { text: "SPACES"; }
+                        if root.spaces.length > 0 : VxStatusPill {
+                            label: root.spaces.length + "";
+                            tone: VxTheme.text-muted;
+                            fill: VxTheme.bg-soft;
+                        }
+                    }
 
                     if root.spaces.length == 0 : Rectangle {
                         border-radius: VxTheme.radius-card;
@@ -548,30 +638,43 @@ export component WorkspaceRail inherits Rectangle {
                     }
 
                     for space in root.spaces : Rectangle {
-                        height: 58px;
-                        border-radius: VxTheme.radius-card;
+                        height: 52px;
+                        border-radius: VxTheme.radius-control;
                         background: root.current-space-id == space.id &&
                                     (root.current-view == 1 || root.current-view == 4 || root.current-view == 5)
                                     ? VxTheme.tab-active-bg
                                     : space-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
                         border-color: root.current-space-id == space.id &&
                                       (root.current-view == 1 || root.current-view == 4 || root.current-view == 5)
-                                      ? VxTheme.accent-border : transparent;
+                                      ? VxTheme.accent-border :
+                                      space-rail-touch.has-hover ? VxTheme.border-subtle : transparent;
                         border-width: 1px;
+                        clip: true;
 
                         space-rail-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.select-space(space.id); }
                         }
 
+                        Rectangle {
+                            x: 0px;
+                            y: 7px;
+                            width: 3px;
+                            height: parent.height - 14px;
+                            border-radius: 2px;
+                            background: root.current-space-id == space.id &&
+                                (root.current-view == 1 || root.current-view == 4 || root.current-view == 5)
+                                ? VxTheme.accent : transparent;
+                        }
+
                         HorizontalLayout {
-                            padding-left: 12px;
+                            padding-left: 10px;
                             padding-right: 12px;
-                            spacing: 12px;
+                            spacing: 10px;
                             alignment: center;
 
                             VxAvatar {
-                                avatar-size: 36px;
+                                avatar-size: 34px;
                                 initial: space.initial;
                                 color-index: space.color-index;
                             }
@@ -594,6 +697,13 @@ export component WorkspaceRail inherits Rectangle {
                                     overflow: elide;
                                 }
                             }
+
+                            if root.current-space-id == space.id &&
+                                (root.current-view == 1 || root.current-view == 4 || root.current-view == 5) : VxStatusPill {
+                                label: "Open";
+                                tone: VxTheme.accent;
+                                fill: VxTheme.accent-subtle;
+                            }
                         }
                     }
 
@@ -601,12 +711,23 @@ export component WorkspaceRail inherits Rectangle {
 
                 if root.show-members && root.members.length > 0 : VerticalLayout {
                     spacing: 6px;
-                    SectionLabel { text: "ONLINE"; }
+                    HorizontalLayout {
+                        alignment: space-between;
+                        spacing: 6px;
+                        SectionLabel { text: "ONLINE"; }
+                        VxStatusPill {
+                            label: root.members.length + "";
+                            tone: VxTheme.success;
+                            fill: VxTheme.success-dim;
+                        }
+                    }
 
                     for member in root.members : Rectangle {
-                        height: 38px;
+                        height: 40px;
                         border-radius: VxTheme.radius-control;
                         background: member-rail-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                        border-color: member-rail-touch.has-hover ? VxTheme.border-subtle : transparent;
+                        border-width: 1px;
 
                         member-rail-touch := TouchArea { }
 
@@ -664,17 +785,25 @@ export component WorkspaceRail inherits Rectangle {
         }
 
         Rectangle {
-            height: 48px;
-            background: VxTheme.bg-panel;
+            height: 52px;
+            background: @linear-gradient(180deg, VxTheme.bg-panel.brighter(0.02) 0%, VxTheme.bg-panel 100%);
+            clip: true;
 
             user-footer-touch := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { root.navigate(2); }
             }
 
+            Rectangle {
+                width: parent.width;
+                height: 1px;
+                background: VxTheme.dark-mode ? #ffffff0a : #ffffffc4;
+                opacity: 0.78;
+            }
+
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
+                padding-left: 10px;
+                padding-right: 10px;
                 spacing: 10px;
                 alignment: center;
 
@@ -716,13 +845,12 @@ export component WorkspaceRail inherits Rectangle {
                     fill: VxTheme.deafen-badge-bg;
                 }
 
-                // Help button — opens keyboard shortcuts overlay
                 Rectangle {
-                    width: 24px;
-                    height: 24px;
-                    border-radius: 12px;
-                    background: help-touch.has-hover ? VxTheme.btn-hover-bg : transparent;
-                    border-color: help-touch.has-hover ? VxTheme.border-subtle : transparent;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: help-touch.has-hover ? VxTheme.tab-active-bg : transparent;
+                    border-color: help-touch.has-hover ? VxTheme.accent-border : transparent;
                     border-width: 1px;
                     animate background { duration: 80ms; }
 
@@ -732,7 +860,7 @@ export component WorkspaceRail inherits Rectangle {
                     }
                     Text {
                         text: "?";
-                        color: VxTheme.text-muted;
+                        color: help-touch.has-hover ? VxTheme.accent : VxTheme.text-muted;
                         font-size: 12px;
                         font-weight: 700;
                         horizontal-alignment: center;
@@ -1103,8 +1231,10 @@ export component NavBreadcrumb inherits Rectangle {
     in property <int> chat-back-view: 4;
     callback navigate(int);
 
-    height: 32px;
-    background: VxTheme.bg-panel;
+    height: 36px;
+    background: @linear-gradient(180deg,
+        VxTheme.bg-panel.brighter(VxTheme.dark-mode ? 0.02 : 0.01) 0%,
+        VxTheme.bg-panel 100%);
 
     // Bottom border
     Rectangle {
@@ -1115,17 +1245,18 @@ export component NavBreadcrumb inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 12px;
+        padding-left: 10px;
         padding-right: 12px;
-        spacing: 0px;
-        alignment: start;
+        spacing: 6px;
+        alignment: center;
 
-        // Back button (always visible except on Home)
         if root.current-view != 0 : Rectangle {
             width: 28px;
-            height: 24px;
+            height: 28px;
             border-radius: VxTheme.radius-control;
-            background: back-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+            background: back-touch.has-hover ? VxTheme.tab-active-bg : transparent;
+            border-color: back-touch.has-hover ? VxTheme.accent-border : transparent;
+            border-width: 1px;
 
             back-touch := TouchArea {
                 mouse-cursor: pointer;
@@ -1150,10 +1281,15 @@ export component NavBreadcrumb inherits Rectangle {
             }
         }
 
-        // Home crumb
         Rectangle {
             height: 24px;
-            width: home-crumb-text.preferred-width + 12px;
+            width: home-crumb-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: root.current-view == 0 ? VxTheme.tab-active-bg :
+                home-crumb-touch.has-hover ? VxTheme.bg-soft : transparent;
+            border-color: root.current-view == 0 ? VxTheme.accent-border :
+                home-crumb-touch.has-hover ? VxTheme.border-subtle : transparent;
+            border-width: root.current-view == 0 || home-crumb-touch.has-hover ? 1px : 0px;
 
             home-crumb-touch := TouchArea {
                 mouse-cursor: root.current-view != 0 ? pointer : default;
@@ -1170,17 +1306,22 @@ export component NavBreadcrumb inherits Rectangle {
             }
         }
 
-        // Space crumb (Space view, TextChat in space, voice channel in space)
-        if (root.current-view == 4 || root.current-view == 5 || (root.current-view == 1 && root.in-space-channel)) && root.space-name != "" : Text {
-            text: " / ";
-            color: VxTheme.text-muted;
-            font-size: 10px;
-            vertical-alignment: center;
+        if (root.current-view == 4 || root.current-view == 5 || (root.current-view == 1 && root.in-space-channel)) && root.space-name != "" : Rectangle {
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            background: VxTheme.text-muted.transparentize(0.15);
         }
 
         if (root.current-view == 4 || root.current-view == 5 || (root.current-view == 1 && root.in-space-channel)) && root.space-name != "" : Rectangle {
             height: 24px;
-            width: space-crumb-text.preferred-width + 12px;
+            width: space-crumb-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: root.current-view == 4 ? VxTheme.tab-active-bg :
+                space-crumb-touch.has-hover ? VxTheme.bg-soft : transparent;
+            border-color: root.current-view == 4 ? VxTheme.accent-border :
+                space-crumb-touch.has-hover ? VxTheme.border-subtle : transparent;
+            border-width: root.current-view == 4 || space-crumb-touch.has-hover ? 1px : 0px;
 
             space-crumb-touch := TouchArea {
                 mouse-cursor: root.current-view != 4 ? pointer : default;
@@ -1199,69 +1340,131 @@ export component NavBreadcrumb inherits Rectangle {
             }
         }
 
-        // Channel crumb (TextChat or Voice channel leaf)
-        if (root.current-view == 5 && root.channel-name != "") || (root.current-view == 1 && root.in-space-channel) : Text {
-            text: " / ";
-            color: VxTheme.text-muted;
-            font-size: 10px;
-            vertical-alignment: center;
+        if (root.current-view == 5 && root.channel-name != "") || (root.current-view == 1 && root.in-space-channel) : Rectangle {
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            background: VxTheme.text-muted.transparentize(0.15);
         }
 
-        if root.current-view == 5 && root.channel-name != "" : Text {
-            text: root.chat-is-dm ? root.channel-name : "# " + root.channel-name;
-            color: VxTheme.text-primary;
-            font-size: 10px;
-            font-weight: 700;
-            vertical-alignment: center;
-            overflow: elide;
-            max-width: 140px;
+        if root.current-view == 5 && root.channel-name != "" : Rectangle {
+            height: 24px;
+            width: channel-crumb-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: VxTheme.tab-active-bg;
+            border-color: VxTheme.accent-border;
+            border-width: 1px;
+
+            channel-crumb-text := Text {
+                text: root.chat-is-dm ? root.channel-name : "# " + root.channel-name;
+                color: VxTheme.text-primary;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+                max-width: 140px;
+            }
         }
 
-        if root.current-view == 1 && root.in-space-channel : Text {
-            text: "# " + root.room-code;
-            color: VxTheme.text-primary;
-            font-size: 10px;
-            font-weight: 700;
-            vertical-alignment: center;
-            overflow: elide;
-            max-width: 140px;
+        if root.current-view == 1 && root.in-space-channel : Rectangle {
+            height: 24px;
+            width: room-crumb-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: VxTheme.tab-active-bg;
+            border-color: VxTheme.accent-border;
+            border-width: 1px;
+
+            room-crumb-text := Text {
+                text: "# " + root.room-code;
+                color: VxTheme.text-primary;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+                max-width: 140px;
+            }
         }
 
-        // Non-space leaf labels
-        if root.current-view == 1 && !root.in-space-channel : Text {
-            text: " /  Room " + root.room-code;
-            color: VxTheme.text-primary;
-            font-size: 10px;
-            font-weight: 700;
-            vertical-alignment: center;
+        if root.current-view == 1 && !root.in-space-channel : Rectangle {
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            background: VxTheme.text-muted.transparentize(0.15);
         }
 
-        if root.current-view == 2 : Text {
-            text: " /  Settings";
-            color: VxTheme.text-primary;
-            font-size: 10px;
-            font-weight: 700;
-            vertical-alignment: center;
+        if root.current-view == 1 && !root.in-space-channel : Rectangle {
+            height: 24px;
+            width: room-leaf-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: VxTheme.tab-active-bg;
+            border-color: VxTheme.accent-border;
+            border-width: 1px;
+
+            room-leaf-text := Text {
+                text: "Room " + root.room-code;
+                color: VxTheme.text-primary;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
         }
 
-        if root.current-view == 3 : Text {
-            text: " /  System";
-            color: VxTheme.text-primary;
-            font-size: 10px;
-            font-weight: 700;
-            vertical-alignment: center;
+        if root.current-view == 2 : Rectangle {
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            background: VxTheme.text-muted.transparentize(0.15);
         }
 
-        // Spacer
+        if root.current-view == 2 : Rectangle {
+            height: 24px;
+            width: settings-leaf-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: VxTheme.tab-active-bg;
+            border-color: VxTheme.accent-border;
+            border-width: 1px;
+
+            settings-leaf-text := Text {
+                text: "Settings";
+                color: VxTheme.text-primary;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.current-view == 3 : Rectangle {
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            background: VxTheme.text-muted.transparentize(0.15);
+        }
+
+        if root.current-view == 3 : Rectangle {
+            height: 24px;
+            width: system-leaf-text.preferred-width + 16px;
+            border-radius: VxTheme.radius-pill;
+            background: VxTheme.tab-active-bg;
+            border-color: VxTheme.accent-border;
+            border-width: 1px;
+
+            system-leaf-text := Text {
+                text: "System";
+                color: VxTheme.text-primary;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
         Rectangle { horizontal-stretch: 1; }
 
-        // Quick-nav: "Space" pill when in voice channel
         if root.current-view == 1 && root.in-space-channel : Rectangle {
-            height: 22px;
+            height: 24px;
             width: space-pill-text.preferred-width + 16px;
             border-radius: VxTheme.radius-pill;
-            background: space-pill-touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
-            border-color: VxTheme.border-subtle;
+            background: space-pill-touch.has-hover ? VxTheme.tab-active-bg : VxTheme.bg-soft;
+            border-color: space-pill-touch.has-hover ? VxTheme.accent-border : VxTheme.border-subtle;
             border-width: 1px;
 
             space-pill-touch := TouchArea {
