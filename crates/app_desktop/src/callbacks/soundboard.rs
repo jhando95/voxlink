@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use slint::ComponentHandle;
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
@@ -38,17 +38,28 @@ pub fn setup_add_clip(
             // Save to config
             let _lock = crate::helpers::CONFIG_LOCK.lock().ok();
             let mut cfg = config_store::load_config();
-            cfg.soundboard_clips.push(config_store::SoundboardClipConfig {
-                name: name.clone(),
-                path: path.clone(),
-                keybind: if keybind.is_empty() { None } else { Some(keybind.clone()) },
-            });
+            cfg.soundboard_clips
+                .push(config_store::SoundboardClipConfig {
+                    name: name.clone(),
+                    path: path.clone(),
+                    keybind: if keybind.is_empty() {
+                        None
+                    } else {
+                        Some(keybind.clone())
+                    },
+                });
             let _ = config_store::save_config(&cfg);
             // Update UI
             let clip_tuples: Vec<(String, String, String)> = cfg
                 .soundboard_clips
                 .iter()
-                .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
+                .map(|c| {
+                    (
+                        c.name.clone(),
+                        c.path.clone(),
+                        c.keybind.clone().unwrap_or_default(),
+                    )
+                })
                 .collect();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = window_weak.upgrade() {
@@ -110,7 +121,13 @@ pub fn setup_remove_clip(
             let clip_tuples: Vec<(String, String, String)> = cfg
                 .soundboard_clips
                 .iter()
-                .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
+                .map(|c| {
+                    (
+                        c.name.clone(),
+                        c.path.clone(),
+                        c.keybind.clone().unwrap_or_default(),
+                    )
+                })
                 .collect();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = window_weak.upgrade() {

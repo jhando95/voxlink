@@ -192,7 +192,10 @@ pub fn handle_channel_left(
     {
         let s = state.borrow();
         // Check actual channel state, not view — the user may be on Settings/System
-        let already_left = s.space.as_ref().is_none_or(|sp| sp.active_channel_id.is_none());
+        let already_left = s
+            .space
+            .as_ref()
+            .is_none_or(|sp| sp.active_channel_id.is_none());
         if already_left {
             log::debug!("Ignoring ChannelLeft — already left");
             return;

@@ -38,7 +38,9 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    config_store::migrate_legacy_auth_token();
     let config = config_store::load_config();
+    let has_saved_auth = config_store::has_auth_token();
     log::info!("Config loaded ({}ms)", startup_t0.elapsed().as_millis());
     let is_dark = config.dark_mode.unwrap_or(true);
     let theme_preset = helpers::theme_preset_index(&config.theme_preset);
@@ -188,7 +190,11 @@ fn main() {
             .filter_map(|(idx, clip)| {
                 clip.keybind.as_ref().and_then(|kb| {
                     let combo = tick_loop::keys::parse_combo(kb);
-                    if combo.is_empty() { None } else { Some((idx, combo)) }
+                    if combo.is_empty() {
+                        None
+                    } else {
+                        Some((idx, combo))
+                    }
                 })
             })
             .collect();
@@ -225,7 +231,7 @@ fn main() {
         _ => 0,
     });
     window.set_idle_timeout_mins(config.idle_timeout_mins as i32);
-    window.set_first_run(config.auth_token.is_none() && !config.first_run_completed);
+    window.set_first_run(!has_saved_auth && !config.first_run_completed);
     if let Some(ref email) = config.account_email {
         window.set_is_logged_in(true);
         window.set_account_email(email.as_str().into());
@@ -289,11 +295,9 @@ fn main() {
     // System tray icon — minimize-to-tray on close, context menu for quick actions
     // Wrapped in catch_unwind because muda panics on macOS if ObjC classes already exist
     let tray = tray::load_icon_rgba().and_then(|(rgba, w, h)| {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tray::Tray::new(rgba, w, h)
-        }))
-        .ok()
-        .flatten()
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tray::Tray::new(rgba, w, h)))
+            .ok()
+            .flatten()
     });
     if let Some(tray) = tray {
         log::info!("System tray icon created");
@@ -333,7 +337,10 @@ fn main() {
         log::warn!("System tray icon could not be created");
     }
 
-    log::info!("Voxlink ready (startup: {}ms)", startup_t0.elapsed().as_millis());
+    log::info!(
+        "Voxlink ready (startup: {}ms)",
+        startup_t0.elapsed().as_millis()
+    );
     if let Err(err) = window.run() {
         log::error!("Voxlink UI loop failed: {err}");
     }
@@ -568,7 +575,13 @@ fn apply_config(
         let clip_tuples: Vec<(String, String, String)> = config
             .soundboard_clips
             .iter()
-            .map(|c| (c.name.clone(), c.path.clone(), c.keybind.clone().unwrap_or_default()))
+            .map(|c| {
+                (
+                    c.name.clone(),
+                    c.path.clone(),
+                    c.keybind.clone().unwrap_or_default(),
+                )
+            })
             .collect();
         ui_shell::set_soundboard_clips(window, &clip_tuples);
     }
@@ -700,7 +713,7 @@ fn auto_connect(
             .map(|space| space.invite_code.clone())
     });
     let user_name = config.user_name.clone();
-    let auth_token = config.auth_token.clone();
+    let auth_token = config_store::load_auth_token();
 
     if server_addr.is_empty() {
         return;

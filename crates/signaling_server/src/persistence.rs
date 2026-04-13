@@ -363,7 +363,11 @@ impl Database {
         // v0.10.0: Role colors
         self.ensure_column("space_roles", "role_color", "TEXT NOT NULL DEFAULT ''")?;
         // Auto-delete & link preview columns
-        self.ensure_column("channels", "auto_delete_hours", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column(
+            "channels",
+            "auto_delete_hours",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         self.ensure_message_column("link_url", "TEXT")?;
         // Welcome message
         self.ensure_column("spaces", "welcome_message", "TEXT NOT NULL DEFAULT ''")?;
@@ -805,7 +809,9 @@ impl Database {
              ORDER BY timestamp DESC LIMIT ?2",
             placeholders.join(", ")
         );
-        let mut stmt = conn.prepare(&sql).map_err(|e| format!("Query error: {e}"))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("Query error: {e}"))?;
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         params_vec.push(Box::new(pattern));
         params_vec.push(Box::new(limit as i64));
@@ -1045,18 +1051,13 @@ impl Database {
         let mut stmt = conn
             .prepare("SELECT password_hash FROM users WHERE user_id = ?1")
             .map_err(|e| format!("Query error: {e}"))?;
-        let result: Option<Option<String>> = stmt
-            .query_row(params![user_id], |row| row.get(0))
-            .ok();
+        let result: Option<Option<String>> =
+            stmt.query_row(params![user_id], |row| row.get(0)).ok();
         Ok(result.flatten())
     }
 
     /// Update the password hash for a user.
-    pub fn update_password_hash(
-        &self,
-        user_id: &str,
-        password_hash: &str,
-    ) -> Result<(), String> {
+    pub fn update_password_hash(&self, user_id: &str, password_hash: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
             "UPDATE users SET password_hash = ?2 WHERE user_id = ?1",
@@ -1403,7 +1404,13 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO space_roles (space_id, user_id, role, assigned_at, role_color)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![role.space_id, role.user_id, role.role, role.assigned_at, role.role_color],
+            params![
+                role.space_id,
+                role.user_id,
+                role.role,
+                role.assigned_at,
+                role.role_color
+            ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
         Ok(())
@@ -1445,12 +1452,7 @@ impl Database {
     }
 
     /// Set the display color for a role in a space. `color` is a hex string like "#ff5555".
-    pub fn set_role_color(
-        &self,
-        space_id: &str,
-        role: &str,
-        color: &str,
-    ) -> Result<(), String> {
+    pub fn set_role_color(&self, space_id: &str, role: &str, color: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
             "UPDATE space_roles SET role_color = ?1 WHERE space_id = ?2 AND role = ?3",
@@ -1799,12 +1801,7 @@ pub struct AutomodFilterRow {
 }
 
 impl Database {
-    pub fn add_automod_word(
-        &self,
-        space_id: &str,
-        word: &str,
-        action: &str,
-    ) -> Result<(), String> {
+    pub fn add_automod_word(&self, space_id: &str, word: &str, action: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO automod_filters (space_id, word, action) VALUES (?1, ?2, ?3)",
@@ -1849,8 +1846,11 @@ impl Database {
 
     pub fn update_display_name(&self, user_id: &str, name: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        conn.execute("UPDATE users SET display_name = ?1 WHERE user_id = ?2", rusqlite::params![name, user_id])
-            .map_err(|e| format!("update name: {e}"))?;
+        conn.execute(
+            "UPDATE users SET display_name = ?1 WHERE user_id = ?2",
+            rusqlite::params![name, user_id],
+        )
+        .map_err(|e| format!("update name: {e}"))?;
         Ok(())
     }
 
@@ -1858,20 +1858,36 @@ impl Database {
         let conn = self.lock_conn()?;
         conn.execute("DELETE FROM users WHERE user_id = ?1", [user_id])
             .map_err(|e| format!("delete user: {e}"))?;
-        conn.execute("DELETE FROM friendships WHERE user_a = ?1 OR user_b = ?1", [user_id])
-            .map_err(|e| format!("del friends: {e}"))?;
-        conn.execute("DELETE FROM friend_requests WHERE from_id = ?1 OR to_id = ?1", [user_id])
-            .map_err(|e| format!("del requests: {e}"))?;
-        conn.execute("DELETE FROM user_blocks WHERE blocker_id = ?1 OR blocked_id = ?1", [user_id])
-            .map_err(|e| format!("del blocks: {e}"))?;
+        conn.execute(
+            "DELETE FROM friendships WHERE user_low_id = ?1 OR user_high_id = ?1",
+            [user_id],
+        )
+        .map_err(|e| format!("del friends: {e}"))?;
+        conn.execute(
+            "DELETE FROM friend_requests WHERE requester_id = ?1 OR addressee_id = ?1",
+            [user_id],
+        )
+        .map_err(|e| format!("del requests: {e}"))?;
+        conn.execute(
+            "DELETE FROM user_blocks WHERE blocker_id = ?1 OR blocked_id = ?1",
+            [user_id],
+        )
+        .map_err(|e| format!("del blocks: {e}"))?;
         Ok(())
     }
 
     // ── Scheduled Events ──
 
     pub fn create_scheduled_event(
-        &self, id: &str, space_id: &str, title: &str, description: &str,
-        start_time: i64, end_time: i64, creator_id: &str, creator_name: &str,
+        &self,
+        id: &str,
+        space_id: &str,
+        title: &str,
+        description: &str,
+        start_time: i64,
+        end_time: i64,
+        creator_id: &str,
+        creator_name: &str,
     ) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
@@ -1883,8 +1899,11 @@ impl Database {
 
     pub fn delete_scheduled_event(&self, event_id: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        conn.execute("DELETE FROM event_interests WHERE event_id = ?1", [event_id])
-            .map_err(|e| format!("del interests: {e}"))?;
+        conn.execute(
+            "DELETE FROM event_interests WHERE event_id = ?1",
+            [event_id],
+        )
+        .map_err(|e| format!("del interests: {e}"))?;
         conn.execute("DELETE FROM scheduled_events WHERE id = ?1", [event_id])
             .map_err(|e| format!("del event: {e}"))?;
         Ok(())
@@ -1898,23 +1917,30 @@ impl Database {
                 [event_id, user_id],
                 |r| r.get::<_, i64>(0),
             )
-            .map_err(|e| format!("check interest: {e}"))? > 0;
+            .map_err(|e| format!("check interest: {e}"))?
+            > 0;
         if exists {
             conn.execute(
                 "DELETE FROM event_interests WHERE event_id=?1 AND user_id=?2",
                 [event_id, user_id],
-            ).map_err(|e| format!("rm interest: {e}"))?;
+            )
+            .map_err(|e| format!("rm interest: {e}"))?;
             Ok(false)
         } else {
             conn.execute(
                 "INSERT INTO event_interests (event_id, user_id) VALUES (?1, ?2)",
                 [event_id, user_id],
-            ).map_err(|e| format!("add interest: {e}"))?;
+            )
+            .map_err(|e| format!("add interest: {e}"))?;
             Ok(true)
         }
     }
 
-    pub fn load_scheduled_events(&self, space_id: &str, viewer_user_id: &str) -> Result<Vec<shared_types::ScheduledEvent>, String> {
+    pub fn load_scheduled_events(
+        &self,
+        space_id: &str,
+        viewer_user_id: &str,
+    ) -> Result<Vec<shared_types::ScheduledEvent>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.creator_name,
@@ -1922,18 +1948,20 @@ impl Database {
                     (SELECT COUNT(*) FROM event_interests WHERE event_id = e.id AND user_id = ?2) as me
              FROM scheduled_events e WHERE e.space_id = ?1 ORDER BY e.start_time ASC"
         ).map_err(|e| format!("prepare events: {e}"))?;
-        let rows = stmt.query_map(rusqlite::params![space_id, viewer_user_id], |r| {
-            Ok(shared_types::ScheduledEvent {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                description: r.get(2)?,
-                start_time: r.get(3)?,
-                end_time: r.get(4)?,
-                creator_name: r.get(5)?,
-                interested_count: r.get::<_, i64>(6)? as u32,
-                is_interested: r.get::<_, i64>(7)? > 0,
+        let rows = stmt
+            .query_map(rusqlite::params![space_id, viewer_user_id], |r| {
+                Ok(shared_types::ScheduledEvent {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    description: r.get(2)?,
+                    start_time: r.get(3)?,
+                    end_time: r.get(4)?,
+                    creator_name: r.get(5)?,
+                    interested_count: r.get::<_, i64>(6)? as u32,
+                    is_interested: r.get::<_, i64>(7)? > 0,
+                })
             })
-        }).map_err(|e| format!("query events: {e}"))?;
+            .map_err(|e| format!("query events: {e}"))?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r.map_err(|e| format!("row: {e}"))?);
@@ -1947,17 +1975,28 @@ impl Database {
             "SELECT COUNT(*) FROM event_interests WHERE event_id = ?1",
             [event_id],
             |r| r.get::<_, i64>(0),
-        ).map(|c| c as u32).map_err(|e| format!("count: {e}"))
+        )
+        .map(|c| c as u32)
+        .map_err(|e| format!("count: {e}"))
     }
 
     // ── Scheduled Messages ──
 
     pub fn schedule_message(
-        &self, id: &str, space_id: &str, channel_id: &str, sender_id: &str,
-        sender_name: &str, content: &str, send_at: i64,
+        &self,
+        id: &str,
+        space_id: &str,
+        channel_id: &str,
+        sender_id: &str,
+        sender_name: &str,
+        content: &str,
+        send_at: i64,
     ) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         conn.execute(
             "INSERT INTO scheduled_messages (id, space_id, channel_id, sender_id, sender_name, content, send_at, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             rusqlite::params![id, space_id, channel_id, sender_id, sender_name, content, send_at, now],
@@ -1967,22 +2006,41 @@ impl Database {
 
     pub fn cancel_scheduled_message(&self, schedule_id: &str) -> Result<(), String> {
         let conn = self.lock_conn()?;
-        conn.execute("DELETE FROM scheduled_messages WHERE id = ?1", [schedule_id])
-            .map_err(|e| format!("cancel sched: {e}"))?;
+        conn.execute(
+            "DELETE FROM scheduled_messages WHERE id = ?1",
+            [schedule_id],
+        )
+        .map_err(|e| format!("cancel sched: {e}"))?;
         Ok(())
     }
 
-    pub fn get_due_scheduled_messages(&self) -> Result<Vec<(String, String, String, String, String, String)>, String> {
+    pub fn get_due_scheduled_messages(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, String)>, String> {
         let conn = self.lock_conn()?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         let mut stmt = conn.prepare(
             "SELECT id, space_id, channel_id, sender_id, sender_name, content FROM scheduled_messages WHERE send_at <= ?1"
         ).map_err(|e| format!("prep due: {e}"))?;
-        let rows = stmt.query_map([now], |r: &rusqlite::Row| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?))
-        }).map_err(|e| format!("query due: {e}"))?;
+        let rows = stmt
+            .query_map([now], |r: &rusqlite::Row| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(|e| format!("query due: {e}"))?;
         let mut out: Vec<(String, String, String, String, String, String)> = Vec::new();
-        for r in rows { out.push(r.map_err(|e| format!("row: {e}"))?); }
+        for r in rows {
+            out.push(r.map_err(|e| format!("row: {e}"))?);
+        }
         Ok(out)
     }
 
@@ -1994,7 +2052,10 @@ impl Database {
     }
 
     /// Return the sender_id of a scheduled message, or None if not found.
-    pub fn get_scheduled_message_sender(&self, schedule_id: &str) -> Result<Option<String>, String> {
+    pub fn get_scheduled_message_sender(
+        &self,
+        schedule_id: &str,
+    ) -> Result<Option<String>, String> {
         let conn = self.lock_conn()?;
         match conn.query_row(
             "SELECT sender_id FROM scheduled_messages WHERE id = ?1",
@@ -2008,7 +2069,10 @@ impl Database {
     }
 
     /// Return invite settings for a space: (invite_expires_at, invite_max_uses, invite_uses).
-    pub fn get_invite_info(&self, space_id: &str) -> Result<(Option<i64>, Option<i64>, i64), String> {
+    pub fn get_invite_info(
+        &self,
+        space_id: &str,
+    ) -> Result<(Option<i64>, Option<i64>, i64), String> {
         let conn = self.lock_conn()?;
         let result = conn.query_row(
             "SELECT invite_expires_at, invite_max_uses, COALESCE(invite_uses, 0) FROM spaces WHERE id = ?1",
@@ -2024,7 +2088,8 @@ impl Database {
         conn.execute(
             "UPDATE spaces SET invite_uses = COALESCE(invite_uses, 0) + 1 WHERE id = ?1",
             params![space_id],
-        ).map_err(|e| format!("inc invite uses: {e}"))?;
+        )
+        .map_err(|e| format!("inc invite uses: {e}"))?;
         Ok(())
     }
 
@@ -2035,7 +2100,8 @@ impl Database {
         conn.execute(
             "UPDATE spaces SET welcome_message = ?1 WHERE id = ?2",
             rusqlite::params![message, space_id],
-        ).map_err(|e| format!("set welcome: {e}"))?;
+        )
+        .map_err(|e| format!("set welcome: {e}"))?;
         Ok(())
     }
 
@@ -2045,7 +2111,8 @@ impl Database {
             "SELECT COALESCE(welcome_message, '') FROM spaces WHERE id = ?1",
             [space_id],
             |r| r.get::<_, String>(0),
-        ).map_err(|e| format!("get welcome: {e}"))
+        )
+        .map_err(|e| format!("get welcome: {e}"))
     }
 
     // ── Server Discovery ──
@@ -2067,7 +2134,8 @@ impl Database {
         conn.execute(
             "UPDATE spaces SET is_public = ?1 WHERE id = ?2",
             params![is_public as i32, space_id],
-        ).map_err(|e| format!("set public: {e}"))?;
+        )
+        .map_err(|e| format!("set public: {e}"))?;
         Ok(())
     }
 
@@ -2076,16 +2144,20 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, name, COALESCE(description, ''), invite_code FROM spaces WHERE is_public = 1"
         ).map_err(|e| format!("prep public: {e}"))?;
-        let rows = stmt.query_map([], |r: &rusqlite::Row| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        }).map_err(|e| format!("query public: {e}"))?;
+        let rows = stmt
+            .query_map([], |r: &rusqlite::Row| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| format!("query public: {e}"))?;
         let mut out = Vec::new();
-        for r in rows { out.push(r.map_err(|e| format!("row: {e}"))?); }
+        for r in rows {
+            out.push(r.map_err(|e| format!("row: {e}"))?);
+        }
         Ok(out)
     }
 }
@@ -2678,8 +2750,7 @@ mod tests {
     fn group_messages_round_trip() {
         let (db, path) = temp_db();
         let members = vec!["u1".into(), "u2".into()];
-        db.create_group_conversation("g1", "Duo", &members)
-            .unwrap();
+        db.create_group_conversation("g1", "Duo", &members).unwrap();
 
         db.save_group_message(&GroupMessageRow {
             id: "gm1".into(),

@@ -96,7 +96,7 @@ pub fn auto_save_settings(
             input_volume: existing.input_volume,
             output_volume: existing.output_volume,
             notifications_enabled: existing.notifications_enabled,
-            auth_token: existing.auth_token,
+            auth_token: None,
             minimize_to_tray: existing.minimize_to_tray,
             member_widget_visible: existing.member_widget_visible,
             member_widget_x: existing.member_widget_x,
@@ -256,8 +256,11 @@ pub fn show_toast(window: &MainWindow, message: &str, toast_type: i32) {
 pub fn save_auth_token_async(token: String) {
     crate::helpers::spawn_config_save(move || {
         let _lock = CONFIG_LOCK.lock().ok();
+        if let Err(err) = config_store::store_auth_token(&token) {
+            log::warn!("Failed to persist auth token securely: {err}");
+        }
         let mut cfg = config_store::load_config();
-        cfg.auth_token = Some(token);
+        cfg.auth_token = None;
         let _ = config_store::save_config(&cfg);
     });
 }
@@ -274,6 +277,9 @@ pub fn save_account_email_async(email: String) {
 pub fn clear_auth_token_async() {
     crate::helpers::spawn_config_save(|| {
         let _lock = CONFIG_LOCK.lock().ok();
+        if let Err(err) = config_store::clear_auth_token() {
+            log::warn!("Failed to clear secure auth token: {err}");
+        }
         let mut cfg = config_store::load_config();
         cfg.auth_token = None;
         cfg.account_email = None;
@@ -526,7 +532,10 @@ pub fn start_audio_if_needed(
 
             // Start capture (microphone)
             match aud.start_capture(input_device.as_deref()) {
-                Ok(()) => log::info!("Capture started on: {:?}", input_device.as_deref().unwrap_or("default")),
+                Ok(()) => log::info!(
+                    "Capture started on: {:?}",
+                    input_device.as_deref().unwrap_or("default")
+                ),
                 Err(e) => {
                     log::error!("Failed to start capture: {e}");
                     audio_ok = false;
@@ -554,7 +563,10 @@ pub fn start_audio_if_needed(
 
             // Start playback (speakers)
             match aud.start_playback(output_device.as_deref()) {
-                Ok(()) => log::info!("Playback started on: {:?}", output_device.as_deref().unwrap_or("default")),
+                Ok(()) => log::info!(
+                    "Playback started on: {:?}",
+                    output_device.as_deref().unwrap_or("default")
+                ),
                 Err(e) => {
                     log::error!("Failed to start playback: {e}");
                     audio_ok = false;
@@ -565,7 +577,9 @@ pub fn start_audio_if_needed(
                             log::error!("Default output device also failed: {e2}");
                             if let Some(ref ww) = window_weak {
                                 if let Some(w) = ww.upgrade() {
-                                    w.set_room_status("Speaker error — check audio settings".into());
+                                    w.set_room_status(
+                                        "Speaker error — check audio settings".into(),
+                                    );
                                 }
                             }
                         } else {

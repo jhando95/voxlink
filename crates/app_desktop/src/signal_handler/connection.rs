@@ -187,8 +187,7 @@ pub fn check_connection(
         let room_code = w.get_room_code().to_string();
         let user_name = w.get_user_name().to_string();
         let space_invite = w.get_current_space_invite().to_string();
-        let direct_message_user_id = if current_view
-            == ui_shell::view_to_index(AppView::TextChat)
+        let direct_message_user_id = if current_view == ui_shell::view_to_index(AppView::TextChat)
             && w.get_chat_is_direct_message()
         {
             Some(w.get_chat_channel_id().to_string())
@@ -215,10 +214,9 @@ pub fn check_connection(
                 log::info!("Skipping auto-rejoin: user navigated away during reconnect");
                 // Still re-authenticate even if we skip rejoin
                 let net = network.lock().await;
-                let cfg = config_store::load_config();
                 let _ = net
                     .send_signal(&SignalMessage::Authenticate {
-                        token: cfg.auth_token,
+                        token: config_store::load_auth_token(),
                         user_name,
                     })
                     .await;
@@ -227,10 +225,9 @@ pub fn check_connection(
             let net = network.lock().await;
 
             // Re-authenticate after reconnect
-            let cfg = config_store::load_config();
             let _ = net
                 .send_signal(&SignalMessage::Authenticate {
-                    token: cfg.auth_token,
+                    token: config_store::load_auth_token(),
                     user_name: user_name.clone(),
                 })
                 .await;
@@ -337,7 +334,8 @@ pub fn check_connection(
                 *interval = (*interval * 2).min(1200);
                 // Add random jitter (±25% of interval) to prevent thundering herd
                 let jitter_range = (*interval / 4).max(1);
-                let jitter = rand::thread_rng().gen_range(0..jitter_range * 2) as i64 - jitter_range as i64;
+                let jitter =
+                    rand::thread_rng().gen_range(0..jitter_range * 2) as i64 - jitter_range as i64;
                 *cooldown = ((*interval as i64 + jitter).max(1)) as u64;
             }
         }

@@ -86,7 +86,10 @@ impl TestServer {
         let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
         loop {
             if tokio::time::Instant::now() > deadline {
-                panic!("Server did not start within {}s on port {port}", STARTUP_TIMEOUT.as_secs());
+                panic!(
+                    "Server did not start within {}s on port {port}",
+                    STARTUP_TIMEOUT.as_secs()
+                );
             }
             match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
                 Ok(_) => break,
@@ -102,7 +105,10 @@ impl TestServer {
         let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
         loop {
             if tokio::time::Instant::now() > deadline {
-                panic!("Could not connect WebSocket client within {}s", STARTUP_TIMEOUT.as_secs());
+                panic!(
+                    "Could not connect WebSocket client within {}s",
+                    STARTUP_TIMEOUT.as_secs()
+                );
             }
             match tokio_tungstenite::connect_async(&url).await {
                 Ok((ws, _)) => {
@@ -163,7 +169,10 @@ impl TestClient {
         let mut packet = Vec::with_capacity(data.len() + 1);
         packet.push(shared_types::MEDIA_PACKET_AUDIO);
         packet.extend_from_slice(data);
-        self.sink.send(Message::Binary(packet.into())).await.unwrap();
+        self.sink
+            .send(Message::Binary(packet.into()))
+            .await
+            .unwrap();
     }
 }
 
@@ -204,10 +213,30 @@ fn parse_audio_frame(frame: &[u8]) -> (&str, &[u8]) {
         frame.first().copied().unwrap_or(0)
     );
     let id_len = frame[1] as usize;
-    assert!(frame.len() > 2 + id_len, "Frame too short for sender header");
+    assert!(
+        frame.len() > 2 + id_len,
+        "Frame too short for sender header"
+    );
     let sender_id = std::str::from_utf8(&frame[2..2 + id_len]).unwrap();
     let audio = &frame[2 + id_len..];
     (sender_id, audio)
+}
+
+fn parse_screen_frame(frame: &[u8]) -> (&str, &[u8]) {
+    assert!(
+        frame.len() >= 3 && frame[0] == shared_types::MEDIA_PACKET_SCREEN,
+        "Expected screen media packet, got len={} type={}",
+        frame.len(),
+        frame.first().copied().unwrap_or(0)
+    );
+    let id_len = frame[1] as usize;
+    assert!(
+        frame.len() > 2 + id_len,
+        "Frame too short for sender header"
+    );
+    let sender_id = std::str::from_utf8(&frame[2..2 + id_len]).unwrap();
+    let frame_data = &frame[2 + id_len..];
+    (sender_id, frame_data)
 }
 
 /// Generate `frame_count` frames of a sine wave tone at the given frequency.
@@ -233,7 +262,11 @@ fn generate_tone_frames(freq_hz: f32, frame_count: usize) -> Vec<Vec<f32>> {
 
 /// Encode a single f32 frame to Opus bytes.
 /// Returns the number of encoded bytes.
-fn encode_frame(encoder: &mut OpusEncoder, samples_f32: &[f32], out: &mut [u8; OPUS_MAX_PACKET]) -> usize {
+fn encode_frame(
+    encoder: &mut OpusEncoder,
+    samples_f32: &[f32],
+    out: &mut [u8; OPUS_MAX_PACKET],
+) -> usize {
     // Convert f32 -> i16 (same path as audio_core)
     let mut pcm_i16 = [0i16; FRAME_SIZE];
     for (out_s, &s) in pcm_i16.iter_mut().zip(samples_f32.iter()) {
@@ -251,10 +284,7 @@ fn decode_frame(decoder: &mut OpusDecoder, opus_data: &[u8]) -> Vec<f32> {
         .decode(Some(packet), output, false)
         .expect("Opus decode failed");
 
-    pcm_i16[..n]
-        .iter()
-        .map(|&s| s as f32 / 32767.0)
-        .collect()
+    pcm_i16[..n].iter().map(|&s| s as f32 / 32767.0).collect()
 }
 
 /// Write f32 PCM samples to a WAV file (48kHz mono).
@@ -299,7 +329,10 @@ async fn test_voice_pipeline_full_duplex() {
 
     println!("\n=== Voice Pipeline Test (WebSocket) ===");
     println!("Room: {room_code}");
-    println!("Duration: {}s ({TEST_DURATION_FRAMES} frames @ {FRAME_INTERVAL_MS}ms)", TEST_DURATION_FRAMES as f64 * FRAME_INTERVAL_MS as f64 / 1000.0);
+    println!(
+        "Duration: {}s ({TEST_DURATION_FRAMES} frames @ {FRAME_INTERVAL_MS}ms)",
+        TEST_DURATION_FRAMES as f64 * FRAME_INTERVAL_MS as f64 / 1000.0
+    );
 
     // Split clients for concurrent send/receive
     let alice_sink = Arc::new(Mutex::new(alice.sink));
@@ -316,9 +349,15 @@ async fn test_voice_pipeline_full_duplex() {
     // Alice sender task
     let alice_sink_clone = alice_sink.clone();
     let alice_sender = tokio::spawn(async move {
-        let mut encoder = OpusEncoder::new(OpusSampleRate::Hz48000, OpusChannels::Mono, Application::Voip)
-            .expect("Failed to create Opus encoder");
-        encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(64000)).ok();
+        let mut encoder = OpusEncoder::new(
+            OpusSampleRate::Hz48000,
+            OpusChannels::Mono,
+            Application::Voip,
+        )
+        .expect("Failed to create Opus encoder");
+        encoder
+            .set_bitrate(audiopus::Bitrate::BitsPerSecond(64000))
+            .ok();
 
         let mut interval = tokio::time::interval(Duration::from_millis(FRAME_INTERVAL_MS));
         let mut opus_buf = [0u8; OPUS_MAX_PACKET];
@@ -340,9 +379,15 @@ async fn test_voice_pipeline_full_duplex() {
     // Bob sender task
     let bob_sink_clone = bob_sink.clone();
     let bob_sender = tokio::spawn(async move {
-        let mut encoder = OpusEncoder::new(OpusSampleRate::Hz48000, OpusChannels::Mono, Application::Voip)
-            .expect("Failed to create Opus encoder");
-        encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(64000)).ok();
+        let mut encoder = OpusEncoder::new(
+            OpusSampleRate::Hz48000,
+            OpusChannels::Mono,
+            Application::Voip,
+        )
+        .expect("Failed to create Opus encoder");
+        encoder
+            .set_bitrate(audiopus::Bitrate::BitsPerSecond(64000))
+            .ok();
 
         let mut interval = tokio::time::interval(Duration::from_millis(FRAME_INTERVAL_MS));
         let mut opus_buf = [0u8; OPUS_MAX_PACKET];
@@ -500,13 +545,27 @@ async fn test_voice_pipeline_full_duplex() {
         bob_sent, alice_received, bob_loss
     );
     if let Some(t) = bob_first {
-        println!("First-frame latency (Alice->Bob): {:.0}ms", (t - start_time).as_millis());
+        println!(
+            "First-frame latency (Alice->Bob): {:.0}ms",
+            (t - start_time).as_millis()
+        );
     }
     if let Some(t) = alice_first {
-        println!("First-frame latency (Bob->Alice): {:.0}ms", (t - start_time).as_millis());
+        println!(
+            "First-frame latency (Bob->Alice): {:.0}ms",
+            (t - start_time).as_millis()
+        );
     }
-    println!("Bob recorded: {} samples ({:.1}s)", bob_pcm.len(), bob_pcm.len() as f64 / SAMPLE_RATE as f64);
-    println!("Alice recorded: {} samples ({:.1}s)", alice_pcm.len(), alice_pcm.len() as f64 / SAMPLE_RATE as f64);
+    println!(
+        "Bob recorded: {} samples ({:.1}s)",
+        bob_pcm.len(),
+        bob_pcm.len() as f64 / SAMPLE_RATE as f64
+    );
+    println!(
+        "Alice recorded: {} samples ({:.1}s)",
+        alice_pcm.len(),
+        alice_pcm.len() as f64 / SAMPLE_RATE as f64
+    );
     if !bob_pcm.is_empty() {
         println!("WAV: {}", bob_wav_path.display());
     }
@@ -598,9 +657,15 @@ async fn test_voice_pipeline_udp() {
     let alice_sock_tx = alice_udp_sock.clone();
     let alice_tok = alice_token;
     let alice_sender = tokio::spawn(async move {
-        let mut encoder = OpusEncoder::new(OpusSampleRate::Hz48000, OpusChannels::Mono, Application::Voip)
-            .expect("Failed to create Opus encoder");
-        encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(64000)).ok();
+        let mut encoder = OpusEncoder::new(
+            OpusSampleRate::Hz48000,
+            OpusChannels::Mono,
+            Application::Voip,
+        )
+        .expect("Failed to create Opus encoder");
+        encoder
+            .set_bitrate(audiopus::Bitrate::BitsPerSecond(64000))
+            .ok();
 
         let mut interval = tokio::time::interval(Duration::from_millis(FRAME_INTERVAL_MS));
         let mut opus_buf = [0u8; OPUS_MAX_PACKET];
@@ -624,9 +689,15 @@ async fn test_voice_pipeline_udp() {
     let bob_sock_tx = bob_udp_sock.clone();
     let bob_tok = bob_token;
     let bob_sender = tokio::spawn(async move {
-        let mut encoder = OpusEncoder::new(OpusSampleRate::Hz48000, OpusChannels::Mono, Application::Voip)
-            .expect("Failed to create Opus encoder");
-        encoder.set_bitrate(audiopus::Bitrate::BitsPerSecond(64000)).ok();
+        let mut encoder = OpusEncoder::new(
+            OpusSampleRate::Hz48000,
+            OpusChannels::Mono,
+            Application::Voip,
+        )
+        .expect("Failed to create Opus encoder");
+        encoder
+            .set_bitrate(audiopus::Bitrate::BitsPerSecond(64000))
+            .ok();
 
         let mut interval = tokio::time::interval(Duration::from_millis(FRAME_INTERVAL_MS));
         let mut opus_buf = [0u8; OPUS_MAX_PACKET];
@@ -749,8 +820,16 @@ async fn test_voice_pipeline_udp() {
         "Bob -> Alice (UDP): {} sent, {} received ({:.1}% loss)",
         bob_sent, alice_received, bob_loss
     );
-    println!("Bob recorded: {} samples ({:.1}s)", bob_pcm.len(), bob_pcm.len() as f64 / SAMPLE_RATE as f64);
-    println!("Alice recorded: {} samples ({:.1}s)", alice_pcm.len(), alice_pcm.len() as f64 / SAMPLE_RATE as f64);
+    println!(
+        "Bob recorded: {} samples ({:.1}s)",
+        bob_pcm.len(),
+        bob_pcm.len() as f64 / SAMPLE_RATE as f64
+    );
+    println!(
+        "Alice recorded: {} samples ({:.1}s)",
+        alice_pcm.len(),
+        alice_pcm.len() as f64 / SAMPLE_RATE as f64
+    );
     if !bob_pcm.is_empty() {
         println!("WAV: {}", bob_wav_path.display());
     }
@@ -769,5 +848,85 @@ async fn test_voice_pipeline_udp() {
         "Alice should receive >= 70% of Bob's UDP frames (got {alice_received}/{bob_sent})"
     );
     assert!(!bob_pcm.is_empty(), "Bob should have recorded UDP audio");
-    assert!(!alice_pcm.is_empty(), "Alice should have recorded UDP audio");
+    assert!(
+        !alice_pcm.is_empty(),
+        "Alice should have recorded UDP audio"
+    );
+}
+
+#[tokio::test]
+async fn test_screen_share_udp_relay() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let room_code = create_room(&mut alice, "Alice").await;
+    join_room(&mut bob, &room_code, "Bob").await;
+    let _ = alice.recv_signal().await; // PeerJoined
+
+    alice.send_signal(&SignalMessage::RequestUdp).await;
+    let alice_udp = match alice.recv_signal().await {
+        SignalMessage::UdpReady { token, port } => (token, port),
+        SignalMessage::UdpUnavailable => panic!("UDP unavailable on test server"),
+        other => panic!("Expected UdpReady, got: {:?}", other),
+    };
+
+    bob.send_signal(&SignalMessage::RequestUdp).await;
+    let bob_udp = match bob.recv_signal().await {
+        SignalMessage::UdpReady { token, port } => (token, port),
+        SignalMessage::UdpUnavailable => panic!("UDP unavailable on test server"),
+        other => panic!("Expected UdpReady, got: {:?}", other),
+    };
+
+    let alice_token = hex_decode_8(&alice_udp.0);
+    let bob_token = hex_decode_8(&bob_udp.0);
+    let udp_addr = format!("127.0.0.1:{}", alice_udp.1);
+
+    let alice_udp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+    alice_udp_sock.connect(&udp_addr).await.unwrap();
+    let bob_udp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+    bob_udp_sock.connect(&udp_addr).await.unwrap();
+
+    // Register both UDP addresses with the relay before sending media.
+    alice_udp_sock.send(&alice_token).await.unwrap();
+    bob_udp_sock.send(&bob_token).await.unwrap();
+
+    alice.send_signal(&SignalMessage::StartScreenShare).await;
+    match alice.recv_signal().await {
+        SignalMessage::ScreenShareStarted { .. } => {}
+        other => panic!("Expected ScreenShareStarted for Alice, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::ScreenShareStarted { .. } => {}
+        other => panic!("Expected ScreenShareStarted for Bob, got: {:?}", other),
+    }
+
+    let payload = b"udp-screen-frame-001";
+    let mut packet = Vec::with_capacity(8 + 1 + payload.len());
+    packet.extend_from_slice(&alice_token);
+    packet.push(shared_types::MEDIA_PACKET_SCREEN);
+    packet.extend_from_slice(payload);
+    alice_udp_sock.send(&packet).await.unwrap();
+
+    let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE];
+    let len = timeout(Duration::from_secs(2), bob_udp_sock.recv(&mut buf))
+        .await
+        .expect("Timed out waiting for UDP screen frame")
+        .expect("Failed to receive UDP screen frame");
+    let (sender_id, frame_data) = parse_screen_frame(&buf[..len]);
+    assert!(
+        !sender_id.is_empty(),
+        "UDP screen relay should include sender id"
+    );
+    assert_eq!(frame_data, payload);
+
+    alice.send_signal(&SignalMessage::StopScreenShare).await;
+    match alice.recv_signal().await {
+        SignalMessage::ScreenShareStopped { .. } => {}
+        other => panic!("Expected ScreenShareStopped for Alice, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::ScreenShareStopped { .. } => {}
+        other => panic!("Expected ScreenShareStopped for Bob, got: {:?}", other),
+    }
 }

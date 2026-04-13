@@ -124,12 +124,13 @@ pub fn handle_peer_joined(
 ) {
     log::info!("Peer joined: {} ({})", peer.name, peer.id);
     let cfg = config_store::load_config();
-    let saved_vol = cfg.peer_volumes
-        .get(&peer.name).copied().unwrap_or(1.0);
-    let saved_eq = cfg.peer_eq_settings
-        .get(&peer.name).copied().unwrap_or([0, 0, 0]);
-    let saved_pan = cfg.peer_pan
-        .get(&peer.name).copied().unwrap_or(0);
+    let saved_vol = cfg.peer_volumes.get(&peer.name).copied().unwrap_or(1.0);
+    let saved_eq = cfg
+        .peer_eq_settings
+        .get(&peer.name)
+        .copied()
+        .unwrap_or([0, 0, 0]);
+    let saved_pan = cfg.peer_pan.get(&peer.name).copied().unwrap_or(0);
     let mut s = state.borrow_mut();
     s.room.participants.push(Participant {
         id: peer.id.clone(),
@@ -330,12 +331,7 @@ pub fn handle_priority_speaker_changed(
         if enabled { "enabled" } else { "disabled" }
     );
     let mut s = state.borrow_mut();
-    let peer_name = if let Some(p) = s
-        .room
-        .participants
-        .iter_mut()
-        .find(|p| p.id == peer_id)
-    {
+    let peer_name = if let Some(p) = s.room.participants.iter_mut().find(|p| p.id == peer_id) {
         p.is_priority_speaker = enabled;
         Some(p.name.clone())
     } else {

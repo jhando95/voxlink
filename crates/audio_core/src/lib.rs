@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex};
 
 use buffers::{CaptureRing, PeerPlayback, PeerPlaybackShared};
 use codec::{
-    Agc, ComfortNoise, DeEsser, EchoCanceller, EchoReference,
-    HighPassFilter, MuteRamp, NoiseGate, NoiseSuppressor, SendEncoder,
+    Agc, ComfortNoise, DeEsser, EchoCanceller, EchoReference, HighPassFilter, MuteRamp, NoiseGate,
+    NoiseSuppressor, SendEncoder,
 };
 use feedback::{FeedbackAction, FeedbackTone};
 
@@ -275,8 +275,8 @@ impl AudioEngine {
             noise_suppression_enabled: Arc::new(AtomicBool::new(false)),
             echo_cancellation_enabled: Arc::new(AtomicBool::new(false)),
             echo_ref: Arc::new(EchoReference::new(FRAME_SIZE * 6)), // ~120ms reference
-            input_gain: Arc::new(AtomicU32::new(1000)),            // 1.0 default (unity gain)
-            output_volume: Arc::new(AtomicU32::new(1000)),         // 1.0 default
+            input_gain: Arc::new(AtomicU32::new(1000)),             // 1.0 default (unity gain)
+            output_volume: Arc::new(AtomicU32::new(1000)),          // 1.0 default
             feedback_tone: FeedbackTone::new(),
             opus_bitrate: Arc::new(AtomicI32::new(OPUS_BITRATE)),
             opus_fec_loss_pct: Arc::new(AtomicI32::new(5)),
@@ -505,9 +505,15 @@ impl AudioEngine {
     pub fn set_peer_eq(&self, peer_id: &str, bass_mb: i32, mid_mb: i32, treble_mb: i32) {
         if let Ok(peers) = self.peer_buffers.lock() {
             if let Some(peer) = peers.get(peer_id) {
-                peer.shared.eq_bass.store(bass_mb.clamp(-600, 600), Ordering::Relaxed);
-                peer.shared.eq_mid.store(mid_mb.clamp(-600, 600), Ordering::Relaxed);
-                peer.shared.eq_treble.store(treble_mb.clamp(-600, 600), Ordering::Relaxed);
+                peer.shared
+                    .eq_bass
+                    .store(bass_mb.clamp(-600, 600), Ordering::Relaxed);
+                peer.shared
+                    .eq_mid
+                    .store(mid_mb.clamp(-600, 600), Ordering::Relaxed);
+                peer.shared
+                    .eq_treble
+                    .store(treble_mb.clamp(-600, 600), Ordering::Relaxed);
             }
         }
     }
@@ -516,7 +522,9 @@ impl AudioEngine {
     pub fn set_peer_pan(&self, peer_id: &str, pan: i32) {
         if let Ok(peers) = self.peer_buffers.lock() {
             if let Some(peer) = peers.get(peer_id) {
-                peer.shared.pan.store(pan.clamp(-100, 100), Ordering::Relaxed);
+                peer.shared
+                    .pan
+                    .store(pan.clamp(-100, 100), Ordering::Relaxed);
             }
         }
     }
@@ -577,9 +585,7 @@ impl AudioEngine {
         // Constrained VBR: prevents bitrate spikes that could cause network jitter
         opus_encoder.set_vbr_constraint(true).ok();
         // Explicit voice signal type — helps Opus optimize for speech intelligibility
-        opus_encoder
-            .set_signal(audiopus::Signal::Voice)
-            .ok();
+        opus_encoder.set_signal(audiopus::Signal::Voice).ok();
 
         let on_frame = self.on_encoded_frame.clone();
         let is_capturing = self.is_capturing.clone();
@@ -758,7 +764,8 @@ impl AudioEngine {
     /// Set the Opus encoder's FEC packet loss hint (0–100%).
     /// Higher values make Opus allocate more redundancy for loss recovery.
     pub fn set_fec_loss_pct(&self, pct: i32) {
-        self.opus_fec_loss_pct.store(pct.clamp(0, 100), Ordering::Relaxed);
+        self.opus_fec_loss_pct
+            .store(pct.clamp(0, 100), Ordering::Relaxed);
     }
 
     /// Get the target (base) bitrate from the voice quality setting.
@@ -889,20 +896,28 @@ impl AudioEngine {
                 if ducking_enabled {
                     let duck_thresh = ducking_threshold.load(Ordering::Relaxed) as f32 / 1000.0;
                     for peer in &local_peers {
-                        if !peer.is_ready() { continue; }
+                        if !peer.is_ready() {
+                            continue;
+                        }
                         let energy = peer.ring.peek_energy();
                         let speaking = energy > duck_thresh;
                         // Reuse the primed atomic as a "speaking" flag for ducking
                         // (we overwrite it below anyway when mixing)
                         peer.primed.store(speaking, Ordering::Relaxed);
-                        if speaking { any_speaking = true; }
+                        if speaking {
+                            any_speaking = true;
+                        }
                     }
                 }
 
                 // Scratch buffer pre-allocated at init for max size — no resize needed.
                 // Debug-assert to catch unexpected oversized callbacks.
-                debug_assert!(scratch.len() >= stereo_frames,
-                    "scratch buffer too small: {} < {}", scratch.len(), stereo_frames);
+                debug_assert!(
+                    scratch.len() >= stereo_frames,
+                    "scratch buffer too small: {} < {}",
+                    scratch.len(),
+                    stereo_frames
+                );
 
                 for (peer_idx, peer) in local_peers.iter().enumerate() {
                     if !peer.is_ready() {
@@ -911,10 +926,8 @@ impl AudioEngine {
                     }
                     // Peek RMS energy before consuming for level meters
                     let energy = peer.ring.peek_energy();
-                    peer.rms_level.store(
-                        (energy.min(1.0) * 1000.0) as u32,
-                        Ordering::Relaxed,
-                    );
+                    peer.rms_level
+                        .store((energy.min(1.0) * 1000.0) as u32, Ordering::Relaxed);
                     let mut vol = peer.volume_f32();
                     if any_speaking {
                         let is_speaking = peer.primed.load(Ordering::Relaxed);
@@ -938,7 +951,12 @@ impl AudioEngine {
                     let mid_mb = peer.eq_mid.load(Ordering::Relaxed);
                     let treble_mb = peer.eq_treble.load(Ordering::Relaxed);
                     if let Some(eq_state) = eq_states.get_mut(peer_idx) {
-                        eq_state.process(&mut mono_buf[..consumed.max(1)], bass_mb, mid_mb, treble_mb);
+                        eq_state.process(
+                            &mut mono_buf[..consumed.max(1)],
+                            bass_mb,
+                            mid_mb,
+                            treble_mb,
+                        );
                     }
 
                     // Apply per-peer stereo pan using constant-power pan law
@@ -1008,7 +1026,10 @@ impl AudioEngine {
     /// Tries the specified device first, then falls back to the system default.
     pub fn try_recover_capture(&mut self, preferred_device: Option<&str>) -> DeviceRecoveryResult {
         self.capture_error.store(false, Ordering::Relaxed);
-        log::info!("Attempting capture recovery (preferred: {:?})", preferred_device);
+        log::info!(
+            "Attempting capture recovery (preferred: {:?})",
+            preferred_device
+        );
 
         // Refresh host to pick up any device changes
         self.refresh_host();
@@ -1017,19 +1038,25 @@ impl AudioEngine {
         if let Some(name) = preferred_device {
             if self.start_capture(Some(name)).is_ok() {
                 log::info!("Capture recovered on preferred device: {name}");
-                return DeviceRecoveryResult::Recovered { device_name: name.to_string() };
+                return DeviceRecoveryResult::Recovered {
+                    device_name: name.to_string(),
+                };
             }
             log::warn!("Preferred device '{name}' failed, trying default");
         }
 
         // Try system default
-        let default_name = self.host.default_input_device()
+        let default_name = self
+            .host
+            .default_input_device()
             .and_then(|d| d.name().ok())
             .unwrap_or_default();
 
         if self.start_capture(None).is_ok() {
             log::info!("Capture recovered on default device: {default_name}");
-            return DeviceRecoveryResult::FellBackToDefault { device_name: default_name };
+            return DeviceRecoveryResult::FellBackToDefault {
+                device_name: default_name,
+            };
         }
 
         log::error!("No working capture device found");
@@ -1040,25 +1067,34 @@ impl AudioEngine {
     /// Tries the specified device first, then falls back to the system default.
     pub fn try_recover_playback(&mut self, preferred_device: Option<&str>) -> DeviceRecoveryResult {
         self.playback_error.store(false, Ordering::Relaxed);
-        log::info!("Attempting playback recovery (preferred: {:?})", preferred_device);
+        log::info!(
+            "Attempting playback recovery (preferred: {:?})",
+            preferred_device
+        );
 
         self.refresh_host();
 
         if let Some(name) = preferred_device {
             if self.start_playback(Some(name)).is_ok() {
                 log::info!("Playback recovered on preferred device: {name}");
-                return DeviceRecoveryResult::Recovered { device_name: name.to_string() };
+                return DeviceRecoveryResult::Recovered {
+                    device_name: name.to_string(),
+                };
             }
             log::warn!("Preferred device '{name}' failed, trying default");
         }
 
-        let default_name = self.host.default_output_device()
+        let default_name = self
+            .host
+            .default_output_device()
             .and_then(|d| d.name().ok())
             .unwrap_or_default();
 
         if self.start_playback(None).is_ok() {
             log::info!("Playback recovered on default device: {default_name}");
-            return DeviceRecoveryResult::FellBackToDefault { device_name: default_name };
+            return DeviceRecoveryResult::FellBackToDefault {
+                device_name: default_name,
+            };
         }
 
         log::error!("No working playback device found");
@@ -1140,7 +1176,8 @@ impl AudioEngine {
 
         // Convert i16 → f32 into reusable buffer (zero allocation on hot path)
         peer.convert_buf.clear();
-        peer.convert_buf.extend(pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)));
+        peer.convert_buf
+            .extend(pcm_i16.iter().map(|&s| s as f32 * (1.0 / 32767.0)));
         peer.playback_agc.process(&mut peer.convert_buf);
 
         let mut sum_sq: f32 = 0.0;
@@ -1155,12 +1192,16 @@ impl AudioEngine {
 
         // Update audio metrics
         let jitter = peer.shared.target_frames.load(Ordering::Relaxed) * 20;
-        self.metrics.current_jitter_ms.store(jitter, Ordering::Relaxed);
+        self.metrics
+            .current_jitter_ms
+            .store(jitter, Ordering::Relaxed);
 
         // If this is a new peer, sync the playback snapshot
         let peer_count = peers.len() as u32;
         drop(peers);
-        self.metrics.active_peers.store(peer_count, Ordering::Relaxed);
+        self.metrics
+            .active_peers
+            .store(peer_count, Ordering::Relaxed);
         if is_new {
             self.sync_playback_peers();
         }
@@ -1191,12 +1232,14 @@ impl AudioEngine {
 
     /// Enable or disable neural noise suppression (RNNoise).
     pub fn set_noise_suppression(&self, enabled: bool) {
-        self.noise_suppression_enabled.store(enabled, Ordering::Relaxed);
+        self.noise_suppression_enabled
+            .store(enabled, Ordering::Relaxed);
     }
 
     /// Enable or disable echo cancellation.
     pub fn set_echo_cancellation(&self, enabled: bool) {
-        self.echo_cancellation_enabled.store(enabled, Ordering::Relaxed);
+        self.echo_cancellation_enabled
+            .store(enabled, Ordering::Relaxed);
     }
 
     /// Set input gain (0.0 = silent, 1.0 = unity, 2.0 = +6dB boost)
@@ -1211,8 +1254,10 @@ impl AudioEngine {
     pub fn set_ducking(&self, amount: f32, threshold: f32) {
         self.ducking_amount
             .store((amount.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
-        self.ducking_threshold
-            .store((threshold.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+        self.ducking_threshold.store(
+            (threshold.clamp(0.0, 1.0) * 1000.0) as u32,
+            Ordering::Relaxed,
+        );
     }
 
     /// Set master output volume (0.0 = muted, 1.0 = full)
@@ -1267,7 +1312,9 @@ impl AudioEngine {
 
     /// Get the name of the current output device (if playing).
     pub fn current_output_device_name(&self) -> Option<String> {
-        self.host.default_output_device().and_then(|d| d.name().ok())
+        self.host
+            .default_output_device()
+            .and_then(|d| d.name().ok())
     }
 
     /// Get a list of input device names (for hotplug detection).
@@ -1324,7 +1371,9 @@ mod recovery_tests {
 
     #[test]
     fn device_recovery_result_debug() {
-        let result = DeviceRecoveryResult::Recovered { device_name: "Test".into() };
+        let result = DeviceRecoveryResult::Recovered {
+            device_name: "Test".into(),
+        };
         let debug = format!("{:?}", result);
         assert!(debug.contains("Recovered"));
         assert!(debug.contains("Test"));
@@ -1353,7 +1402,11 @@ mod adaptive_bitrate_tests {
         let decoded = m.frames_decoded.load(Ordering::Relaxed);
         let dropped = m.frames_dropped.load(Ordering::Relaxed);
         let total = decoded + dropped;
-        let ratio = if total == 0 { 0.0 } else { dropped as f32 / total as f32 };
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            dropped as f32 / total as f32
+        };
         assert_eq!(ratio, 0.0);
     }
 
@@ -1421,7 +1474,10 @@ mod adaptive_bitrate_tests {
             let step = ((target - current) as f32 * 0.1) as i32;
             current + step.max(1000).min(target - current)
         };
-        assert!(new > current, "No loss should increase bitrate: {current} -> {new}");
+        assert!(
+            new > current,
+            "No loss should increase bitrate: {current} -> {new}"
+        );
         assert!(new <= target, "Should not exceed target");
     }
 

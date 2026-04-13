@@ -336,7 +336,9 @@ pub async fn handle_send_text_message(
     {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id) {
-            let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+            let until = peer
+                .timeout_until
+                .load(std::sync::atomic::Ordering::Relaxed);
             if until > 0 && crate::now_epoch_secs() < until {
                 let peer = peer.clone();
                 drop(s);
@@ -366,7 +368,8 @@ pub async fn handle_send_text_message(
         if min_role != shared_types::SpaceRole::Member {
             let user_role = if let Some(peer) = s.peers.get(peer_id) {
                 if let Some(uid) = peer.user_id.lock().await.as_deref() {
-                    s.spaces.get(&space_id)
+                    s.spaces
+                        .get(&space_id)
                         .and_then(|sp| sp.member_roles.get(uid).copied())
                         .unwrap_or(shared_types::SpaceRole::Member)
                 } else {
@@ -606,8 +609,9 @@ pub async fn handle_send_text_message(
             content_lower.contains("@everyone") || content_lower.contains("@here");
 
         if !mentioned_names.is_empty() || is_everyone_mention {
-            let preview = if msg_data.content.len() > 100 {
-                format!("{}...", &msg_data.content[..97])
+            let preview = if msg_data.content.chars().count() > 100 {
+                let truncated: String = msg_data.content.chars().take(97).collect();
+                format!("{truncated}...")
             } else {
                 msg_data.content.clone()
             };
@@ -618,8 +622,11 @@ pub async fn handle_send_text_message(
                 let should_notify = if is_everyone_mention {
                     true
                 } else {
-                    let peer_name =
-                        peer.name.try_lock().map(|n| n.to_lowercase()).unwrap_or_default();
+                    let peer_name = peer
+                        .name
+                        .try_lock()
+                        .map(|n| n.to_lowercase())
+                        .unwrap_or_default();
                     mentioned_names.contains(&peer_name)
                 };
                 if should_notify {
@@ -1504,8 +1511,7 @@ pub async fn handle_search_space_messages(
     }
 
     let channel_ids: Vec<String> = channel_map.iter().map(|(id, _)| id.clone()).collect();
-    let name_map: std::collections::HashMap<String, String> =
-        channel_map.into_iter().collect();
+    let name_map: std::collections::HashMap<String, String> = channel_map.into_iter().collect();
 
     let db = db.clone();
     let query_for_db = query.clone();
@@ -1525,10 +1531,7 @@ pub async fn handle_search_space_messages(
             let results: Vec<shared_types::SpaceSearchResult> = rows
                 .into_iter()
                 .map(|m| shared_types::SpaceSearchResult {
-                    channel_name: name_map
-                        .get(&m.channel_id)
-                        .cloned()
-                        .unwrap_or_default(),
+                    channel_name: name_map.get(&m.channel_id).cloned().unwrap_or_default(),
                     channel_id: m.channel_id,
                     message: shared_types::TextMessageData {
                         sender_id: m.sender_id,
@@ -1549,11 +1552,7 @@ pub async fn handle_search_space_messages(
                     },
                 })
                 .collect();
-            send_to(
-                &peer,
-                &SignalMessage::SpaceSearchResults { results },
-            )
-            .await;
+            send_to(&peer, &SignalMessage::SpaceSearchResults { results }).await;
         }
         _ => {
             send_error(state, peer_id, "Search failed").await;
@@ -1629,12 +1628,7 @@ pub async fn handle_create_group_dm(
     }
 }
 
-pub async fn handle_select_group_dm(
-    state: &State,
-    peer_id: &str,
-    group_id: String,
-    db: &Db,
-) {
+pub async fn handle_select_group_dm(state: &State, peer_id: &str, group_id: String, db: &Db) {
     let Some(db) = db.as_ref().cloned() else {
         send_error(state, peer_id, "Persistence required").await;
         return;
@@ -1891,7 +1885,9 @@ pub async fn handle_forward_message(
             .get(peer_id)
             .map(|p| p.name.try_lock().map(|n| n.clone()).unwrap_or_default())
     };
-    let Some(sender_name) = sender_name else { return };
+    let Some(sender_name) = sender_name else {
+        return;
+    };
     let stable_sender = super::space::stable_peer_id(state, peer_id).await;
 
     // Find the source message

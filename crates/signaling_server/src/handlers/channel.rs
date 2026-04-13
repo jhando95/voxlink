@@ -361,7 +361,15 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
             .channels
             .iter()
             .find(|ch| ch.id == channel_id)
-            .map(|ch| (ch.room_key.clone(), ch.name.clone(), ch.channel_type, ch.voice_quality, ch.min_role))
+            .map(|ch| {
+                (
+                    ch.room_key.clone(),
+                    ch.name.clone(),
+                    ch.channel_type,
+                    ch.voice_quality,
+                    ch.min_role,
+                )
+            })
     });
 
     let Some((room_key, channel_name, ch_type, voice_quality, min_role)) = channel_data else {
@@ -385,7 +393,8 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
             if let Some(peer) = peer {
                 let user_id = peer.user_id.lock().await.clone();
                 if let Some(uid) = &user_id {
-                    s.spaces.get(&space_id)
+                    s.spaces
+                        .get(&space_id)
                         .and_then(|sp| sp.member_roles.get(uid).copied())
                         .unwrap_or(shared_types::SpaceRole::Member)
                 } else {
@@ -412,11 +421,22 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
 
     // Check user limit
     if ch_type == ChannelType::Voice {
-        let user_limit = s.spaces.get(&space_id).and_then(|sp| {
-            sp.channels.iter().find(|c| c.id == channel_id).map(|c| c.user_limit)
-        }).unwrap_or(0);
+        let user_limit = s
+            .spaces
+            .get(&space_id)
+            .and_then(|sp| {
+                sp.channels
+                    .iter()
+                    .find(|c| c.id == channel_id)
+                    .map(|c| c.user_limit)
+            })
+            .unwrap_or(0);
         if user_limit > 0 {
-            let current = s.rooms.get(&room_key).map(|r| r.peer_ids.len() as u32).unwrap_or(0);
+            let current = s
+                .rooms
+                .get(&room_key)
+                .map(|r| r.peer_ids.len() as u32)
+                .unwrap_or(0);
             if current >= user_limit {
                 if let Some(peer) = s.peers.get(peer_id).cloned() {
                     drop(s);
@@ -620,14 +640,12 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
 }
 
 /// Reorder channels in a space. Only admins+ can reorder.
-pub async fn handle_reorder_channels(
-    state: &State,
-    peer_id: &str,
-    channel_ids: Vec<String>,
-) {
+pub async fn handle_reorder_channels(state: &State, peer_id: &str, channel_ids: Vec<String>) {
     let space_id = {
         let s = state.read().await;
-        let Some(peer) = s.peers.get(peer_id) else { return };
+        let Some(peer) = s.peers.get(peer_id) else {
+            return;
+        };
         let sid = peer.space_id.lock().await.clone();
         drop(s);
         sid
@@ -640,7 +658,9 @@ pub async fn handle_reorder_channels(
             crate::send_error(state, peer_id, "Not in a space").await;
             return;
         };
-        if crate::handlers::space::role_rank(role) < crate::handlers::space::role_rank(shared_types::SpaceRole::Admin) {
+        if crate::handlers::space::role_rank(role)
+            < crate::handlers::space::role_rank(shared_types::SpaceRole::Admin)
+        {
             crate::send_error(state, peer_id, "Only admins can reorder channels").await;
             return;
         }

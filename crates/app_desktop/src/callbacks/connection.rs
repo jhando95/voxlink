@@ -1,11 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
-/// Guards config read-modify-write to prevent races between save and remove.
-static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+use crate::helpers::CONFIG_LOCK;
 
 pub fn setup_connect(
     window: &MainWindow,
@@ -46,7 +45,7 @@ pub fn setup_connect(
                     // Send Authenticate after connecting
                     let cfg = config_store::load_config();
                     let auth_msg = shared_types::SignalMessage::Authenticate {
-                        token: cfg.auth_token,
+                        token: config_store::load_auth_token(),
                         user_name: cfg.user_name,
                     };
                     if let Err(e) = net.send_signal(&auth_msg).await {
@@ -178,8 +177,7 @@ pub fn setup_remove_server(window: &MainWindow) {
             if idx < cfg.saved_servers.len() {
                 cfg.saved_servers.remove(idx);
                 // If we removed the default, make the first one default
-                if !cfg.saved_servers.is_empty()
-                    && !cfg.saved_servers.iter().any(|s| s.is_default)
+                if !cfg.saved_servers.is_empty() && !cfg.saved_servers.iter().any(|s| s.is_default)
                 {
                     cfg.saved_servers[0].is_default = true;
                 }

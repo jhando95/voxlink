@@ -3,8 +3,8 @@ pub mod persistence;
 mod types;
 
 pub(crate) use types::{
-    ChannelMeta, Db, Peer, Room, ServerState, Space, State,
-    max_channel_messages, MAX_SPACE_AUDIT_ENTRIES,
+    max_channel_messages, ChannelMeta, Db, Peer, Room, ServerState, Space, State,
+    MAX_SPACE_AUDIT_ENTRIES,
 };
 
 use futures_util::{SinkExt, StreamExt};
@@ -46,6 +46,7 @@ fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
 
 /// UDP relay port, set at startup. 0 = disabled.
 static UDP_PORT: AtomicU16 = AtomicU16::new(0);
+static UDP_SOCKET: std::sync::OnceLock<Arc<UdpSocket>> = std::sync::OnceLock::new();
 
 static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
     max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
@@ -228,7 +229,12 @@ async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: boo
     let connected_peers = s.peers.len();
     let udp_sessions = s.udp_sessions.len();
     let total_room_peers: usize = s.rooms.values().map(|r| r.peer_ids.len()).sum();
-    let max_room_peers: usize = s.rooms.values().map(|r| r.peer_ids.len()).max().unwrap_or(0);
+    let max_room_peers: usize = s
+        .rooms
+        .values()
+        .map(|r| r.peer_ids.len())
+        .max()
+        .unwrap_or(0);
     let total_space_members: usize = s.spaces.values().map(|sp| sp.member_ids.len()).sum();
     drop(s);
 
@@ -367,7 +373,9 @@ async fn main() {
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
-            log::error!("Failed to bind to {addr}: {e}. Is another server already running on this port?");
+            log::error!(
+                "Failed to bind to {addr}: {e}. Is another server already running on this port?"
+            );
             std::process::exit(1);
         }
     };
@@ -444,7 +452,8 @@ async fn main() {
                     HashMap::new();
                 for cr in &channels_rows {
                     if cr.channel_type == "text" {
-                        if let Ok(msgs) = db.load_messages_for_channel(&cr.id, max_channel_messages())
+                        if let Ok(msgs) =
+                            db.load_messages_for_channel(&cr.id, max_channel_messages())
                         {
                             let dq: VecDeque<_> = msgs
                                 .into_iter()
@@ -485,7 +494,9 @@ async fn main() {
                             _ => return None,
                         };
                         if !row.role_color.is_empty() {
-                            role_colors.entry(row.role.clone()).or_insert(row.role_color);
+                            role_colors
+                                .entry(row.role.clone())
+                                .or_insert(row.role_color);
                         }
                         Some((row.user_id, role))
                     })
@@ -546,7 +557,7 @@ async fn main() {
     let discover_addr = format!("{proto}://{addr}");
     tokio::spawn(run_discovery(discover_addr));
 
-    // Start UDP audio relay (port = WS port + 1, or PV_UDP_PORT env var)
+    // Start UDP media relay (port = WS port + 1, or PV_UDP_PORT env var)
     {
         let ws_port: u16 = addr
             .split(':')
@@ -558,17 +569,14 @@ async fn main() {
         match UdpSocket::bind(&udp_addr_str).await {
             Ok(socket) => {
                 UDP_PORT.store(udp_port, Ordering::Relaxed);
-                log::info!("UDP audio relay listening on {udp_addr_str}");
+                log::info!("UDP media relay listening on {udp_addr_str}");
                 let udp_socket = Arc::new(socket);
-                tokio::spawn(run_udp_relay(
-                    state.clone(),
-                    metrics.clone(),
-                    udp_socket,
-                ));
+                let _ = UDP_SOCKET.set(udp_socket.clone());
+                tokio::spawn(run_udp_relay(state.clone(), metrics.clone(), udp_socket));
             }
             Err(e) => {
-                log::warn!("UDP audio relay unavailable (failed to bind {udp_addr_str}): {e}");
-                // Server still works — all audio goes through WebSocket
+                log::warn!("UDP media relay unavailable (failed to bind {udp_addr_str}): {e}");
+                // Server still works — all media goes through WebSocket
             }
         }
     }
@@ -686,11 +694,10 @@ async fn main() {
                 interval.tick().await;
                 let db2 = db.clone();
                 // Delete expired messages from DB
-                let db_deleted = tokio::task::spawn_blocking(move || {
-                    db2.delete_expired_messages().unwrap_or(0)
-                })
-                .await
-                .unwrap_or(0);
+                let db_deleted =
+                    tokio::task::spawn_blocking(move || db2.delete_expired_messages().unwrap_or(0))
+                        .await
+                        .unwrap_or(0);
                 if db_deleted > 0 {
                     log::info!("Auto-delete: removed {db_deleted} expired message(s) from DB");
                 }
@@ -767,7 +774,10 @@ async fn main() {
                     {
                         let mut s = state.write().await;
                         if let Some(space) = s.spaces.get_mut(&space_id) {
-                            let msgs = space.text_messages.entry(channel_id.clone()).or_insert_with(VecDeque::new);
+                            let msgs = space
+                                .text_messages
+                                .entry(channel_id.clone())
+                                .or_insert_with(VecDeque::new);
                             msgs.push_back(msg_data.clone());
                             while msgs.len() > max_channel_messages() {
                                 msgs.pop_front();
@@ -912,7 +922,7 @@ async fn decrement_ip(state: &State, ip: IpAddr) {
 // ─── LAN Discovery ───
 
 async fn run_discovery(server_addr: String) {
-    let socket = match UdpSocket::bind("0.0.0.0:9091").await {
+    let socket = match UdpSocket::bind("0.0.0.0:9092").await {
         Ok(s) => s,
         Err(e) => {
             log::warn!("LAN discovery unavailable: {e}");
@@ -924,7 +934,7 @@ async fn run_discovery(server_addr: String) {
         return;
     }
 
-    log::info!("LAN discovery listening on UDP 9091");
+    log::info!("LAN discovery listening on UDP 9092");
     let mut buf = [0u8; 64];
     loop {
         if let Ok((len, src)) = socket.recv_from(&mut buf).await {
@@ -1044,7 +1054,10 @@ async fn handle_connection(
                     metrics
                         .malformed_signaling_messages_total
                         .fetch_add(1, Ordering::Relaxed);
-                    log::debug!("Malformed signal from {peer_id}: {}", &text[..text.len().min(200)]);
+                    log::debug!(
+                        "Malformed signal from {peer_id}: {}",
+                        &text[..text.len().min(200)]
+                    );
                 }
             }
             Ok(Message::Binary(data)) => {
@@ -1053,7 +1066,15 @@ async fn handle_connection(
                 }
                 match data[0] {
                     shared_types::MEDIA_PACKET_AUDIO => {
-                        relay_audio(&state, &metrics, &peer_id, &data[1..], &mut relay_buf, &mut room_peers_buf).await;
+                        relay_audio(
+                            &state,
+                            &metrics,
+                            &peer_id,
+                            &data[1..],
+                            &mut relay_buf,
+                            &mut room_peers_buf,
+                        )
+                        .await;
                     }
                     shared_types::MEDIA_PACKET_SCREEN => {
                         relay_screen(&state, &metrics, &peer_id, &data[1..]).await;
@@ -1123,14 +1144,17 @@ fn atomic_rate_check(window_ms: &AtomicU64, counter: &AtomicU32, limit: u32) -> 
     let prev = window_ms.load(Ordering::Relaxed);
     if now.wrapping_sub(prev) >= 1000 {
         // New window — reset counter. CAS to avoid races resetting twice.
-        if window_ms.compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        if window_ms
+            .compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
             counter.store(1, Ordering::Relaxed);
+            return true;
         }
-        true
-    } else {
-        let count = counter.fetch_add(1, Ordering::Relaxed);
-        count < limit
+        // CAS failed — another thread already reset. Fall through to count check.
     }
+    let count = counter.fetch_add(1, Ordering::Relaxed);
+    count < limit
 }
 
 async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
@@ -1141,7 +1165,11 @@ async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
     };
     drop(s);
 
-    atomic_rate_check(&peer.rate_window_ms, &peer.msg_count, LIMITS.rate_limit_per_sec)
+    atomic_rate_check(
+        &peer.rate_window_ms,
+        &peer.msg_count,
+        LIMITS.rate_limit_per_sec,
+    )
 }
 
 // ─── Input Validation ───
@@ -1422,8 +1450,14 @@ async fn handle_signal(
         SignalMessage::MuteMember { member_id, muted } => {
             handlers::moderation::handle_mute_member(state, peer_id, member_id, muted, db).await;
         }
-        SignalMessage::ServerDeafenMember { member_id, deafened } => {
-            handlers::moderation::handle_server_deafen_member(state, peer_id, member_id, deafened, db).await;
+        SignalMessage::ServerDeafenMember {
+            member_id,
+            deafened,
+        } => {
+            handlers::moderation::handle_server_deafen_member(
+                state, peer_id, member_id, deafened, db,
+            )
+            .await;
         }
         SignalMessage::BanMember { member_id } => {
             handlers::moderation::handle_ban_member(state, peer_id, member_id, db).await;
@@ -1452,8 +1486,13 @@ async fn handle_signal(
             channel_id,
             user_limit,
         } => {
-            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::UserLimit(user_limit))
-                .await;
+            handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::UserLimit(user_limit),
+            )
+            .await;
         }
         SignalMessage::SetChannelSlowMode {
             channel_id,
@@ -1471,17 +1510,22 @@ async fn handle_signal(
             channel_id,
             category,
         } => {
-            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Category(category))
-                .await;
+            handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::Category(category),
+            )
+            .await;
         }
-        SignalMessage::SetChannelStatus {
-            channel_id,
-            status,
-        } => {
+        SignalMessage::SetChannelStatus { channel_id, status } => {
             handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
                 .await;
         }
-        SignalMessage::SetChannelPermissions { channel_id, min_role } => {
+        SignalMessage::SetChannelPermissions {
+            channel_id,
+            min_role,
+        } => {
             let role = match min_role.to_lowercase().as_str() {
                 "owner" => shared_types::SpaceRole::Owner,
                 "admin" => shared_types::SpaceRole::Admin,
@@ -1510,8 +1554,13 @@ async fn handle_signal(
         } => {
             let cid = channel_id.clone();
             let hours = auto_delete_hours;
-            handle_channel_setting(state, peer_id, channel_id, ChannelSetting::AutoDelete(auto_delete_hours))
-                .await;
+            handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::AutoDelete(auto_delete_hours),
+            )
+            .await;
             // Persist to DB
             if let Some(ref db) = db {
                 let db = db.clone();
@@ -1523,7 +1572,10 @@ async fn handle_signal(
         SignalMessage::ReorderChannels { channel_ids } => {
             handlers::channel::handle_reorder_channels(state, peer_id, channel_ids).await;
         }
-        SignalMessage::SetPrioritySpeaker { peer_id: target_id, enabled } => {
+        SignalMessage::SetPrioritySpeaker {
+            peer_id: target_id,
+            enabled,
+        } => {
             handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
         }
         SignalMessage::WhisperTo { target_peer_ids } => {
@@ -1559,15 +1611,40 @@ async fn handle_signal(
         SignalMessage::SelectGroupDM { group_id } => {
             handlers::chat::handle_select_group_dm(state, peer_id, group_id, db).await;
         }
-        SignalMessage::SendGroupMessage { group_id, content, reply_to_message_id } => {
-            handlers::chat::handle_send_group_message(state, peer_id, group_id, content, reply_to_message_id, db).await;
+        SignalMessage::SendGroupMessage {
+            group_id,
+            content,
+            reply_to_message_id,
+        } => {
+            handlers::chat::handle_send_group_message(
+                state,
+                peer_id,
+                group_id,
+                content,
+                reply_to_message_id,
+                db,
+            )
+            .await;
         }
         // v0.8.0: Invite settings
-        SignalMessage::SetInviteSettings { expires_hours, max_uses } => {
-            handlers::space::handle_set_invite_settings(state, peer_id, expires_hours, max_uses, db).await;
+        SignalMessage::SetInviteSettings {
+            expires_hours,
+            max_uses,
+        } => {
+            handlers::space::handle_set_invite_settings(
+                state,
+                peer_id,
+                expires_hours,
+                max_uses,
+                db,
+            )
+            .await;
         }
         // v0.8.0: Message threads
-        SignalMessage::GetThread { channel_id, message_id } => {
+        SignalMessage::GetThread {
+            channel_id,
+            message_id,
+        } => {
             handlers::chat::handle_get_thread(state, peer_id, channel_id, message_id).await;
         }
         // v0.8.0: Nicknames
@@ -1575,16 +1652,40 @@ async fn handle_signal(
             handlers::space::handle_set_nickname(state, peer_id, nickname, db).await;
         }
         // v0.8.0: Message forwarding
-        SignalMessage::ForwardMessage { source_channel_id, message_id, target_channel_id } => {
-            handlers::chat::handle_forward_message(state, peer_id, source_channel_id, message_id, target_channel_id, db).await;
+        SignalMessage::ForwardMessage {
+            source_channel_id,
+            message_id,
+            target_channel_id,
+        } => {
+            handlers::chat::handle_forward_message(
+                state,
+                peer_id,
+                source_channel_id,
+                message_id,
+                target_channel_id,
+                db,
+            )
+            .await;
         }
         // v0.8.0: Status presets
         SignalMessage::SetStatusPreset { preset } => {
             handlers::presence::handle_set_status_preset(state, peer_id, preset).await;
         }
         // v0.8.0: Account system
-        SignalMessage::CreateAccount { email, password, display_name } => {
-            handlers::auth::handle_create_account(state, peer_id, email, password, display_name, db).await;
+        SignalMessage::CreateAccount {
+            email,
+            password,
+            display_name,
+        } => {
+            handlers::auth::handle_create_account(
+                state,
+                peer_id,
+                email,
+                password,
+                display_name,
+                db,
+            )
+            .await;
         }
         SignalMessage::Login { email, password } => {
             handlers::auth::handle_login(state, peer_id, email, password, db).await;
@@ -1592,8 +1693,18 @@ async fn handle_signal(
         SignalMessage::Logout => {
             handlers::auth::handle_logout(state, peer_id, db).await;
         }
-        SignalMessage::ChangePassword { current_password, new_password } => {
-            handlers::auth::handle_change_password(state, peer_id, current_password, new_password, db).await;
+        SignalMessage::ChangePassword {
+            current_password,
+            new_password,
+        } => {
+            handlers::auth::handle_change_password(
+                state,
+                peer_id,
+                current_password,
+                new_password,
+                db,
+            )
+            .await;
         }
         SignalMessage::RevokeAllSessions => {
             handlers::auth::handle_revoke_all_sessions(state, peer_id, db).await;
@@ -1610,7 +1721,8 @@ async fn handle_signal(
         }
         // v0.10.0: Role colors
         SignalMessage::SetRoleColor { role, color } => {
-            handlers::space::handle_set_role_color(state, peer_id, role.clone(), color.clone(), db).await;
+            handlers::space::handle_set_role_color(state, peer_id, role.clone(), color.clone(), db)
+                .await;
         }
         // v0.10.0: Activity status
         SignalMessage::SetActivity { activity } => {
@@ -1627,7 +1739,12 @@ async fn handle_signal(
             handle_decline_call(state, peer_id, room_key).await;
         }
         // Scheduled Events
-        SignalMessage::CreateScheduledEvent { title, description, start_time, end_time } => {
+        SignalMessage::CreateScheduledEvent {
+            title,
+            description,
+            start_time,
+            end_time,
+        } => {
             handle_create_event(state, peer_id, title, description, start_time, end_time, db).await;
         }
         SignalMessage::DeleteScheduledEvent { event_id } => {
@@ -1640,7 +1757,11 @@ async fn handle_signal(
             handle_list_events(state, peer_id, db).await;
         }
         // Message Scheduling
-        SignalMessage::ScheduleMessage { channel_id, content, send_at } => {
+        SignalMessage::ScheduleMessage {
+            channel_id,
+            content,
+            send_at,
+        } => {
             handle_schedule_message(state, peer_id, channel_id, content, send_at, db).await;
         }
         SignalMessage::CancelScheduledMessage { schedule_id } => {
@@ -1674,11 +1795,18 @@ async fn handle_signal(
         // Favorites are client-side only (stored in config_store)
         SignalMessage::ToggleFavoriteChannel { .. } => {}
         // Voice notes
-        SignalMessage::SendVoiceNote { channel_id, duration_secs, data } => {
+        SignalMessage::SendVoiceNote {
+            channel_id,
+            duration_secs,
+            data,
+        } => {
             handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
         }
         other => {
-            log::debug!("Unhandled signal from {peer_id}: {:?}", std::mem::discriminant(&other));
+            log::debug!(
+                "Unhandled signal from {peer_id}: {:?}",
+                std::mem::discriminant(&other)
+            );
         }
     }
 }
@@ -1791,22 +1919,9 @@ async fn handle_accept_call(state: &State, peer_id: &str, room_key: String) {
     if let Some(caller) = caller_peer {
         let caller_name = caller.name.lock().await.clone();
         // Join both peers to the DM call room using existing room join logic
-        handlers::room::handle_join_room(
-            state,
-            &caller.id,
-            room_key.clone(),
-            caller_name,
-            None,
-        )
-        .await;
-        handlers::room::handle_join_room(
-            state,
-            peer_id,
-            room_key,
-            accepter_name,
-            None,
-        )
-        .await;
+        handlers::room::handle_join_room(state, &caller.id, room_key.clone(), caller_name, None)
+            .await;
+        handlers::room::handle_join_room(state, peer_id, room_key, accepter_name, None).await;
     } else {
         send_to(
             &accepter,
@@ -1866,12 +1981,34 @@ async fn handle_decline_call(state: &State, peer_id: &str, room_key: String) {
 
 // ─── Scheduled Events ───
 
-async fn handle_create_event(state: &State, peer_id: &str, title: String, description: String, start_time: i64, end_time: i64, db: &Db) {
+async fn handle_create_event(
+    state: &State,
+    peer_id: &str,
+    title: String,
+    description: String,
+    start_time: i64,
+    end_time: i64,
+    db: &Db,
+) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let space = match s.spaces.get(&space_id) {
+        Some(sp) => sp,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let role = handlers::space::role_for_identity(space, &user_id);
     if !role.has_at_least(shared_types::SpaceRole::Moderator) {
         drop(s);
@@ -1886,24 +2023,59 @@ async fn handle_create_event(state: &State, peer_id: &str, title: String, descri
         format!("evt_{:08x}", u32::from_le_bytes(buf))
     };
     let members: Vec<_> = space.member_ids.iter().cloned().collect();
-    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    let peers_map: Vec<_> = members
+        .iter()
+        .filter_map(|mid| s.peers.get(mid).cloned())
+        .collect();
     drop(s);
     if let Some(db) = db {
-        let _ = db.create_scheduled_event(&event_id, &space_id, &title, &description, start_time, end_time, &user_id, &creator_name);
+        let _ = db.create_scheduled_event(
+            &event_id,
+            &space_id,
+            &title,
+            &description,
+            start_time,
+            end_time,
+            &user_id,
+            &creator_name,
+        );
     }
     let event = shared_types::ScheduledEvent {
-        id: event_id, title, description, start_time, end_time, creator_name, interested_count: 0, is_interested: false,
+        id: event_id,
+        title,
+        description,
+        start_time,
+        end_time,
+        creator_name,
+        interested_count: 0,
+        is_interested: false,
     };
     let msg = SignalMessage::ScheduledEventCreated { event };
-    for p in &peers_map { send_to(p, &msg).await; }
+    for p in &peers_map {
+        send_to(p, &msg).await;
+    }
 }
 
 async fn handle_delete_event(state: &State, peer_id: &str, event_id: String, db: &Db) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let space = match s.spaces.get(&space_id) {
+        Some(sp) => sp,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let role = handlers::space::role_for_identity(space, &user_id);
     if !role.has_at_least(shared_types::SpaceRole::Moderator) {
         drop(s);
@@ -1911,35 +2083,80 @@ async fn handle_delete_event(state: &State, peer_id: &str, event_id: String, db:
         return;
     }
     let members: Vec<_> = space.member_ids.iter().cloned().collect();
-    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    let peers_map: Vec<_> = members
+        .iter()
+        .filter_map(|mid| s.peers.get(mid).cloned())
+        .collect();
     drop(s);
-    if let Some(db) = db { let _ = db.delete_scheduled_event(&event_id); }
+    if let Some(db) = db {
+        let _ = db.delete_scheduled_event(&event_id);
+    }
     let msg = SignalMessage::ScheduledEventDeleted { event_id };
-    for p in &peers_map { send_to(p, &msg).await; }
+    for p in &peers_map {
+        send_to(p, &msg).await;
+    }
 }
 
 async fn handle_toggle_event_interest(state: &State, peer_id: &str, event_id: String, db: &Db) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
-    let db = match db { Some(db) => db, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
+    let db = match db {
+        Some(db) => db,
+        None => return,
+    };
     drop(s);
-    let is_interested = match db.toggle_event_interest(&event_id, &user_id) { Ok(b) => b, Err(_) => return };
+    let is_interested = match db.toggle_event_interest(&event_id, &user_id) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
     let count = db.get_event_interest_count(&event_id).unwrap_or(0);
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
-        send_to(&p, &SignalMessage::EventInterestUpdated { event_id, interested_count: count, is_interested }).await;
+        send_to(
+            &p,
+            &SignalMessage::EventInterestUpdated {
+                event_id,
+                interested_count: count,
+                is_interested,
+            },
+        )
+        .await;
     }
 }
 
 async fn handle_list_events(state: &State, peer_id: &str, db: &Db) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
-    let db = match db { Some(db) => db, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
+    let db = match db {
+        Some(db) => db,
+        None => return,
+    };
     drop(s);
-    let events = db.load_scheduled_events(&space_id, &user_id).unwrap_or_default();
+    let events = db
+        .load_scheduled_events(&space_id, &user_id)
+        .unwrap_or_default();
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
         send_to(&p, &SignalMessage::ScheduledEventList { events }).await;
@@ -1948,22 +2165,48 @@ async fn handle_list_events(state: &State, peer_id: &str, db: &Db) {
 
 // ─── Message Scheduling ───
 
-async fn handle_schedule_message(state: &State, peer_id: &str, channel_id: String, content: String, send_at: i64, db: &Db) {
+async fn handle_schedule_message(
+    state: &State,
+    peer_id: &str,
+    channel_id: String,
+    content: String,
+    send_at: i64,
+    db: &Db,
+) {
     if content.len() > 2000 {
-        send_error(state, peer_id, "Message content too long (max 2000 characters)").await;
+        send_error(
+            state,
+            peer_id,
+            "Message content too long (max 2000 characters)",
+        )
+        .await;
         return;
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
     if send_at <= now {
         send_error(state, peer_id, "Scheduled time must be in the future").await;
         return;
     }
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
     let space_id = peer.space_id.lock().await.clone().unwrap_or_default();
     let sender_name = peer.name.lock().await.clone();
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
-    let db = match db { Some(db) => db, None => return };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
+    let db = match db {
+        Some(db) => db,
+        None => return,
+    };
     let schedule_id = {
         use rand::RngCore;
         let mut buf = [0u8; 4];
@@ -1971,18 +2214,46 @@ async fn handle_schedule_message(state: &State, peer_id: &str, channel_id: Strin
         format!("sched_{:08x}", u32::from_le_bytes(buf))
     };
     drop(s);
-    let _ = db.schedule_message(&schedule_id, &space_id, &channel_id, &user_id, &sender_name, &content, send_at);
+    let _ = db.schedule_message(
+        &schedule_id,
+        &space_id,
+        &channel_id,
+        &user_id,
+        &sender_name,
+        &content,
+        send_at,
+    );
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
-        send_to(&p, &SignalMessage::MessageScheduled { schedule_id, channel_id, content, send_at }).await;
+        send_to(
+            &p,
+            &SignalMessage::MessageScheduled {
+                schedule_id,
+                channel_id,
+                content,
+                send_at,
+            },
+        )
+        .await;
     }
 }
 
-async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_id: String, db: &Db) {
-    let db = match db { Some(db) => db, None => return };
+async fn handle_cancel_scheduled_message(
+    state: &State,
+    peer_id: &str,
+    schedule_id: String,
+    db: &Db,
+) {
+    let db = match db {
+        Some(db) => db,
+        None => return,
+    };
     // Verify the caller owns this scheduled message
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
     let user_id_opt = peer.user_id.lock().await.clone();
     drop(s);
     let user_id = match user_id_opt {
@@ -2000,7 +2271,12 @@ async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_
     match owner {
         Ok(Some(sender_id)) if sender_id == user_id => {}
         Ok(Some(_)) => {
-            send_error(state, peer_id, "You can only cancel your own scheduled messages").await;
+            send_error(
+                state,
+                peer_id,
+                "You can only cancel your own scheduled messages",
+            )
+            .await;
             return;
         }
         Ok(None) => {
@@ -2012,7 +2288,11 @@ async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_
     let _ = db.cancel_scheduled_message(&schedule_id);
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
-        send_to(&p, &SignalMessage::ScheduledMessageCancelled { schedule_id }).await;
+        send_to(
+            &p,
+            &SignalMessage::ScheduledMessageCancelled { schedule_id },
+        )
+        .await;
     }
 }
 
@@ -2020,10 +2300,24 @@ async fn handle_cancel_scheduled_message(state: &State, peer_id: &str, schedule_
 
 async fn handle_set_welcome_message(state: &State, peer_id: &str, message: String, db: &Db) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let space = match s.spaces.get(&space_id) {
+        Some(sp) => sp,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let role = handlers::space::role_for_identity(space, &user_id);
     if !role.has_at_least(shared_types::SpaceRole::Admin) {
         drop(s);
@@ -2031,21 +2325,42 @@ async fn handle_set_welcome_message(state: &State, peer_id: &str, message: Strin
         return;
     }
     let members: Vec<_> = space.member_ids.iter().cloned().collect();
-    let peers_map: Vec<_> = members.iter().filter_map(|mid| s.peers.get(mid).cloned()).collect();
+    let peers_map: Vec<_> = members
+        .iter()
+        .filter_map(|mid| s.peers.get(mid).cloned())
+        .collect();
     drop(s);
-    if let Some(db) = db { let _ = db.set_welcome_message(&space_id, &message); }
+    if let Some(db) = db {
+        let _ = db.set_welcome_message(&space_id, &message);
+    }
     let msg = SignalMessage::WelcomeMessageChanged { message };
-    for p in &peers_map { send_to(p, &msg).await; }
+    for p in &peers_map {
+        send_to(p, &msg).await;
+    }
 }
 
 // ─── Voice Recording ───
 
 async fn handle_start_recording(state: &State, peer_id: &str, channel_id: String) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let space = match s.spaces.get(&space_id) {
+        Some(sp) => sp,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let role = handlers::space::role_for_identity(space, &user_id);
     if !role.has_at_least(shared_types::SpaceRole::Admin) {
         drop(s);
@@ -2055,19 +2370,43 @@ async fn handle_start_recording(state: &State, peer_id: &str, channel_id: String
     let started_by = peer.name.lock().await.clone();
     let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
     let room_peers: Vec<_> = if let Some(room) = s.rooms.get(&room_key) {
-        room.peer_ids.iter().filter_map(|pid| s.peers.get(pid).cloned()).collect()
-    } else { Vec::new() };
+        room.peer_ids
+            .iter()
+            .filter_map(|pid| s.peers.get(pid).cloned())
+            .collect()
+    } else {
+        Vec::new()
+    };
     drop(s);
-    let msg = SignalMessage::RecordingStarted { channel_id, started_by };
-    for p in &room_peers { send_to(p, &msg).await; }
+    let msg = SignalMessage::RecordingStarted {
+        channel_id,
+        started_by,
+    };
+    for p in &room_peers {
+        send_to(p, &msg).await;
+    }
 }
 
 async fn handle_stop_recording(state: &State, peer_id: &str, channel_id: String) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-    let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let space_id = match peer.space_id.lock().await.clone() {
+        Some(id) => id,
+        None => return,
+    };
+    let space = match s.spaces.get(&space_id) {
+        Some(sp) => sp,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let role = handlers::space::role_for_identity(space, &user_id);
     // Only Moderator+ can stop recording (recording initiators are always Admin+)
     if !role.has_at_least(shared_types::SpaceRole::Moderator) {
@@ -2077,11 +2416,18 @@ async fn handle_stop_recording(state: &State, peer_id: &str, channel_id: String)
     }
     let room_key = format!("sp:{}:ch:{}", space_id, channel_id);
     let room_peers: Vec<_> = if let Some(room) = s.rooms.get(&room_key) {
-        room.peer_ids.iter().filter_map(|pid| s.peers.get(pid).cloned()).collect()
-    } else { Vec::new() };
+        room.peer_ids
+            .iter()
+            .filter_map(|pid| s.peers.get(pid).cloned())
+            .collect()
+    } else {
+        Vec::new()
+    };
     drop(s);
     let msg = SignalMessage::RecordingStopped { channel_id };
-    for p in &room_peers { send_to(p, &msg).await; }
+    for p in &room_peers {
+        send_to(p, &msg).await;
+    }
 }
 
 // ─── Account Management ───
@@ -2093,7 +2439,10 @@ async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db:
         return;
     }
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
     let user_id = match peer.user_id.lock().await.clone() {
         Some(id) => id,
         None => {
@@ -2104,16 +2453,28 @@ async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db:
     };
     drop(s);
     *peer.name.lock().await = trimmed.clone();
-    if let Some(db) = db { let _ = db.update_display_name(&user_id, &trimmed); }
+    if let Some(db) = db {
+        let _ = db.update_display_name(&user_id, &trimmed);
+    }
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
-        send_to(&p, &SignalMessage::DisplayNameChanged { user_id, name: trimmed }).await;
+        send_to(
+            &p,
+            &SignalMessage::DisplayNameChanged {
+                user_id,
+                name: trimmed,
+            },
+        )
+        .await;
     }
 }
 
 async fn handle_delete_account(state: &State, peer_id: &str, db: &Db) {
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
     let user_id = match peer.user_id.lock().await.clone() {
         Some(id) => id,
         None => {
@@ -2123,7 +2484,9 @@ async fn handle_delete_account(state: &State, peer_id: &str, db: &Db) {
         }
     };
     drop(s);
-    if let Some(db) = db { let _ = db.delete_user(&user_id); }
+    if let Some(db) = db {
+        let _ = db.delete_user(&user_id);
+    }
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
         send_to(&p, &SignalMessage::AccountDeleted).await;
@@ -2135,16 +2498,33 @@ async fn handle_delete_account(state: &State, peer_id: &str, db: &Db) {
 async fn handle_set_space_public(state: &State, peer_id: &str, is_public: bool, db: &Db) {
     let (space_id, _user_id, role, member_ids) = {
         let s = state.read().await;
-        let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-        let space_id = match peer.space_id.lock().await.clone() { Some(id) => id, None => return };
-        let space = match s.spaces.get(&space_id) { Some(sp) => sp, None => return };
-        let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+        let peer = match s.peers.get(peer_id).cloned() {
+            Some(p) => p,
+            None => return,
+        };
+        let space_id = match peer.space_id.lock().await.clone() {
+            Some(id) => id,
+            None => return,
+        };
+        let space = match s.spaces.get(&space_id) {
+            Some(sp) => sp,
+            None => return,
+        };
+        let user_id = peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer_id.to_string());
         let role = handlers::space::role_for_identity(space, &user_id);
         let member_ids = space.member_ids.clone();
         (space_id, user_id, role, member_ids)
     };
 
-    if !matches!(role, shared_types::SpaceRole::Owner | shared_types::SpaceRole::Admin) {
+    if !matches!(
+        role,
+        shared_types::SpaceRole::Owner | shared_types::SpaceRole::Admin
+    ) {
         send_error(state, peer_id, "Only admins can change space visibility").await;
         return;
     }
@@ -2176,17 +2556,30 @@ async fn handle_browse_public_spaces(state: &State, peer_id: &str, db: &Db) {
         if let Ok(public_rows) = db.load_public_spaces() {
             let s = state.read().await;
             for (id, name, desc, invite) in public_rows {
-                let (member_count, channel_count, online_count) = if let Some(sp) = s.spaces.get(&id) {
-                    let online = s.peers.values().filter(|p| {
-                        p.space_id.try_lock().map(|sid| sid.as_deref() == Some(id.as_str())).unwrap_or(false)
-                    }).count() as u32;
-                    (sp.member_ids.len() as u32, sp.channels.len() as u32, online)
-                } else {
-                    (0, 0, 0)
-                };
+                let (member_count, channel_count, online_count) =
+                    if let Some(sp) = s.spaces.get(&id) {
+                        let online = s
+                            .peers
+                            .values()
+                            .filter(|p| {
+                                p.space_id
+                                    .try_lock()
+                                    .map(|sid| sid.as_deref() == Some(id.as_str()))
+                                    .unwrap_or(false)
+                            })
+                            .count() as u32;
+                        (sp.member_ids.len() as u32, sp.channels.len() as u32, online)
+                    } else {
+                        (0, 0, 0)
+                    };
                 spaces.push(shared_types::PublicSpaceInfo {
-                    id, name, description: desc, invite_code: invite,
-                    member_count, channel_count, online_count,
+                    id,
+                    name,
+                    description: desc,
+                    invite_code: invite,
+                    member_count,
+                    channel_count,
+                    online_count,
                 });
             }
         }
@@ -2199,11 +2592,16 @@ async fn handle_browse_public_spaces(state: &State, peer_id: &str, db: &Db) {
 }
 
 async fn handle_send_voice_note(
-    state: &State, peer_id: &str, channel_id: String,
-    duration_secs: u32, data: Vec<u8>, db: &Db,
+    state: &State,
+    peer_id: &str,
+    channel_id: String,
+    duration_secs: u32,
+    data: Vec<u8>,
+    db: &Db,
 ) {
     // Voice note = special text message with voice note attachment
-    if data.len() > 512_000 { // 500KB max
+    if data.len() > 512_000 {
+        // 500KB max
         send_error(state, peer_id, "Voice note too large (max 500KB)").await;
         return;
     }
@@ -2221,13 +2619,19 @@ async fn handle_send_voice_note(
     {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id) {
-            let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+            let until = peer
+                .timeout_until
+                .load(std::sync::atomic::Ordering::Relaxed);
             if until > 0 && now_epoch_secs() < until {
                 let peer = peer.clone();
                 drop(s);
-                send_to(&peer, &SignalMessage::Error {
-                    message: "You are timed out and cannot send messages".into(),
-                }).await;
+                send_to(
+                    &peer,
+                    &SignalMessage::Error {
+                        message: "You are timed out and cannot send messages".into(),
+                    },
+                )
+                .await;
                 return;
             }
         }
@@ -2236,14 +2640,17 @@ async fn handle_send_voice_note(
     // Check channel permissions (min_role)
     {
         let s = state.read().await;
-        let min_role = s.spaces.get(&space_id)
+        let min_role = s
+            .spaces
+            .get(&space_id)
             .and_then(|sp| sp.channels.iter().find(|ch| ch.id == channel_id))
             .map(|ch| ch.min_role)
             .unwrap_or(shared_types::SpaceRole::Member);
         if min_role != shared_types::SpaceRole::Member {
             let user_role = if let Some(peer) = s.peers.get(peer_id) {
                 if let Some(uid) = peer.user_id.lock().await.as_deref() {
-                    s.spaces.get(&space_id)
+                    s.spaces
+                        .get(&space_id)
                         .and_then(|sp| sp.member_roles.get(uid).copied())
                         .unwrap_or(shared_types::SpaceRole::Member)
                 } else {
@@ -2255,9 +2662,13 @@ async fn handle_send_voice_note(
             if !user_role.has_at_least(min_role) {
                 if let Some(peer) = s.peers.get(peer_id).cloned() {
                     drop(s);
-                    send_to(&peer, &SignalMessage::Error {
-                        message: "You don't have permission to use this channel".into(),
-                    }).await;
+                    send_to(
+                        &peer,
+                        &SignalMessage::Error {
+                            message: "You don't have permission to use this channel".into(),
+                        },
+                    )
+                    .await;
                 }
                 return;
             }
@@ -2268,7 +2679,9 @@ async fn handle_send_voice_note(
     {
         let mut s = state.write().await;
         if let Some(space) = s.spaces.get_mut(&space_id) {
-            let slow_mode_secs = space.channels.iter()
+            let slow_mode_secs = space
+                .channels
+                .iter()
                 .find(|ch| ch.id == channel_id)
                 .map(|ch| ch.slow_mode_secs)
                 .unwrap_or(0);
@@ -2294,18 +2707,37 @@ async fn handle_send_voice_note(
 
     // Auto-moderation filter check (on the voice note description text)
     let content_text = format!("\u{1F3A4} Voice note ({duration_secs}s)");
-    if let Some((matched_word, action)) = handlers::moderation::check_automod(db, &space_id, &content_text).await {
+    if let Some((matched_word, action)) =
+        handlers::moderation::check_automod(db, &space_id, &content_text).await
+    {
         if action == "block" {
-            send_error(state, peer_id, &format!("Message blocked by auto-moderation (matched: {matched_word})")).await;
+            send_error(
+                state,
+                peer_id,
+                &format!("Message blocked by auto-moderation (matched: {matched_word})"),
+            )
+            .await;
             return;
         }
     }
 
     let s = state.read().await;
-    let peer = match s.peers.get(peer_id).cloned() { Some(p) => p, None => return };
-    let user_id = peer.user_id.lock().await.clone().unwrap_or_else(|| peer_id.to_string());
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer_id.to_string());
     let name = peer.name.lock().await.clone();
-    let name = if name.is_empty() { "Anonymous".to_string() } else { name };
+    let name = if name.is_empty() {
+        "Anonymous".to_string()
+    } else {
+        name
+    };
     drop(s);
 
     let msg_id = {
@@ -2343,13 +2775,21 @@ async fn handle_send_voice_note(
                 let uid = p.user_id.lock().await.clone().unwrap_or_default();
                 if uid == *mid {
                     // Block check: skip recipients who have blocked the sender
-                    if p.blocked_by.read().map(|b| b.contains(&user_id)).unwrap_or(false) {
+                    if p.blocked_by
+                        .read()
+                        .map(|b| b.contains(&user_id))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
-                    send_to(p, &SignalMessage::TextMessage {
-                        channel_id: channel_id.clone(),
-                        message: msg.clone(),
-                    }).await;
+                    send_to(
+                        p,
+                        &SignalMessage::TextMessage {
+                            channel_id: channel_id.clone(),
+                            message: msg.clone(),
+                        },
+                    )
+                    .await;
                 }
             }
         }
@@ -2388,7 +2828,11 @@ async fn relay_audio(
     }
 
     // #5: Audio frame rate limiting (lock-free)
-    if !atomic_rate_check(&peer.audio_rate_window_ms, &peer.audio_frame_count, LIMITS.max_audio_fps) {
+    if !atomic_rate_check(
+        &peer.audio_rate_window_ms,
+        &peer.audio_frame_count,
+        LIMITS.max_audio_fps,
+    ) {
         return;
     }
 
@@ -2420,12 +2864,18 @@ async fn relay_audio(
             if let Some(p) = s.peers.get(pid) {
                 // Block filtering: skip recipients who have blocked the sender
                 if let Some(ref uid) = sender_user_id {
-                    if p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false) {
+                    if p.blocked_by
+                        .read()
+                        .map(|b| b.contains(uid))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                 }
                 // Server-deafen: skip recipients who are server-deafened
-                if p.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                if p.is_server_deafened
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
                     continue;
                 }
                 room_peers_buf.push(p.clone());
@@ -2434,16 +2884,13 @@ async fn relay_audio(
     }
 
     // Whisper filtering: read lock-free, no allocation when empty
-    let whisper = s
-        .peers
-        .get(sender_id)
-        .and_then(|p| {
-            p.whisper_targets
-                .read()
-                .ok()
-                .filter(|t| !t.is_empty())
-                .map(|t| t.clone())
-        });
+    let whisper = s.peers.get(sender_id).and_then(|p| {
+        p.whisper_targets
+            .read()
+            .ok()
+            .filter(|t| !t.is_empty())
+            .map(|t| t.clone())
+    });
 
     // Drop the state read lock before sending frames
     drop(s);
@@ -2502,7 +2949,10 @@ async fn relay_audio(
 async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
     // Bounds-check sender_id length to prevent u8 overflow in frame header
     if sender_id.len() > 255 {
-        log::warn!("Screen relay: sender_id too long ({} bytes), dropping frame", sender_id.len());
+        log::warn!(
+            "Screen relay: sender_id too long ({} bytes), dropping frame",
+            sender_id.len()
+        );
         return;
     }
 
@@ -2532,7 +2982,11 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
             None => return,
         };
 
-        if !atomic_rate_check(&peer.screen_rate_window_ms, &peer.screen_frame_count, LIMITS.max_screen_fps) {
+        if !atomic_rate_check(
+            &peer.screen_rate_window_ms,
+            &peer.screen_frame_count,
+            LIMITS.max_screen_fps,
+        ) {
             return;
         }
 
@@ -2564,12 +3018,18 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
         // Block filtering for screen share
         let sender_user_id: Option<String> = {
             let s = state.read().await;
-            s.peers.get(sender_id)
+            s.peers
+                .get(sender_id)
                 .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()))
         };
         if let Some(ref uid) = sender_user_id {
             all.into_iter()
-                .filter(|p| !p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false))
+                .filter(|p| {
+                    !p.blocked_by
+                        .read()
+                        .map(|b| b.contains(uid))
+                        .unwrap_or(false)
+                })
                 .collect()
         } else {
             all
@@ -2589,37 +3049,30 @@ async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &str, data: &
         .fetch_add(others.len() as u64, Ordering::Relaxed);
 
     let send_timeout = std::time::Duration::from_millis(300);
+    let udp_frame_ok = data.len() <= shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE;
 
-    // Single-peer fast path: avoid clone overhead
-    if others.len() == 1 {
-        let peer_id_dbg = others[0].id.clone();
+    for peer in others {
+        if udp_frame_ok {
+            let udp_addr = peer.udp_addr.read().ok().and_then(|addr| *addr);
+            if let Some(addr) = udp_addr {
+                if let Some(socket) = UDP_SOCKET.get() {
+                    let _ = socket.send_to(&frame, addr).await;
+                    metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+            }
+        }
+
+        let frame_clone = frame.clone();
+        let peer_id_dbg = peer.id.clone();
         let fut = async {
-            let mut tx = others[0].tx.lock().await;
-            if let Err(e) = tx.send(Message::Binary(frame.into())).await {
+            let mut tx = peer.tx.lock().await;
+            if let Err(e) = tx.send(Message::Binary(frame_clone.into())).await {
                 log::debug!("Screen frame send failed for peer {peer_id_dbg}: {e}");
             }
         };
         let _ = tokio::time::timeout(send_timeout, fut).await;
-        return;
     }
-
-    let futs: Vec<_> = others
-        .into_iter()
-        .map(|peer| {
-            let frame_copy = frame.clone();
-            let peer_id_dbg = peer.id.clone();
-            async move {
-                let fut = async {
-                    let mut tx = peer.tx.lock().await;
-                    if let Err(e) = tx.send(Message::Binary(frame_copy.into())).await {
-                        log::debug!("Screen frame send failed for peer {peer_id_dbg}: {e}");
-                    }
-                };
-                let _ = tokio::time::timeout(send_timeout, fut).await;
-            }
-        })
-        .collect();
-    futures_util::future::join_all(futs).await;
 }
 
 // ─── UDP Transport ───
@@ -2668,16 +3121,16 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Run the UDP audio relay socket. Receives UDP packets, maps session tokens to peers,
-/// and relays audio to room peers via UDP.
+/// Run the UDP media relay socket. Receives UDP packets, maps session tokens to peers,
+/// and relays supported media to room peers via UDP with WebSocket fallback.
 async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket>) {
-    log::info!("UDP audio relay started on {:?}", udp_socket.local_addr());
+    log::info!("UDP media relay started on {:?}", udp_socket.local_addr());
 
-    // Pre-allocate receive buffer (max: token(8) + type(1) + audio(4096) = 4105)
-    let mut buf = vec![0u8; 8 + 1 + shared_types::MAX_AUDIO_FRAME_SIZE];
+    // Pre-allocate receive buffer for the largest supported UDP media payload.
+    let mut buf = vec![0u8; 8 + 1 + shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE];
 
-    // Per-loop reusable buffers for audio relay (avoids alloc per frame)
-    let mut relay_buf: Vec<u8> = Vec::with_capacity(512);
+    // Per-loop reusable buffers for media relay (avoids alloc per frame)
+    let mut relay_buf: Vec<u8> = Vec::with_capacity(shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE + 300);
     let mut room_peers_buf: Vec<Arc<Peer>> = Vec::with_capacity(20);
 
     loop {
@@ -2689,8 +3142,8 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
             }
         };
 
-        // Minimum packet: 8 (token) + 1 (type byte)
-        if len < 9 {
+        // Minimum packet: 8-byte session token.
+        if len < shared_types::UDP_SESSION_TOKEN_LEN {
             continue;
         }
 
@@ -2698,7 +3151,11 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
             Ok(t) => t,
             Err(_) => continue,
         };
-        let packet_type = buf[8];
+        let packet_type = if len > shared_types::UDP_SESSION_TOKEN_LEN {
+            Some(buf[8])
+        } else {
+            None
+        };
 
         // Single state read: look up peer by token + register/update UDP address
         let peer_id = {
@@ -2720,15 +3177,49 @@ async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Arc<UdpSocket
             pid
         };
 
+        // Bare token packet: registration only.
+        let Some(packet_type) = packet_type else {
+            continue;
+        };
+
         // Keepalive: just refreshes the address mapping above, no relay needed
         if packet_type == shared_types::UDP_KEEPALIVE {
             continue;
         }
 
-        if packet_type == shared_types::MEDIA_PACKET_AUDIO && len >= 10 {
-            metrics.udp_frames_in_total.fetch_add(1, Ordering::Relaxed);
-            let audio_data = &buf[9..len];
-            relay_audio_udp(&state, &metrics, &peer_id, audio_data, &udp_socket, &mut relay_buf, &mut room_peers_buf).await;
+        if len < 10 {
+            continue;
+        }
+
+        metrics.udp_frames_in_total.fetch_add(1, Ordering::Relaxed);
+        match packet_type {
+            shared_types::MEDIA_PACKET_AUDIO => {
+                let audio_data = &buf[9..len];
+                relay_audio_udp(
+                    &state,
+                    &metrics,
+                    &peer_id,
+                    audio_data,
+                    &udp_socket,
+                    &mut relay_buf,
+                    &mut room_peers_buf,
+                )
+                .await;
+            }
+            shared_types::MEDIA_PACKET_SCREEN => {
+                let screen_data = &buf[9..len];
+                relay_screen_udp(
+                    &state,
+                    &metrics,
+                    &peer_id,
+                    screen_data,
+                    &udp_socket,
+                    &mut relay_buf,
+                    &mut room_peers_buf,
+                )
+                .await;
+            }
+            _ => {}
         }
     }
 }
@@ -2798,12 +3289,18 @@ async fn relay_audio_udp(
             if let Some(p) = s.peers.get(pid) {
                 // Block filtering: skip recipients who have blocked the sender
                 if let Some(ref uid) = sender_user_id {
-                    if p.blocked_by.read().map(|b| b.contains(uid)).unwrap_or(false) {
+                    if p.blocked_by
+                        .read()
+                        .map(|b| b.contains(uid))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                 }
                 // Server-deafen: skip recipients who are server-deafened
-                if p.is_server_deafened.load(std::sync::atomic::Ordering::Relaxed) {
+                if p.is_server_deafened
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
                     continue;
                 }
                 room_peers_buf.push(p.clone());
@@ -2812,16 +3309,13 @@ async fn relay_audio_udp(
     }
 
     // Whisper filtering: read lock-free, no allocation when empty
-    let whisper = s
-        .peers
-        .get(sender_id)
-        .and_then(|p| {
-            p.whisper_targets
-                .read()
-                .ok()
-                .filter(|t| !t.is_empty())
-                .map(|t| t.clone())
-        });
+    let whisper = s.peers.get(sender_id).and_then(|p| {
+        p.whisper_targets
+            .read()
+            .ok()
+            .filter(|t| !t.is_empty())
+            .map(|t| t.clone())
+    });
 
     // Drop the state read lock before sending frames
     drop(s);
@@ -2848,6 +3342,115 @@ async fn relay_audio_udp(
             // Fallback: send via WebSocket
             let frame_clone = frame.to_vec();
             let send_timeout = std::time::Duration::from_millis(500);
+            let fut = async {
+                let mut tx = peer.tx.lock().await;
+                let _ = tx.send(Message::Binary(frame_clone.into())).await;
+            };
+            let _ = tokio::time::timeout(send_timeout, fut).await;
+        }
+    }
+}
+
+async fn relay_screen_udp(
+    state: &State,
+    metrics: &Metrics,
+    sender_id: &str,
+    data: &[u8],
+    udp_socket: &UdpSocket,
+    relay_buf: &mut Vec<u8>,
+    room_peers_buf: &mut Vec<Arc<Peer>>,
+) {
+    if data.len() > shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE || sender_id.len() > 255 {
+        return;
+    }
+
+    let s = state.read().await;
+
+    let peer = match s.peers.get(sender_id) {
+        Some(p) => p.clone(),
+        None => return,
+    };
+
+    if !atomic_rate_check(
+        &peer.screen_rate_window_ms,
+        &peer.screen_frame_count,
+        LIMITS.max_screen_fps,
+    ) {
+        return;
+    }
+
+    let room_code = match peer.cached_room_code() {
+        Some(code) => code,
+        None => return,
+    };
+
+    let allowed = s
+        .rooms
+        .get(&room_code)
+        .and_then(|room| room.active_screen_share_peer_id.as_deref())
+        == Some(sender_id);
+    if !allowed {
+        return;
+    }
+
+    relay_buf.clear();
+    relay_buf.push(shared_types::MEDIA_PACKET_SCREEN);
+    relay_buf.push(sender_id.len() as u8);
+    relay_buf.extend_from_slice(sender_id.as_bytes());
+    relay_buf.extend_from_slice(data);
+
+    let sender_user_id: Option<String> = s
+        .peers
+        .get(sender_id)
+        .and_then(|p| p.user_id.try_lock().ok().and_then(|uid| uid.clone()));
+
+    room_peers_buf.clear();
+    if let Some(room) = s.rooms.get(&room_code) {
+        for pid in &room.peer_ids {
+            if pid.as_str() == sender_id {
+                continue;
+            }
+            if let Some(candidate) = s.peers.get(pid) {
+                if let Some(ref uid) = sender_user_id {
+                    if candidate
+                        .blocked_by
+                        .read()
+                        .map(|blocked| blocked.contains(uid))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                }
+                room_peers_buf.push(candidate.clone());
+            }
+        }
+    }
+
+    drop(s);
+
+    if room_peers_buf.is_empty() {
+        metrics
+            .screen_frames_in_total
+            .fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+
+    let frame = &*relay_buf;
+    metrics
+        .screen_frames_in_total
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .screen_frames_out_total
+        .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
+
+    let send_timeout = std::time::Duration::from_millis(300);
+    for peer in room_peers_buf.iter() {
+        let udp_addr = peer.udp_addr.read().ok().and_then(|addr| *addr);
+        if let Some(addr) = udp_addr {
+            let _ = udp_socket.send_to(frame, addr).await;
+            metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let frame_clone = frame.to_vec();
             let fut = async {
                 let mut tx = peer.tx.lock().await;
                 let _ = tx.send(Message::Binary(frame_clone.into())).await;
@@ -2974,9 +3577,14 @@ async fn handle_set_user_status(state: &State, peer_id: &str, status: String, db
     if let (Some(db), Some(uid)) = (db, user_id) {
         let db = db.clone();
         let status_clone = status.clone();
-        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-            db.set_user_status(&uid, &status_clone);
-        })).await {
+        match tokio::time::timeout(
+            DB_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                db.set_user_status(&uid, &status_clone);
+            }),
+        )
+        .await
+        {
             Err(_) => log::warn!("DB timeout: set_user_status for peer {peer_id}"),
             Ok(Err(e)) => log::warn!("DB task panicked in set_user_status: {e}"),
             Ok(Ok(())) => {}
@@ -3011,9 +3619,14 @@ async fn handle_set_profile(state: &State, peer_id: &str, bio: String, db: &Db) 
         let db = db.clone();
         let uid = uid.clone();
         let bio_clone = bio.clone();
-        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-            db.set_user_bio(&uid, &bio_clone);
-        })).await {
+        match tokio::time::timeout(
+            DB_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                db.set_user_bio(&uid, &bio_clone);
+            }),
+        )
+        .await
+        {
             Err(_) => log::warn!("DB timeout: set_user_bio for peer {peer_id}"),
             Ok(Err(e)) => log::warn!("DB task panicked in set_user_bio: {e}"),
             Ok(Ok(())) => {}
@@ -3076,9 +3689,14 @@ async fn handle_set_channel_topic(
         let db = db.clone();
         let cid = channel_id.clone();
         let t = topic.clone();
-        match tokio::time::timeout(DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-            db.set_channel_topic(&cid, &t);
-        })).await {
+        match tokio::time::timeout(
+            DB_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                db.set_channel_topic(&cid, &t);
+            }),
+        )
+        .await
+        {
             Err(_) => log::warn!("DB timeout: set_channel_topic for channel {channel_id}"),
             Ok(Err(e)) => log::warn!("DB task panicked in set_channel_topic: {e}"),
             Ok(Ok(())) => {}
@@ -3222,9 +3840,16 @@ async fn handle_set_priority_speaker(
     // Only Moderator+ can set priority speaker on others; anyone can set it on themselves
     let is_self = peer_id == target_id;
     if !is_self {
-        if let Some((_space_id, _user_id, role)) = handlers::space::peer_space_role(state, peer_id).await {
+        if let Some((_space_id, _user_id, role)) =
+            handlers::space::peer_space_role(state, peer_id).await
+        {
             if !role.has_at_least(shared_types::SpaceRole::Moderator) {
-                send_error(state, peer_id, "Moderator+ required to set priority speaker on others").await;
+                send_error(
+                    state,
+                    peer_id,
+                    "Moderator+ required to set priority speaker on others",
+                )
+                .await;
                 return;
             }
         } else {
@@ -3245,9 +3870,7 @@ async fn handle_set_priority_speaker(
     {
         let s = state.read().await;
         if let Some(target) = s.peers.get(&target_id) {
-            target
-                .is_priority_speaker
-                .store(enabled, Ordering::Relaxed);
+            target.is_priority_speaker.store(enabled, Ordering::Relaxed);
         }
     }
 
@@ -3317,7 +3940,12 @@ async fn handle_timeout_member(
         return;
     };
     if !handlers::space::can_manage_members(actor_role) {
-        send_error(state, peer_id, "Insufficient permissions to timeout members").await;
+        send_error(
+            state,
+            peer_id,
+            "Insufficient permissions to timeout members",
+        )
+        .await;
         return;
     }
 

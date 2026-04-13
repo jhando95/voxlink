@@ -329,8 +329,8 @@ impl Soundboard {
     /// Load a WAV file and add it as a soundboard clip. Returns the clip index.
     /// Resamples to 48kHz mono if needed. Caps at MAX_SOUNDBOARD_CLIPS.
     pub fn load_clip(&self, path: &str) -> Result<usize, String> {
-        let reader = hound::WavReader::open(path)
-            .map_err(|e| format!("Failed to open WAV {path}: {e}"))?;
+        let reader =
+            hound::WavReader::open(path).map_err(|e| format!("Failed to open WAV {path}: {e}"))?;
         let spec = reader.spec();
         let raw_samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader

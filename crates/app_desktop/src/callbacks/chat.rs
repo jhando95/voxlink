@@ -7,6 +7,8 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+use crate::helpers::CONFIG_LOCK;
+
 pub fn setup_select_text_channel(
     window: &MainWindow,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
@@ -451,6 +453,7 @@ pub fn setup_react_to_message(
 
         // Track recent reactions: push to front, deduplicate, trim to 5
         {
+            let _lock = CONFIG_LOCK.lock().ok();
             let mut cfg = config_store::load_config();
             cfg.recent_reactions.retain(|e| e != &emoji);
             cfg.recent_reactions.insert(0, emoji.clone());
@@ -684,8 +687,10 @@ pub fn setup_mention_input_changed(
                     w.set_mention_popup_visible(false);
                     return;
                 }
-                let model: Vec<SharedString> =
-                    members.iter().map(|n| SharedString::from(n.as_str())).collect();
+                let model: Vec<SharedString> = members
+                    .iter()
+                    .map(|n| SharedString::from(n.as_str()))
+                    .collect();
                 let rc = Rc::new(VecModel::from(model));
                 w.set_mention_suggestions(ModelRc::from(rc));
                 w.set_mention_selected_index(0);
@@ -780,9 +785,7 @@ pub fn setup_decline_call(
     });
 }
 
-pub fn setup_mention_selected(
-    window: &MainWindow,
-) {
+pub fn setup_mention_selected(window: &MainWindow) {
     let window_weak = window.as_weak();
     window.on_mention_selected(move |idx| {
         let Some(w) = window_weak.upgrade() else {

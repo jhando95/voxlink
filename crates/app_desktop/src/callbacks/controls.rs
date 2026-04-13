@@ -7,6 +7,8 @@ use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+use crate::helpers::CONFIG_LOCK;
+
 pub fn setup_toggle_mute(
     window: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
@@ -164,7 +166,10 @@ pub fn setup_volume_changed(
         let peer_id_str = peer_id.to_string();
         let peer_name = {
             let mut s = state.borrow_mut();
-            let name = s.room.participants.iter()
+            let name = s
+                .room
+                .participants
+                .iter()
                 .find(|p| p.id == peer_id_str)
                 .map(|p| p.name.clone());
             if let Some(p) = s.room.participants.iter_mut().find(|p| p.id == peer_id_str) {
@@ -175,6 +180,7 @@ pub fn setup_volume_changed(
         // Persist per-peer volume by name (survives reconnects)
         if let Some(name) = peer_name {
             if (volume - 1.0).abs() > 0.01 {
+                let _lock = CONFIG_LOCK.lock().ok();
                 let mut cfg = config_store::load_config();
                 cfg.peer_volumes.insert(name, volume);
                 let _ = config_store::save_config(&cfg);
@@ -209,14 +215,18 @@ pub fn setup_eq_changed(
         // Persist by peer name
         let peer_name = {
             let s = state.borrow();
-            s.room.participants.iter()
+            s.room
+                .participants
+                .iter()
                 .find(|p| p.id == peer_id_str)
                 .map(|p| p.name.clone())
         };
         if let Some(name) = peer_name {
+            let _lock = CONFIG_LOCK.lock().ok();
             if bass_mb != 0 || mid_mb != 0 || treble_mb != 0 {
                 let mut cfg = config_store::load_config();
-                cfg.peer_eq_settings.insert(name, [bass_mb, mid_mb, treble_mb]);
+                cfg.peer_eq_settings
+                    .insert(name, [bass_mb, mid_mb, treble_mb]);
                 let _ = config_store::save_config(&cfg);
             } else {
                 // Remove entry when all flat
@@ -253,11 +263,14 @@ pub fn setup_pan_changed(
         // Persist by peer name
         let peer_name = {
             let s = state.borrow();
-            s.room.participants.iter()
+            s.room
+                .participants
+                .iter()
                 .find(|p| p.id == peer_id_str)
                 .map(|p| p.name.clone())
         };
         if let Some(name) = peer_name {
+            let _lock = CONFIG_LOCK.lock().ok();
             if pan_val != 0 {
                 let mut cfg = config_store::load_config();
                 cfg.peer_pan.insert(name, pan_val);

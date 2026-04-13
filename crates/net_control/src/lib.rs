@@ -13,18 +13,17 @@ type WsTx = futures_util::stream::SplitSink<
 /// Max queued audio frames before dropping oldest. At 50fps, 200 = ~4 seconds.
 /// Prevents unbounded memory growth if consumer falls behind.
 const AUDIO_QUEUE_CAPACITY: usize = 200;
-const SCREEN_QUEUE_CAPACITY: usize = 2;
 
 pub struct NetworkClient {
     ws_tx: Arc<Mutex<Option<WsTx>>>,
     signal_rx: mpsc::UnboundedReceiver<SignalMessage>,
     /// Raw binary audio frames — bounded channel to prevent OOM on slow consumers.
     audio_rx: mpsc::Receiver<Vec<u8>>,
-    /// Raw binary screen frames — bounded to keep only near-latest data.
-    screen_rx: mpsc::Receiver<Vec<u8>>,
+    /// Latest raw binary screen frame. Screen sharing is freshness-sensitive, so
+    /// we overwrite stale pending frames instead of queueing them.
+    screen_latest: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     signal_tx_internal: mpsc::UnboundedSender<SignalMessage>,
     audio_tx_internal: mpsc::Sender<Vec<u8>>,
-    screen_tx_internal: mpsc::Sender<Vec<u8>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
     server_url: Arc<Mutex<Option<String>>>,
     /// Last measured round-trip time in milliseconds (-1 = unknown).
@@ -54,15 +53,13 @@ impl NetworkClient {
     pub fn new() -> Self {
         let (sig_tx, sig_rx) = mpsc::unbounded_channel();
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
-        let (screen_tx, screen_rx) = mpsc::channel(SCREEN_QUEUE_CAPACITY);
         Self {
             ws_tx: Arc::new(Mutex::new(None)),
             signal_rx: sig_rx,
             audio_rx,
-            screen_rx,
+            screen_latest: Arc::new(std::sync::Mutex::new(None)),
             signal_tx_internal: sig_tx,
             audio_tx_internal: audio_tx,
-            screen_tx_internal: screen_tx,
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             server_url: Arc::new(Mutex::new(None)),
             last_ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
@@ -104,7 +101,7 @@ impl NetworkClient {
 
         let sig_tx = self.signal_tx_internal.clone();
         let audio_tx = self.audio_tx_internal.clone();
-        let screen_tx = self.screen_tx_internal.clone();
+        let screen_latest = self.screen_latest.clone();
         let connected = self.connected.clone();
         let last_ping_ms_rx = self.last_ping_ms.clone();
         let ping_sent_at_rx = self.ping_sent_at.clone();
@@ -127,15 +124,25 @@ impl NetworkClient {
                                 shared_types::MEDIA_PACKET_AUDIO => {
                                     let id_len = data[1] as usize;
                                     if data.len() > 2 + id_len {
-                                        bytes_recv_rx.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                                        packets_recv_rx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        bytes_recv_rx.fetch_add(
+                                            data.len() as u64,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        packets_recv_rx
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let _ = audio_tx.try_send(data.into());
                                     }
                                 }
                                 shared_types::MEDIA_PACKET_SCREEN => {
                                     let id_len = data[1] as usize;
                                     if data.len() > 2 + id_len {
-                                        let _ = screen_tx.try_send(data.into());
+                                        bytes_recv_rx.fetch_add(
+                                            data.len() as u64,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        packets_recv_rx
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        store_latest_frame(screen_latest.as_ref(), data.into());
                                     }
                                 }
                                 _ => {}
@@ -213,8 +220,10 @@ impl NetworkClient {
                         packet.extend_from_slice(data);
                         let _ = socket.send(&packet).await;
                     }
-                    self.bytes_sent.fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
-                    self.packets_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.bytes_sent
+                        .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.packets_sent
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return Ok(());
                 }
             }
@@ -234,18 +243,44 @@ impl NetworkClient {
                 p.extend_from_slice(data);
                 p
             };
-            self.bytes_sent.fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
-            self.packets_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.bytes_sent
+                .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+            self.packets_sent
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tx.send(Message::Binary(packet.into())).await?;
         }
         Ok(())
     }
 
     pub async fn send_screen_frame(&self, data: &[u8]) -> Result<()> {
+        if self.udp_active.load(std::sync::atomic::Ordering::Acquire)
+            && data.len() <= shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE
+        {
+            if let Some(ref token) = *self.udp_token.lock().await {
+                if let Some(ref socket) = *self.udp_socket.lock().await {
+                    let pkt_len = 8 + 1 + data.len();
+                    let mut packet = Vec::with_capacity(pkt_len);
+                    packet.extend_from_slice(token);
+                    packet.push(shared_types::MEDIA_PACKET_SCREEN);
+                    packet.extend_from_slice(data);
+                    let _ = socket.send(&packet).await;
+                    self.bytes_sent
+                        .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.packets_sent
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(());
+                }
+            }
+        }
+
         if let Some(tx) = self.ws_tx.lock().await.as_mut() {
             let mut packet = Vec::with_capacity(data.len() + 1);
             packet.push(shared_types::MEDIA_PACKET_SCREEN);
             packet.extend_from_slice(data);
+            self.bytes_sent
+                .fetch_add(packet.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            self.packets_sent
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tx.send(Message::Binary(packet.into())).await?;
         }
         Ok(())
@@ -262,7 +297,10 @@ impl NetworkClient {
     }
 
     pub fn try_recv_screen_frame(&mut self) -> Option<Vec<u8>> {
-        self.screen_rx.try_recv().ok()
+        self.screen_latest
+            .lock()
+            .ok()
+            .and_then(|mut latest| latest.take())
     }
 
     /// Send a WebSocket Ping to measure latency. Call `ping_ms()` to read the result.
@@ -307,24 +345,35 @@ impl NetworkClient {
 
         let socket = Arc::new(socket);
 
-        // Start UDP receive task — pushes incoming audio to the same bounded channel
+        // Start UDP receive task — pushes incoming media to the same hot-path queues.
         let audio_tx = self.audio_tx_internal.clone();
+        let screen_latest_udp = self.screen_latest.clone();
         let recv_socket = socket.clone();
         let udp_active = self.udp_active.clone();
         let bytes_recv_udp = self.bytes_recv.clone();
         let packets_recv_udp = self.packets_recv.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_AUDIO_FRAME_SIZE];
+            let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE];
             loop {
                 match recv_socket.recv(&mut buf).await {
                     Ok(len) if len >= 3 => {
-                        // Same frame format as WebSocket: [type][id_len][sender_id][audio_data]
-                        if buf[0] == shared_types::MEDIA_PACKET_AUDIO {
-                            let id_len = buf[1] as usize;
-                            if len > 2 + id_len {
-                                bytes_recv_udp.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
-                                packets_recv_udp.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                let _ = audio_tx.try_send(buf[..len].to_vec());
+                        let packet_type = buf[0];
+                        let id_len = buf[1] as usize;
+                        if len > 2 + id_len {
+                            bytes_recv_udp
+                                .fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
+                            packets_recv_udp.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            match packet_type {
+                                shared_types::MEDIA_PACKET_AUDIO => {
+                                    let _ = audio_tx.try_send(buf[..len].to_vec());
+                                }
+                                shared_types::MEDIA_PACKET_SCREEN => {
+                                    store_latest_frame(
+                                        screen_latest_udp.as_ref(),
+                                        buf[..len].to_vec(),
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -351,10 +400,19 @@ impl NetworkClient {
         let keepalive_socket = socket;
         let keepalive_active = self.udp_active.clone();
         tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(shared_types::UDP_KEEPALIVE_INTERVAL_SECS);
-            let keepalive_packet = [token[0], token[1], token[2], token[3],
-                                    token[4], token[5], token[6], token[7],
-                                    shared_types::UDP_KEEPALIVE];
+            let interval =
+                std::time::Duration::from_secs(shared_types::UDP_KEEPALIVE_INTERVAL_SECS);
+            let keepalive_packet = [
+                token[0],
+                token[1],
+                token[2],
+                token[3],
+                token[4],
+                token[5],
+                token[6],
+                token[7],
+                shared_types::UDP_KEEPALIVE,
+            ];
             loop {
                 tokio::time::sleep(interval).await;
                 if !keepalive_active.load(std::sync::atomic::Ordering::Acquire) {
@@ -378,15 +436,18 @@ impl NetworkClient {
 
     /// Whether UDP transport is currently active.
     pub fn is_udp_active(&self) -> bool {
-        self.udp_active
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.udp_active.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Snapshot and reset bandwidth counters. Returns (bytes_sent, bytes_recv).
     /// Designed for periodic 1-second sampling in the tick loop.
     pub fn swap_bandwidth_counters(&self) -> (u64, u64) {
-        let sent = self.bytes_sent.swap(0, std::sync::atomic::Ordering::Relaxed);
-        let recv = self.bytes_recv.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let sent = self
+            .bytes_sent
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        let recv = self
+            .bytes_recv
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
         (sent, recv)
     }
 
@@ -453,6 +514,12 @@ fn hex_decode_8(hex: &str) -> Option<[u8; 8]> {
     Some(out)
 }
 
+fn store_latest_frame(slot: &std::sync::Mutex<Option<Vec<u8>>>, frame: Vec<u8>) {
+    if let Ok(mut latest) = slot.lock() {
+        *latest = Some(frame);
+    }
+}
+
 /// Discover a Voxlink server on the local network via UDP broadcast.
 /// Returns the server URL (e.g., "ws://192.168.1.5:9090") or None if not found.
 pub async fn discover_lan_server() -> Option<String> {
@@ -463,7 +530,7 @@ pub async fn discover_lan_server() -> Option<String> {
 
     // Send discovery request
     socket
-        .send_to(b"VOXLINK_DISCOVER", "255.255.255.255:9091")
+        .send_to(b"VOXLINK_DISCOVER", "255.255.255.255:9092")
         .await
         .ok()?;
 
@@ -490,7 +557,10 @@ mod tests {
     #[test]
     fn hex_decode_8_valid() {
         let result = hex_decode_8("0123456789abcdef");
-        assert_eq!(result, Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]));
+        assert_eq!(
+            result,
+            Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])
+        );
     }
 
     #[test]
@@ -576,7 +646,10 @@ mod tests {
     #[test]
     fn hex_decode_8_uppercase() {
         let result = hex_decode_8("0123456789ABCDEF");
-        assert_eq!(result, Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]));
+        assert_eq!(
+            result,
+            Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
+        );
     }
 
     #[test]
@@ -628,7 +701,10 @@ mod tests {
         let client = NetworkClient::new();
         // Should not panic, just silently succeed (no-op)
         let result = client.send_audio(&[0xAA, 0xBB]).await;
-        assert!(result.is_ok(), "send_audio with no connection should not error");
+        assert!(
+            result.is_ok(),
+            "send_audio with no connection should not error"
+        );
     }
 
     #[test]
@@ -647,6 +723,15 @@ mod tests {
     fn try_recv_screen_empty() {
         let mut client = NetworkClient::new();
         assert!(client.try_recv_screen_frame().is_none());
+    }
+
+    #[test]
+    fn store_latest_frame_overwrites_stale_screen_frame() {
+        let slot = std::sync::Mutex::new(None);
+        store_latest_frame(&slot, vec![1, 2, 3]);
+        store_latest_frame(&slot, vec![4, 5, 6]);
+        let latest = slot.lock().unwrap().clone();
+        assert_eq!(latest, Some(vec![4, 5, 6]));
     }
 
     // ─── Frame parsing edge cases ───
@@ -694,6 +779,9 @@ mod tests {
     #[test]
     fn hex_decode_8_mixed_case() {
         let result = hex_decode_8("aAbBcCdDeEfF0011");
-        assert_eq!(result, Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]));
+        assert_eq!(
+            result,
+            Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11])
+        );
     }
 }

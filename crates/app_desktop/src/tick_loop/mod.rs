@@ -102,12 +102,10 @@ pub fn start(
     let audio_flag_conn = audio_active_flag.clone();
     let audio_recovery = Rc::new(RefCell::new(AudioRecoveryState::default()));
     let was_in_call = Rc::new(RefCell::new(false));
-    let smoothed_levels: Rc<RefCell<HashMap<String, f32>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    let smoothed_levels: Rc<RefCell<HashMap<String, f32>>> = Rc::new(RefCell::new(HashMap::new()));
     // Reusable cache for per-peer RMS levels — avoids Vec+String alloc every tick
-    let peer_level_cache: Rc<RefCell<HashMap<String, f32>>> =
-        Rc::new(RefCell::new(HashMap::new()));
-    let last_input_tick = Rc::new(RefCell::new(0u64));
+    let peer_level_cache: Rc<RefCell<HashMap<String, f32>>> = Rc::new(RefCell::new(HashMap::new()));
+    let last_input_time = Rc::new(RefCell::new(Instant::now()));
     let prev_keys_for_idle: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
     let is_idle = Rc::new(RefCell::new(false));
     let soundboard_was_held: Rc<RefCell<Vec<bool>>> = {
@@ -398,7 +396,6 @@ pub fn start(
                         &ptt_key,
                         &mute_key,
                         &deafen_key,
-                        w.get_feedback_sound(),
                     );
 
                     // Soundboard keybind triggering
@@ -514,7 +511,7 @@ pub fn start(
             {
                 let changed = keys != prev_keys_for_idle.borrow().as_slice();
                 if changed {
-                    *last_input_tick.borrow_mut() = tick;
+                    *last_input_time.borrow_mut() = Instant::now();
                     *prev_keys_for_idle.borrow_mut() = keys.to_vec();
                     if *is_idle.borrow() {
                         *is_idle.borrow_mut() = false;
@@ -528,9 +525,9 @@ pub fn start(
                         });
                     }
                 }
-                // 5 min = 12000 ticks at 40Hz
-                let idle_threshold = 12000u64;
-                if !*is_idle.borrow() && tick.saturating_sub(*last_input_tick.borrow()) >= idle_threshold {
+                let idle_mins = config_store::load_config().idle_timeout_mins.max(1) as u64;
+                let idle_dur = Duration::from_secs(idle_mins * 60);
+                if !*is_idle.borrow() && last_input_time.borrow().elapsed() >= idle_dur {
                     *is_idle.borrow_mut() = true;
                     let net = network.clone();
                     let rt = rt_handle.clone();
@@ -877,7 +874,6 @@ fn handle_room_hotkeys(
     ptt_key: &Rc<RefCell<Vec<Keycode>>>,
     mute_key_cell: &Rc<RefCell<Vec<Keycode>>>,
     deafen_key_cell: &Rc<RefCell<Vec<Keycode>>>,
-    feedback_sound: bool,
 ) {
     let is_ptt = voice.borrow().mic_mode == MicMode::PushToTalk;
 
@@ -929,14 +925,8 @@ fn handle_room_hotkeys(
             let m_held = combo_held(&mute_combo, keys);
             let was_m = *prev_m_held.borrow();
             if m_held && !was_m && !is_ptt && *m_cd == 0 {
-                w.invoke_toggle_mute();
+                w.invoke_toggle_mute(); // callback handles feedback sound
                 *m_cd = 4;
-                if feedback_sound {
-                    let will_be_muted = w.get_is_muted();
-                    if let Ok(aud) = audio.try_lock() {
-                        aud.play_feedback_mute(will_be_muted);
-                    }
-                }
             }
             *prev_m_held.borrow_mut() = m_held;
         }
@@ -946,14 +936,8 @@ fn handle_room_hotkeys(
             let d_held = combo_held(&deafen_combo, keys);
             let was_d = *prev_d_held.borrow();
             if d_held && !was_d && *d_cd == 0 {
-                w.invoke_toggle_deafen();
+                w.invoke_toggle_deafen(); // callback handles feedback sound
                 *d_cd = 4;
-                if feedback_sound {
-                    let will_be_deafened = w.get_is_deafened();
-                    if let Ok(aud) = audio.try_lock() {
-                        aud.play_feedback_deafen(will_be_deafened);
-                    }
-                }
             }
             *prev_d_held.borrow_mut() = d_held;
         }
@@ -1026,10 +1010,7 @@ fn update_mic_level(
             let new_raw = if p.id == "self" {
                 self_pct
             } else {
-                cache
-                    .get(&p.id)
-                    .map(|rms| rms_to_pct(*rms))
-                    .unwrap_or(0.0)
+                cache.get(&p.id).map(|rms| rms_to_pct(*rms)).unwrap_or(0.0)
             };
 
             // Smoothing: fast attack (instant), slow decay (0.85 per tick)
@@ -1186,7 +1167,10 @@ fn retry_pending_messages(
         let mut s = state.borrow_mut();
         for mut msg in s.pending_messages.drain(..) {
             if msg.retry_count >= 3 {
-                log::warn!("Dropping message after 3 retries: {}", msg.content.chars().take(50).collect::<String>());
+                log::warn!(
+                    "Dropping message after 3 retries: {}",
+                    msg.content.chars().take(50).collect::<String>()
+                );
                 dropped_count += 1;
                 continue;
             }
@@ -1378,7 +1362,9 @@ fn check_audio_recovery(
 
     if let Ok(aud) = audio.try_lock() {
         let capture_err = aud.capture_error.load(std::sync::atomic::Ordering::Relaxed);
-        let playback_err = aud.playback_error.load(std::sync::atomic::Ordering::Relaxed);
+        let playback_err = aud
+            .playback_error
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         // Device hotplug detection (~1s polling)
         rec.device_poll_tick += 1;
@@ -1394,21 +1380,29 @@ fn check_audio_recovery(
 
             let input_disappeared = saved_in
                 .as_ref()
-                .map(|name| !current_inputs.contains(name) && rec.cached_input_devices.contains(name))
+                .map(|name| {
+                    !current_inputs.contains(name) && rec.cached_input_devices.contains(name)
+                })
                 .unwrap_or(false);
             let output_disappeared = saved_out
                 .as_ref()
-                .map(|name| !current_outputs.contains(name) && rec.cached_output_devices.contains(name))
+                .map(|name| {
+                    !current_outputs.contains(name) && rec.cached_output_devices.contains(name)
+                })
                 .unwrap_or(false);
 
             // Check if saved device reappeared
             let input_reappeared = saved_in
                 .as_ref()
-                .map(|name| current_inputs.contains(name) && !rec.cached_input_devices.contains(name))
+                .map(|name| {
+                    current_inputs.contains(name) && !rec.cached_input_devices.contains(name)
+                })
                 .unwrap_or(false);
             let output_reappeared = saved_out
                 .as_ref()
-                .map(|name| current_outputs.contains(name) && !rec.cached_output_devices.contains(name))
+                .map(|name| {
+                    current_outputs.contains(name) && !rec.cached_output_devices.contains(name)
+                })
                 .unwrap_or(false);
 
             rec.cached_input_devices = current_inputs;
@@ -1511,16 +1505,21 @@ fn check_audio_recovery(
                     log::error!("Capture recovery failed: {e}");
                     recovered = false;
                 } else {
-                    aud.capture_error.store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.capture_error
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            if aud.playback_error.load(std::sync::atomic::Ordering::Relaxed) {
+            if aud
+                .playback_error
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 log::info!("Restarting playback on default device");
                 if let Err(e) = aud.restart_playback(None) {
                     log::error!("Playback recovery failed: {e}");
                     recovered = false;
                 } else {
-                    aud.playback_error.store(false, std::sync::atomic::Ordering::Relaxed);
+                    aud.playback_error
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             if let Some(w) = window_weak.upgrade() {

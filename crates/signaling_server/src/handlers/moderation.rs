@@ -216,7 +216,12 @@ pub async fn handle_server_deafen_member(
         return;
     };
     if !can_manage_members(actor_role) {
-        send_error(state, peer_id, "You do not have permission to server-deafen members").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to server-deafen members",
+        )
+        .await;
         return;
     }
 
@@ -382,7 +387,12 @@ pub async fn handle_unban_member(state: &State, peer_id: &str, user_id: String, 
         return;
     };
     if !can_manage_members(actor_role) {
-        send_error(state, peer_id, "You do not have permission to unban members").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to unban members",
+        )
+        .await;
         return;
     }
 
@@ -475,8 +485,7 @@ pub async fn handle_block_user(state: &State, peer_id: &str, user_id: String, db
         send_error(state, peer_id, "Persistence required").await;
         return;
     };
-    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await
-    else {
+    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await else {
         send_error(state, peer_id, "Authenticate first").await;
         return;
     };
@@ -484,10 +493,9 @@ pub async fn handle_block_user(state: &State, peer_id: &str, user_id: String, db
     let db_clone = db.clone();
     let blocker = current_user_id.clone();
     let blocked = user_id.clone();
-    let result =
-        tokio::task::spawn_blocking(move || db_clone.save_user_block(&blocker, &blocked))
-            .await
-            .unwrap_or_else(|_| Err("Block task failed".into()));
+    let result = tokio::task::spawn_blocking(move || db_clone.save_user_block(&blocker, &blocked))
+        .await
+        .unwrap_or_else(|_| Err("Block task failed".into()));
 
     match result {
         Ok(()) => {
@@ -524,8 +532,7 @@ pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, 
         send_error(state, peer_id, "Persistence required").await;
         return;
     };
-    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await
-    else {
+    let Some(current_user_id) = super::chat::authenticated_user_id_pub(state, peer_id).await else {
         send_error(state, peer_id, "Authenticate first").await;
         return;
     };
@@ -628,12 +635,7 @@ pub async fn handle_add_automod_word(
     }
 }
 
-pub async fn handle_remove_automod_word(
-    state: &State,
-    peer_id: &str,
-    word: String,
-    db: &Db,
-) {
+pub async fn handle_remove_automod_word(state: &State, peer_id: &str, word: String, db: &Db) {
     let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
         actor_context(state, peer_id).await
     else {
@@ -727,11 +729,7 @@ pub async fn handle_list_automod_words(state: &State, peer_id: &str, db: &Db) {
 
 /// Check message content against automod filter for a space.
 /// Returns Some((matched_word, action)) if a filter matches, None otherwise.
-pub async fn check_automod(
-    db: &Db,
-    space_id: &str,
-    content: &str,
-) -> Option<(String, String)> {
+pub async fn check_automod(db: &Db, space_id: &str, content: &str) -> Option<(String, String)> {
     let db_arc = db.as_ref()?;
     let db_clone = db_arc.clone();
     let sid = space_id.to_string();
@@ -746,17 +744,23 @@ pub async fn check_automod(
         // (surrounded by non-alphanumeric characters or at string boundaries)
         let pattern = &entry.word;
         let mut search_start = 0;
-        while let Some(pos) = lower[search_start..].find(pattern) {
+        while search_start <= lower.len() {
+            let Some(pos) = lower.get(search_start..).and_then(|s| s.find(pattern)) else {
+                break;
+            };
             let abs_pos = search_start + pos;
-            let before_ok = abs_pos == 0
-                || !lower.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
+            let before_ok = abs_pos == 0 || !lower.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
             let after_pos = abs_pos + pattern.len();
-            let after_ok = after_pos >= lower.len()
-                || !lower.as_bytes()[after_pos].is_ascii_alphanumeric();
+            let after_ok =
+                after_pos >= lower.len() || !lower.as_bytes()[after_pos].is_ascii_alphanumeric();
             if before_ok && after_ok {
                 return Some((entry.word.clone(), entry.action.clone()));
             }
+            // Advance past the match start, ensuring we land on a char boundary
             search_start = abs_pos + 1;
+            while search_start < lower.len() && !lower.is_char_boundary(search_start) {
+                search_start += 1;
+            }
         }
     }
     None

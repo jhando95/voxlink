@@ -175,10 +175,10 @@ fn default_search_limit() -> u32 {
 /// Map voice quality preset index to Opus bitrate in bps
 pub fn voice_quality_bitrate(quality: u8) -> i32 {
     match quality {
-        0 => 16000,   // Economy — great for slow connections, minimal data
-        1 => 32000,   // Standard — balanced quality and bandwidth
-        3 => 128000,  // Studio — maximum quality for podcasts/music
-        _ => 64000,   // High (default) — clear voice, recommended
+        0 => 16000,  // Economy — great for slow connections, minimal data
+        1 => 32000,  // Standard — balanced quality and bandwidth
+        3 => 128000, // Studio — maximum quality for podcasts/music
+        _ => 64000,  // High (default) — clear voice, recommended
     }
 }
 
@@ -1258,6 +1258,9 @@ pub struct ScheduledEvent {
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
 pub const MAX_AUDIO_FRAME_SIZE: usize = 4096;
 pub const MAX_SCREEN_FRAME_SIZE: usize = 512 * 1024;
+/// Safe media payload budget for a single UDP datagram.
+/// Kept below the protocol maximum to leave room for token and sender headers.
+pub const MAX_UDP_MEDIA_PAYLOAD_SIZE: usize = 60 * 1024;
 pub const MEDIA_PACKET_AUDIO: u8 = 1;
 pub const MEDIA_PACKET_SCREEN: u8 = 2;
 
@@ -1335,7 +1338,8 @@ pub fn extract_first_url(content: &str) -> Option<String> {
     for word in content.split_whitespace() {
         if word.starts_with("http://") || word.starts_with("https://") {
             // Strip trailing punctuation that's likely not part of the URL
-            let trimmed = word.trim_end_matches(|c: char| matches!(c, ',' | '.' | ')' | ']' | '>' | ';'));
+            let trimmed =
+                word.trim_end_matches(|c: char| matches!(c, ',' | '.' | ')' | ']' | '>' | ';'));
             return Some(trimmed.to_string());
         }
     }
@@ -1644,7 +1648,9 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
+                slow_mode_secs: 0,
+                position: 0,
+                auto_delete_hours: 0,
                 min_role: String::new(),
             }],
         };
@@ -1686,7 +1692,9 @@ mod tests {
                 user_limit: 0,
                 category: String::new(),
                 status: String::new(),
-                slow_mode_secs: 0, position: 0, auto_delete_hours: 0,
+                slow_mode_secs: 0,
+                position: 0,
+                auto_delete_hours: 0,
                 min_role: String::new(),
             }],
             members: vec![MemberInfo {
@@ -1947,6 +1955,7 @@ mod tests {
         assert_eq!(CHANNELS, 1);
         assert_eq!(FRAME_SIZE, 960); // 20ms at 48kHz
         assert_eq!(MAX_AUDIO_FRAME_SIZE, 4096);
+        assert_eq!(MAX_UDP_MEDIA_PAYLOAD_SIZE, 60 * 1024);
         assert_eq!(UDP_SESSION_TOKEN_LEN, 8);
         assert_eq!(UDP_DEFAULT_PORT_OFFSET, 1);
     }
@@ -2085,10 +2094,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            SignalMessage::SetChannelStatus {
-                channel_id,
-                status,
-            } => {
+            SignalMessage::SetChannelStatus { channel_id, status } => {
                 assert_eq!(channel_id, "c1");
                 assert_eq!(status, "Playing Valorant");
             }

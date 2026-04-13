@@ -22,11 +22,16 @@ pub fn handle_text_channel_selected(
     // Show channel topic in subtitle if available, else fall back to space name
     let (topic, slow_mode_secs) = {
         let s = state.borrow();
-        let ch = s.space.as_ref().and_then(|sp| {
-            sp.channels.iter().find(|ch| ch.id == channel_id)
-        });
+        let ch = s
+            .space
+            .as_ref()
+            .and_then(|sp| sp.channels.iter().find(|ch| ch.id == channel_id));
         let topic = ch.and_then(|ch| {
-            if ch.topic.is_empty() { None } else { Some(ch.topic.clone()) }
+            if ch.topic.is_empty() {
+                None
+            } else {
+                Some(ch.topic.clone())
+            }
         });
         let slow = ch.map(|ch| ch.slow_mode_secs).unwrap_or(0);
         (topic, slow)
@@ -168,8 +173,7 @@ pub fn handle_text_message(
                 .map(|s| s.as_str())
                 .unwrap_or("all");
             let my_name_ref = w.get_user_name();
-            let mentions_self =
-                ui_shell::message_mentions_user(&message.content, &my_name_ref);
+            let mentions_self = ui_shell::message_mentions_user(&message.content, &my_name_ref);
             let should_notify = match override_setting {
                 "none" => false,
                 "mentions" => mentions_self,
@@ -566,17 +570,16 @@ pub fn handle_direct_typing_state(
 
 /// Expire typing indicators older than 5 seconds (200 ticks at 40Hz).
 /// Call from the tick loop periodically (e.g. every 40 ticks / 1 second).
-pub fn expire_stale_typing(
-    w: &MainWindow,
-    state: &Rc<RefCell<shared_types::AppState>>,
-    tick: u64,
-) {
+pub fn expire_stale_typing(w: &MainWindow, state: &Rc<RefCell<shared_types::AppState>>, tick: u64) {
     const TYPING_TIMEOUT_TICKS: u64 = 200; // 5 seconds at 40Hz
 
     // Early exit: skip work when no typing indicators are active
     {
         let s = state.borrow();
-        let has_channel = s.space.as_ref().is_some_and(|sp| !sp.typing_ticks.is_empty());
+        let has_channel = s
+            .space
+            .as_ref()
+            .is_some_and(|sp| !sp.typing_ticks.is_empty());
         let has_dm = !s.direct_typing_ticks.is_empty();
         if !has_channel && !has_dm {
             return;
@@ -599,7 +602,9 @@ pub fn expire_stale_typing(
                 .collect();
 
             for (channel_id, user_name) in &expired {
-                space.typing_ticks.remove(&(channel_id.clone(), user_name.clone()));
+                space
+                    .typing_ticks
+                    .remove(&(channel_id.clone(), user_name.clone()));
                 if let Some(users) = space.typing_users.get_mut(channel_id) {
                     users.retain(|name| name != user_name);
                     if users.is_empty() {

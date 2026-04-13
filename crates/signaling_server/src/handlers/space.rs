@@ -49,8 +49,11 @@ pub fn can_manage_roles(role: SpaceRole) -> bool {
     matches!(role, SpaceRole::Owner | SpaceRole::Admin)
 }
 
-pub fn can_view_audit(_role: SpaceRole) -> bool {
-    true
+pub fn can_view_audit(role: SpaceRole) -> bool {
+    matches!(
+        role,
+        SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
+    )
 }
 
 pub fn role_for_identity(space: &Space, user_id: &str) -> SpaceRole {
@@ -85,6 +88,42 @@ pub fn space_info_for_identity(space: &Space, user_id: &str) -> SpaceInfo {
         self_role,
         is_public: space.is_public,
     }
+}
+
+async fn send_audit_log_snapshot_to_peer(state: &State, space_id: &str, peer: &Arc<Peer>) {
+    let (audit_log, owner_id, member_roles) = {
+        let s = state.read().await;
+        let Some(space) = s.spaces.get(space_id) else {
+            return;
+        };
+        (
+            space.audit_log.iter().cloned().collect::<Vec<_>>(),
+            space.owner_id.clone(),
+            space.member_roles.clone(),
+        )
+    };
+
+    let user_id = peer
+        .user_id
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| peer.id.clone());
+    let role = if user_id == owner_id {
+        SpaceRole::Owner
+    } else {
+        member_roles
+            .get(&user_id)
+            .copied()
+            .unwrap_or(SpaceRole::Member)
+    };
+    let entries = if can_view_audit(role) {
+        audit_log
+    } else {
+        Vec::new()
+    };
+
+    send_to(peer, &SignalMessage::SpaceAuditLogSnapshot { entries }).await;
 }
 
 pub async fn peer_space_role(state: &State, peer_id: &str) -> Option<(String, String, SpaceRole)> {
@@ -159,7 +198,7 @@ pub async fn append_audit_entry(
     target_name: Option<String>,
     detail: String,
 ) -> Option<SpaceAuditEntry> {
-    let (entry, recipients) = {
+    let (entry, owner_id, member_roles, candidate_recipients) = {
         let mut s = state.write().await;
         let entry_id = s.alloc_audit_id();
         let entry = SpaceAuditEntry {
@@ -171,21 +210,46 @@ pub async fn append_audit_entry(
             timestamp: now_secs() as u64,
         };
 
-        let member_ids = {
+        let (member_ids, owner_id, member_roles) = {
             let space = s.spaces.get_mut(space_id)?;
             space.audit_log.push_front(entry.clone());
             while space.audit_log.len() > crate::MAX_SPACE_AUDIT_ENTRIES {
                 space.audit_log.pop_back();
             }
-            space.member_ids.clone()
+            (
+                space.member_ids.clone(),
+                space.owner_id.clone(),
+                space.member_roles.clone(),
+            )
         };
 
-        let recipients = member_ids
+        let candidate_recipients = member_ids
             .iter()
             .filter_map(|member_id| s.peers.get(member_id).cloned())
             .collect::<Vec<_>>();
-        (entry, recipients)
+        (entry, owner_id, member_roles, candidate_recipients)
     };
+
+    let mut recipients = Vec::new();
+    for peer in candidate_recipients {
+        let user_id = peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer.id.clone());
+        let role = if user_id == owner_id {
+            SpaceRole::Owner
+        } else {
+            member_roles
+                .get(&user_id)
+                .copied()
+                .unwrap_or(SpaceRole::Member)
+        };
+        if can_view_audit(role) {
+            recipients.push(peer);
+        }
+    }
 
     if let Some(db) = db {
         let db = db.clone();
@@ -439,7 +503,12 @@ pub async fn handle_join_space(
             if let Some(&(count, window_start)) = s.join_failures.get(&ip) {
                 if window_start.elapsed().as_secs() < 60 && count >= 5 {
                     drop(s);
-                    send_error(state, peer_id, "Too many failed join attempts, try again later").await;
+                    send_error(
+                        state,
+                        peer_id,
+                        "Too many failed join attempts, try again later",
+                    )
+                    .await;
                     return;
                 }
             }
@@ -520,7 +589,12 @@ pub async fn handle_join_space(
             }
             if let Some(max_uses) = max_uses {
                 if max_uses > 0 && uses >= max_uses {
-                    send_error(state, peer_id, "This invite link has reached its maximum number of uses").await;
+                    send_error(
+                        state,
+                        peer_id,
+                        "This invite link has reached its maximum number of uses",
+                    )
+                    .await;
                     return;
                 }
             }
@@ -584,7 +658,7 @@ pub async fn handle_join_space(
         }
     }
 
-    let (space_info, channels, members, joiner_peer, audit_log, member_info) = {
+    let (space_info, channels, members, joiner_peer, member_info) = {
         let s = state.read().await;
         let Some(space) = s.spaces.get(&space_id) else {
             log::warn!("Space {space_id} disappeared before building response");
@@ -664,11 +738,6 @@ pub async fn handle_join_space(
         }
 
         let joiner_peer = s.peers.get(peer_id).cloned();
-        let audit_log = if can_view_audit(space_info.self_role) {
-            space.audit_log.iter().cloned().collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
         let member_info = if let Some(p) = s.peers.get(peer_id) {
             let user_id = p
                 .user_id
@@ -694,14 +763,7 @@ pub async fn handle_join_space(
             None
         };
 
-        (
-            space_info,
-            channels,
-            members,
-            joiner_peer,
-            audit_log,
-            member_info,
-        )
+        (space_info, channels, members, joiner_peer, member_info)
     };
 
     // Fetch welcome message from DB (if any)
@@ -728,11 +790,7 @@ pub async fn handle_join_space(
             },
         )
         .await;
-        send_to(
-            &peer,
-            &SignalMessage::SpaceAuditLogSnapshot { entries: audit_log },
-        )
-        .await;
+        send_audit_log_snapshot_to_peer(state, &space_id, &peer).await;
     }
 
     // Broadcast MemberOnline to other space members
@@ -1010,11 +1068,17 @@ pub async fn handle_set_member_role(
         &actor_user_id,
         &actor_name,
         "role",
-        Some(target_user_id),
+        Some(target_user_id.clone()),
         Some(target_name),
         detail,
     )
     .await;
+
+    if let Some((_, _, _, target_peer)) =
+        resolve_space_member(state, &space_id, &target_user_id).await
+    {
+        send_audit_log_snapshot_to_peer(state, &space_id, &target_peer).await;
+    }
 }
 
 pub async fn handle_set_invite_settings(
@@ -1024,8 +1088,7 @@ pub async fn handle_set_invite_settings(
     max_uses: Option<u32>,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
-    else {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -1039,10 +1102,7 @@ pub async fn handle_set_invite_settings(
         let sid = space_id.clone();
         let eh = expires_hours;
         let mu = max_uses;
-        let _ = tokio::task::spawn_blocking(move || {
-            db.set_invite_settings(&sid, eh, mu)
-        })
-        .await;
+        let _ = tokio::task::spawn_blocking(move || db.set_invite_settings(&sid, eh, mu)).await;
     }
 
     let notify = SignalMessage::InviteSettingsUpdated {
@@ -1053,14 +1113,8 @@ pub async fn handle_set_invite_settings(
     broadcast_to_space(state, &space_id, "", &notify).await;
 }
 
-pub async fn handle_set_nickname(
-    state: &State,
-    peer_id: &str,
-    nickname: String,
-    db: &Db,
-) {
-    let Some((space_id, actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
-    else {
+pub async fn handle_set_nickname(state: &State, peer_id: &str, nickname: String, db: &Db) {
+    let Some((space_id, actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -1080,10 +1134,9 @@ pub async fn handle_set_nickname(
         let sid = space_id.clone();
         let uid = actor_user_id.clone();
         let nick = nick_opt.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            db.set_space_nickname(&sid, &uid, nick.as_deref())
-        })
-        .await;
+        let _ =
+            tokio::task::spawn_blocking(move || db.set_space_nickname(&sid, &uid, nick.as_deref()))
+                .await;
     }
 
     let notify = SignalMessage::NicknameChanged {
@@ -1093,14 +1146,8 @@ pub async fn handle_set_nickname(
     broadcast_to_space(state, &space_id, "", &notify).await;
 }
 
-pub async fn handle_rename_space(
-    state: &State,
-    peer_id: &str,
-    name: String,
-    db: &Db,
-) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
-    else {
+pub async fn handle_rename_space(state: &State, peer_id: &str, name: String, db: &Db) {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -1141,8 +1188,7 @@ pub async fn handle_set_space_description(
     description: String,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
-    else {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -1184,8 +1230,7 @@ pub async fn handle_set_role_color(
     color: String,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await
-    else {
+    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -1225,10 +1270,7 @@ pub async fn handle_set_role_color(
         .await;
     }
 
-    let notify = SignalMessage::RoleColorChanged {
-        role,
-        color,
-    };
+    let notify = SignalMessage::RoleColorChanged { role, color };
     broadcast_to_space(state, &space_id, "", &notify).await;
 }
 

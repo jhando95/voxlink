@@ -226,8 +226,7 @@ pub fn set_friend_list(window: &MainWindow, friends: &[shared_types::FavoriteFri
         b.is_online
             .cmp(&a.is_online)
             .then_with(|| {
-                (b.is_in_voice || b.in_private_call)
-                    .cmp(&(a.is_in_voice || a.in_private_call))
+                (b.is_in_voice || b.in_private_call).cmp(&(a.is_in_voice || a.in_private_call))
             })
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
@@ -670,7 +669,10 @@ pub fn set_chat_messages_with_last_read(
         }
 
         let mut msg = text_msg_to_chat_msg(m, self_name);
-        msg.reply_count = reply_counts.get(m.message_id.as_str()).copied().unwrap_or(0);
+        msg.reply_count = reply_counts
+            .get(m.message_id.as_str())
+            .copied()
+            .unwrap_or(0);
 
         // Mark the first unread message with the NEW separator
         if new_separator_idx == Some(idx) {
@@ -723,8 +725,7 @@ fn format_day_separator(timestamp: u64) -> String {
             remaining -= m;
         }
         let month_names = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ];
         format!("{} {}", month_names[month], remaining + 1)
     }
@@ -1107,7 +1108,11 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         is_code_block,
         forwarded_from: m.forwarded_from.clone().unwrap_or_default().into(),
         attachment_name: m.attachment_name.clone().unwrap_or_default().into(),
-        attachment_size: m.attachment_size.map(format_file_size).unwrap_or_default().into(),
+        attachment_size: m
+            .attachment_size
+            .map(format_file_size)
+            .unwrap_or_default()
+            .into(),
         channel_name: Default::default(),
         show_header: true,
         date_separator: Default::default(),
@@ -1135,7 +1140,9 @@ pub fn render_markdown(content: &str) -> (String, bool) {
         let code = if let Some(newline_pos) = inner.find('\n') {
             let first_line = &inner[..newline_pos];
             let after_tag = &inner[newline_pos + 1..];
-            if first_line.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            if first_line
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
                 && !after_tag.trim().is_empty()
             {
                 after_tag.trim_end().to_string()
@@ -1229,9 +1236,7 @@ fn render_inline(text: &str) -> String {
             let rest: String = chars[i..].iter().collect();
             if rest.starts_with("https://") || rest.starts_with("http://") {
                 // Find end of URL (space, newline, or end of string)
-                let url_end = rest
-                    .find(|c: char| c.is_whitespace())
-                    .unwrap_or(rest.len());
+                let url_end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
                 let url = &rest[..url_end];
                 out.push_str("\u{1f517} <");
                 out.push_str(url);
@@ -1259,7 +1264,10 @@ fn find_closing(chars: &[char], start: usize, marker: &[char; 2]) -> Option<usiz
 }
 
 fn find_closing_single(chars: &[char], start: usize, marker: char) -> Option<usize> {
-    chars[start..].iter().position(|&c| c == marker).map(|pos| start + pos)
+    chars[start..]
+        .iter()
+        .position(|&c| c == marker)
+        .map(|pos| start + pos)
 }
 
 pub fn message_mentions_user(content: &str, user_name: &str) -> bool {
@@ -1393,8 +1401,7 @@ pub fn show_profile_popup(
     let member = space.and_then(|s| {
         s.members.iter().find(|m| {
             // Match by user_id if available, fall back to peer_id
-            (m.user_id.is_some() && m.user_id.as_deref() == Some(user_id))
-                || m.id == user_id
+            (m.user_id.is_some() && m.user_id.as_deref() == Some(user_id)) || m.id == user_id
         })
     });
 
@@ -1495,11 +1502,7 @@ pub fn resolve_emoji_shortcodes(text: &str) -> String {
         if let Some(end) = after_colon.find(':') {
             let candidate = &after_colon[..end];
             // Valid shortcode: non-empty, alphanumeric/underscore only
-            if !candidate.is_empty()
-                && candidate
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_')
-            {
+            if !candidate.is_empty() && candidate.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 let lower = candidate.to_lowercase();
                 if let Some((_, emoji)) = table.iter().find(|(name, _)| *name == lower) {
                     result.push_str(emoji);

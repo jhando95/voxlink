@@ -60,15 +60,25 @@ pub async fn handle_authenticate(
         if !tok.is_empty() {
             let db_clone = db_ref.clone();
             let tok_clone = tok.clone();
-            let found = match tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-                db_clone.find_user_by_token(&tok_clone).unwrap_or(None)
-            })).await {
+            let found = match tokio::time::timeout(
+                crate::DB_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    db_clone.find_user_by_token(&tok_clone).unwrap_or(None)
+                }),
+            )
+            .await
+            {
                 Ok(result) => result.unwrap_or(None),
                 Err(_) => {
                     // DB timeout — return error instead of creating a new identity,
                     // which would cause the user to lose their previous identity.
                     log::warn!("DB timeout: find_user_by_token for peer {peer_id}");
-                    send_error(state, peer_id, "Authentication is temporarily unavailable (DB timeout)").await;
+                    send_error(
+                        state,
+                        peer_id,
+                        "Authentication is temporarily unavailable (DB timeout)",
+                    )
+                    .await;
                     return false;
                 }
             };
@@ -82,9 +92,12 @@ pub async fn handle_authenticate(
                 let uid = user_id.clone();
                 let tok = rotated_token.clone();
                 let name = rotated_name.clone();
-                let rotate_result = tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-                    db_clone.rotate_user_session(&uid, &tok, &name, now, now)
-                }))
+                let rotate_result = tokio::time::timeout(
+                    crate::DB_TIMEOUT,
+                    tokio::task::spawn_blocking(move || {
+                        db_clone.rotate_user_session(&uid, &tok, &name, now, now)
+                    }),
+                )
                 .await;
 
                 let token_to_send = match rotate_result {
@@ -112,7 +125,9 @@ pub async fn handle_authenticate(
                     let db_c = db_ref.clone();
                     if let Ok(blocked_by) = tokio::task::spawn_blocking(move || {
                         db_c.get_users_who_blocked(&uid).unwrap_or_default()
-                    }).await {
+                    })
+                    .await
+                    {
                         if let Ok(mut cache) = peer.blocked_by.write() {
                             *cache = blocked_by.into_iter().collect();
                         }
@@ -154,16 +169,19 @@ pub async fn handle_authenticate(
     let uid = user_id.clone();
     let tok = new_token.clone();
     let name = user_name.clone();
-    let save_result = tokio::time::timeout(crate::DB_TIMEOUT, tokio::task::spawn_blocking(move || {
-        db_clone.save_user(&crate::persistence::UserRow {
-            user_id: uid,
-            token: tok,
-            display_name: name,
-            created_at: now,
-            issued_at: now,
-            last_seen_at: now,
-        })
-    }))
+    let save_result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            db_clone.save_user(&crate::persistence::UserRow {
+                user_id: uid,
+                token: tok,
+                display_name: name,
+                created_at: now,
+                issued_at: now,
+                last_seen_at: now,
+            })
+        }),
+    )
     .await;
 
     match save_result {
@@ -367,14 +385,7 @@ pub async fn handle_create_account(
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id).cloned() {
                 drop(s);
-                send_to(
-                    &peer,
-                    &SignalMessage::AccountCreated {
-                        token,
-                        user_id,
-                    },
-                )
-                .await;
+                send_to(&peer, &SignalMessage::AccountCreated { token, user_id }).await;
             }
             log::info!("Account created for peer {peer_id} (email: {email})");
         }
@@ -391,13 +402,7 @@ pub async fn handle_create_account(
     }
 }
 
-pub async fn handle_login(
-    state: &State,
-    peer_id: &str,
-    email: String,
-    password: String,
-    db: &Db,
-) {
+pub async fn handle_login(state: &State, peer_id: &str, email: String, password: String, db: &Db) {
     if !check_auth_rate_limit(state, peer_id).await {
         send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
         return;

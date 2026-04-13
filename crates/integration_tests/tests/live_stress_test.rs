@@ -606,7 +606,8 @@ async fn live_stress_space_race() {
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
                     let mut joined = false;
                     loop {
-                        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                        let remaining =
+                            deadline.saturating_duration_since(tokio::time::Instant::now());
                         if remaining.is_zero() {
                             break;
                         }

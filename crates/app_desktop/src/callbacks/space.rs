@@ -8,6 +8,8 @@ use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+use crate::helpers::CONFIG_LOCK;
+
 use crate::helpers;
 
 pub fn setup_create_space(
@@ -509,9 +511,7 @@ pub fn setup_set_profile(
         let network = network.clone();
         rt_handle.spawn(async move {
             let net = network.lock().await;
-            let _ = net
-                .send_signal(&SignalMessage::SetProfile { bio })
-                .await;
+            let _ = net.send_signal(&SignalMessage::SetProfile { bio }).await;
         });
     });
 }
@@ -530,7 +530,10 @@ pub fn setup_set_channel_user_limit(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::SetChannelUserLimit { channel_id, user_limit })
+                .send_signal(&SignalMessage::SetChannelUserLimit {
+                    channel_id,
+                    user_limit,
+                })
                 .await;
         });
     });
@@ -550,7 +553,10 @@ pub fn setup_set_channel_slow_mode(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::SetChannelSlowMode { channel_id, slow_mode_secs })
+                .send_signal(&SignalMessage::SetChannelSlowMode {
+                    channel_id,
+                    slow_mode_secs,
+                })
                 .await;
         });
     });
@@ -570,7 +576,10 @@ pub fn setup_set_channel_auto_delete(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::SetChannelAutoDelete { channel_id, auto_delete_hours })
+                .send_signal(&SignalMessage::SetChannelAutoDelete {
+                    channel_id,
+                    auto_delete_hours,
+                })
                 .await;
         });
     });
@@ -590,7 +599,10 @@ pub fn setup_set_channel_category(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::SetChannelCategory { channel_id, category })
+                .send_signal(&SignalMessage::SetChannelCategory {
+                    channel_id,
+                    category,
+                })
                 .await;
         });
     });
@@ -630,7 +642,10 @@ pub fn setup_timeout_member(
         rt_handle.spawn(async move {
             let net = network.lock().await;
             let _ = net
-                .send_signal(&SignalMessage::TimeoutMember { member_id, duration_secs })
+                .send_signal(&SignalMessage::TimeoutMember {
+                    member_id,
+                    duration_secs,
+                })
                 .await;
         });
     });
@@ -691,9 +706,7 @@ pub fn setup_whisper(
             let network = network.clone();
             rt_handle.spawn(async move {
                 let net = network.lock().await;
-                let _ = net
-                    .send_signal(&SignalMessage::WhisperStopped)
-                    .await;
+                let _ = net.send_signal(&SignalMessage::WhisperStopped).await;
             });
         });
     }
@@ -714,9 +727,7 @@ pub fn setup_rename_space(
         let net = network.clone();
         rt.spawn(async move {
             let n = net.lock().await;
-            let _ = n
-                .send_signal(&SignalMessage::RenameSpace { name })
-                .await;
+            let _ = n.send_signal(&SignalMessage::RenameSpace { name }).await;
         });
     });
 }
@@ -746,6 +757,7 @@ pub fn setup_save_user_note(window: &MainWindow) {
         let user_id = user_id.to_string();
         let note = note.to_string().trim().to_string();
         // Save locally — never sent to server
+        let _lock = CONFIG_LOCK.lock().ok();
         let mut cfg = config_store::load_config();
         if note.is_empty() {
             cfg.user_notes.remove(&user_id);
@@ -886,9 +898,7 @@ pub fn setup_list_events(
         let net = network.clone();
         rt.spawn(async move {
             let net = net.lock().await;
-            let _ = net
-                .send_signal(&SignalMessage::ListScheduledEvents)
-                .await;
+            let _ = net.send_signal(&SignalMessage::ListScheduledEvents).await;
         });
     });
 }
@@ -939,10 +949,12 @@ pub fn setup_join_public_space(
         let code = invite_code.to_string();
         rt.spawn(async move {
             let net = net.lock().await;
-            let _ = net.send_signal(&SignalMessage::JoinSpace {
-                invite_code: code,
-                user_name: String::new(), // server uses auth identity
-            }).await;
+            let _ = net
+                .send_signal(&SignalMessage::JoinSpace {
+                    invite_code: code,
+                    user_name: String::new(), // server uses auth identity
+                })
+                .await;
         });
     });
 }
@@ -1003,9 +1015,7 @@ pub fn setup_list_automod_words(
         let net = network.clone();
         rt.spawn(async move {
             let net = net.lock().await;
-            let _ = net
-                .send_signal(&SignalMessage::ListAutomodWords)
-                .await;
+            let _ = net.send_signal(&SignalMessage::ListAutomodWords).await;
         });
     });
 }

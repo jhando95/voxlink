@@ -41,7 +41,13 @@ impl BiquadState {
 /// freq: shelf frequency in Hz, gain_db: gain in dB
 fn low_shelf(freq: f32, gain_db: f32) -> BiquadCoeffs {
     if gain_db.abs() < 0.01 {
-        return BiquadCoeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+        return BiquadCoeffs {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        };
     }
     let a = 10.0f32.powf(gain_db / 40.0); // sqrt(10^(dB/20))
     let w0 = 2.0 * PI * freq / SAMPLE_RATE;
@@ -66,7 +72,13 @@ fn low_shelf(freq: f32, gain_db: f32) -> BiquadCoeffs {
 /// High shelf biquad coefficients.
 fn high_shelf(freq: f32, gain_db: f32) -> BiquadCoeffs {
     if gain_db.abs() < 0.01 {
-        return BiquadCoeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+        return BiquadCoeffs {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        };
     }
     let a = 10.0f32.powf(gain_db / 40.0);
     let w0 = 2.0 * PI * freq / SAMPLE_RATE;
@@ -92,7 +104,13 @@ fn high_shelf(freq: f32, gain_db: f32) -> BiquadCoeffs {
 /// freq: center frequency, gain_db: gain in dB, q: quality factor
 fn peaking(freq: f32, gain_db: f32, q: f32) -> BiquadCoeffs {
     if gain_db.abs() < 0.01 {
-        return BiquadCoeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+        return BiquadCoeffs {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        };
     }
     let a = 10.0f32.powf(gain_db / 40.0);
     let w0 = 2.0 * PI * freq / SAMPLE_RATE;
@@ -129,7 +147,13 @@ pub(crate) struct PeerEqState {
 
 impl PeerEqState {
     pub fn new() -> Self {
-        let bypass = BiquadCoeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+        let bypass = BiquadCoeffs {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        };
         Self {
             low_state: BiquadState::default(),
             mid_state: BiquadState::default(),

@@ -6,6 +6,13 @@ use ui_shell::MainWindow;
 
 use super::AudioContext;
 
+pub(crate) fn can_view_space_audit(role: SpaceRole) -> bool {
+    matches!(
+        role,
+        SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
+    )
+}
+
 pub fn handle_space_created(
     w: &MainWindow,
     state: &Rc<RefCell<shared_types::AppState>>,
@@ -258,7 +265,7 @@ pub fn apply_space_permissions(window: &MainWindow, role: SpaceRole) {
         SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
     ));
     window.set_can_manage_space_roles(matches!(role, SpaceRole::Owner | SpaceRole::Admin));
-    window.set_can_view_space_audit(true);
+    window.set_can_view_space_audit(can_view_space_audit(role));
 }
 
 fn remembered_text_channel(

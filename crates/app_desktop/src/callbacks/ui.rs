@@ -212,7 +212,8 @@ pub fn setup_toggle_mic_preview(
                         w.set_mic_preview_active(false);
                         w.set_mic_level(0.0);
                     }
-                }).ok();
+                })
+                .ok();
                 return;
             }
 
@@ -220,7 +221,10 @@ pub fn setup_toggle_mic_preview(
                 .list_input_devices()
                 .get(selected_input)
                 .map(|device| device.name.clone());
-            log::info!("Starting mic preview on: {:?}", device_name.as_deref().unwrap_or("default"));
+            log::info!(
+                "Starting mic preview on: {:?}",
+                device_name.as_deref().unwrap_or("default")
+            );
             match aud.start_capture(device_name.as_deref()) {
                 Ok(()) => {
                     log::info!("Mic preview started successfully");
@@ -229,7 +233,8 @@ pub fn setup_toggle_mic_preview(
                         if let Some(w) = ww.upgrade() {
                             w.set_mic_preview_active(true);
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
                 Err(e) => {
                     log::error!("Failed to start mic preview: {e}");
@@ -244,7 +249,8 @@ pub fn setup_toggle_mic_preview(
                                     if let Some(w) = ww.upgrade() {
                                         w.set_mic_preview_active(true);
                                     }
-                                }).ok();
+                                })
+                                .ok();
                                 return;
                             }
                             Err(e2) => log::error!("Default input device also failed: {e2}"),
@@ -257,7 +263,8 @@ pub fn setup_toggle_mic_preview(
                             w.set_mic_level(0.0);
                             w.set_status_text("Mic check could not start".into());
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         });
@@ -302,15 +309,13 @@ pub fn setup_play_speaker_test(
                                 w.set_status_text(m.into());
                             }
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             };
 
             // Try to acquire audio lock with timeout — don't wait forever
-            let lock_result = tokio::time::timeout(
-                Duration::from_secs(2),
-                audio.lock(),
-            ).await;
+            let lock_result = tokio::time::timeout(Duration::from_secs(2), audio.lock()).await;
 
             let mut aud = match lock_result {
                 Ok(guard) => guard,
@@ -805,7 +810,9 @@ pub fn setup_quick_switcher(
         let window_weak = window_weak.clone();
         let state_ref = state_ref.clone();
         move |query| {
-            let Some(w) = window_weak.upgrade() else { return };
+            let Some(w) = window_weak.upgrade() else {
+                return;
+            };
             let q = query.to_string().trim().to_lowercase();
             let state = state_ref.borrow();
 
@@ -858,13 +865,18 @@ pub fn setup_quick_switcher(
         let network = network.clone();
         let rt_handle = rt_handle.clone();
         move |item_id| {
-            let Some(w) = window_weak.upgrade() else { return };
+            let Some(w) = window_weak.upgrade() else {
+                return;
+            };
             let item_id_str = item_id.to_string();
 
             // Check if item_id matches a DM thread user_id
             let is_dm = {
                 let state = state_ref.borrow();
-                state.direct_message_threads.iter().any(|dm| dm.user_id == item_id_str)
+                state
+                    .direct_message_threads
+                    .iter()
+                    .any(|dm| dm.user_id == item_id_str)
             };
 
             // Check if item_id matches a voice channel
@@ -872,8 +884,7 @@ pub fn setup_quick_switcher(
                 let state = state_ref.borrow();
                 state.space.as_ref().map_or(false, |space| {
                     space.channels.iter().any(|ch| {
-                        ch.id == item_id_str
-                            && ch.channel_type == shared_types::ChannelType::Voice
+                        ch.id == item_id_str && ch.channel_type == shared_types::ChannelType::Voice
                     })
                 })
             };
@@ -1022,7 +1033,9 @@ pub fn setup_move_channel(
                 let Some(space) = &s.space else { return };
                 let mut ids: Vec<String> = space.channels.iter().map(|c| c.id.clone()).collect();
                 if let Some(pos) = ids.iter().position(|id| id == &channel_id) {
-                    if pos == 0 { return; }
+                    if pos == 0 {
+                        return;
+                    }
                     ids.swap(pos, pos - 1);
                 } else {
                     return;
@@ -1032,9 +1045,9 @@ pub fn setup_move_channel(
             let network = network.clone();
             rt_handle.spawn(async move {
                 let net = network.lock().await;
-                let _ = net.send_signal(&shared_types::SignalMessage::ReorderChannels {
-                    channel_ids: ids,
-                }).await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::ReorderChannels { channel_ids: ids })
+                    .await;
             });
         }
     });
@@ -1051,7 +1064,9 @@ pub fn setup_move_channel(
                 let Some(space) = &s.space else { return };
                 let mut ids: Vec<String> = space.channels.iter().map(|c| c.id.clone()).collect();
                 if let Some(pos) = ids.iter().position(|id| id == &channel_id) {
-                    if pos >= ids.len() - 1 { return; }
+                    if pos >= ids.len() - 1 {
+                        return;
+                    }
                     ids.swap(pos, pos + 1);
                 } else {
                     return;
@@ -1061,9 +1076,9 @@ pub fn setup_move_channel(
             let network = network.clone();
             rt_handle.spawn(async move {
                 let net = network.lock().await;
-                let _ = net.send_signal(&shared_types::SignalMessage::ReorderChannels {
-                    channel_ids: ids,
-                }).await;
+                let _ = net
+                    .send_signal(&shared_types::SignalMessage::ReorderChannels { channel_ids: ids })
+                    .await;
             });
         }
     });
@@ -1091,7 +1106,9 @@ pub fn setup_set_status_preset(
         let network = network.clone();
         rt_handle.spawn(async move {
             let net = network.lock().await;
-            let _ = net.send_signal(&shared_types::SignalMessage::SetStatusPreset { preset }).await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::SetStatusPreset { preset })
+                .await;
         });
 
         // Persist to config
@@ -1416,10 +1433,7 @@ pub fn setup_change_password(
     });
 }
 
-pub fn setup_show_profile(
-    window: &MainWindow,
-    state: &Rc<RefCell<shared_types::AppState>>,
-) {
+pub fn setup_show_profile(window: &MainWindow, state: &Rc<RefCell<shared_types::AppState>>) {
     let state = state.clone();
     let window_weak = window.as_weak();
     window.on_show_profile(move |user_id| {
@@ -1434,11 +1448,18 @@ pub fn setup_show_profile(
         let s = state.borrow();
         let mut found = false;
         if let Some(ref space) = s.space {
-            if let Some(member) = space.members.iter().find(|m| {
-                m.user_id.as_deref() == Some(&user_id) || m.id == user_id
-            }) {
+            if let Some(member) = space
+                .members
+                .iter()
+                .find(|m| m.user_id.as_deref() == Some(&user_id) || m.id == user_id)
+            {
                 let name = member.nickname.as_deref().unwrap_or(&member.name);
-                let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                let initial = name
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
                 let ci = name
                     .bytes()
                     .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32))

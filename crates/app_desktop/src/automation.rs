@@ -18,6 +18,7 @@ enum AutomationScenario {
     SpaceChannelSoak,
     SpaceTextChatSoak,
     SpaceScreenShareSoak,
+    SpaceMediaComboSoak,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,6 +52,7 @@ struct AutomationMetrics {
     channel_joined: bool,
     text_channel_selected: bool,
     screen_share_started: bool,
+    udp_active: bool,
     self_channel_updates: u32,
     peer_join_events: u32,
     member_channel_updates: u32,
@@ -143,6 +145,7 @@ fn parse_spec_from_env() -> Result<Option<AutomationSpec>, String> {
         "space_channel_soak" => AutomationScenario::SpaceChannelSoak,
         "space_text_chat_soak" => AutomationScenario::SpaceTextChatSoak,
         "space_screen_share_soak" => AutomationScenario::SpaceScreenShareSoak,
+        "space_media_combo_soak" => AutomationScenario::SpaceMediaComboSoak,
         other => return Err(format!("Unsupported automation scenario: {other}")),
     };
 
@@ -242,8 +245,15 @@ async fn run_automation(
         (AutomationScenario::SpaceScreenShareSoak, AutomationRole::Participant) => {
             run_participant_screen(spec, &mut network, metrics).await?
         }
+        (AutomationScenario::SpaceMediaComboSoak, AutomationRole::Owner) => {
+            run_owner_media_combo(spec, &mut network, metrics).await?
+        }
+        (AutomationScenario::SpaceMediaComboSoak, AutomationRole::Participant) => {
+            run_participant_media_combo(spec, &mut network, metrics).await?
+        }
     }
 
+    metrics.udp_active = network.is_udp_active();
     network.disconnect().await;
     metrics.last_status = "complete".into();
     Ok(())
@@ -259,9 +269,13 @@ async fn wait_for_authenticated(
             SignalMessage::Authenticated { .. } => {
                 metrics.authenticated = true;
                 metrics.last_status = "authenticated".into();
+                network
+                    .request_udp()
+                    .await
+                    .map_err(|err| format!("Failed to request UDP transport: {err}"))?;
                 return Ok(());
             }
-            signal => handle_nonblocking_signal(signal, metrics)?,
+            signal => handle_nonblocking_signal(network, signal, metrics).await?,
         }
     }
 }
@@ -280,7 +294,7 @@ async fn run_owner_audio(
     let mut audio_sent = false;
     while Instant::now() < observe_deadline {
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
 
         if spec.send_audio && !audio_sent && metrics.peer_join_events as usize >= spec.expect_peers
@@ -340,7 +354,7 @@ async fn run_participant_audio(
         }
 
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
 
         if !network.is_connected() {
@@ -369,7 +383,8 @@ async fn run_owner_text(
     metrics: &mut AutomationMetrics,
 ) -> Result<(), String> {
     let shared = create_space_and_share(spec, network, metrics).await?;
-    wait_for_member_online_count(network, metrics, spec.expect_peers, spec.invite_timeout_ms).await?;
+    wait_for_member_online_count(network, metrics, spec.expect_peers, spec.invite_timeout_ms)
+        .await?;
 
     select_text_channel(network, &shared.text_channel_id).await?;
     wait_for_text_channel_selected(network, metrics, &shared.text_channel_id).await?;
@@ -392,7 +407,7 @@ async fn run_owner_text(
     let observe_deadline = Instant::now() + Duration::from_millis(spec.hold_ms);
     while Instant::now() < observe_deadline {
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
         if !network.is_connected() {
             return Err("Automation text owner disconnected unexpectedly".into());
@@ -428,11 +443,13 @@ async fn run_participant_text(
     {
         if let Some(signal) = network.try_recv_signal() {
             match signal {
-                SignalMessage::TextMessage { channel_id, .. } if channel_id == shared.text_channel_id => {
+                SignalMessage::TextMessage { channel_id, .. }
+                    if channel_id == shared.text_channel_id =>
+                {
                     metrics.text_messages_recv += 1;
                     metrics.last_status = "text-message-received".into();
                 }
-                other => handle_nonblocking_signal(other, metrics)?,
+                other => handle_nonblocking_signal(network, other, metrics).await?,
             }
         }
 
@@ -467,9 +484,10 @@ async fn run_owner_screen(
     wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
 
     let peer_deadline = Instant::now() + Duration::from_millis(spec.invite_timeout_ms);
-    while Instant::now() < peer_deadline && (metrics.peer_join_events as usize) < spec.expect_peers {
+    while Instant::now() < peer_deadline && (metrics.peer_join_events as usize) < spec.expect_peers
+    {
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
         sleep(POLL_INTERVAL).await;
     }
@@ -482,7 +500,7 @@ async fn run_owner_screen(
     let start_deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < start_deadline && !metrics.screen_share_started {
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
         sleep(POLL_INTERVAL).await;
     }
@@ -528,7 +546,10 @@ async fn run_participant_screen(
     wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
 
     let observe_deadline = Instant::now()
-        + Duration::from_millis(spec.hold_ms.max((spec.screen_frame_count as u64 * 70) + 1200));
+        + Duration::from_millis(
+            spec.hold_ms
+                .max((spec.screen_frame_count as u64 * 70) + 1200),
+        );
     while Instant::now() < observe_deadline
         && (metrics.screen_frames_recv as usize) < spec.screen_frame_count
     {
@@ -539,7 +560,7 @@ async fn run_participant_screen(
             }
         }
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
 
         if !network.is_connected() {
@@ -555,6 +576,222 @@ async fn run_participant_screen(
     if metrics.screen_frames_recv as usize != spec.screen_frame_count {
         return Err(format!(
             "Automation participant {} expected {} screen frames but received {}",
+            spec.user_name, spec.screen_frame_count, metrics.screen_frames_recv
+        ));
+    }
+
+    Ok(())
+}
+
+async fn run_owner_media_combo(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = create_space_and_share(spec, network, metrics).await?;
+
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
+    wait_for_member_online_count(network, metrics, spec.expect_peers, spec.invite_timeout_ms)
+        .await?;
+
+    select_text_channel(network, &shared.text_channel_id).await?;
+    wait_for_text_channel_selected(network, metrics, &shared.text_channel_id).await?;
+
+    let peer_deadline = Instant::now() + Duration::from_millis(spec.invite_timeout_ms);
+    while Instant::now() < peer_deadline && (metrics.peer_join_events as usize) < spec.expect_peers
+    {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(network, signal, metrics).await?;
+        }
+        if !network.is_connected() {
+            return Err("Automation combo owner disconnected while waiting for peers".into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    network
+        .send_signal(&SignalMessage::StartScreenShare)
+        .await
+        .map_err(|err| format!("Failed to start automation combo screen share: {err}"))?;
+
+    let start_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < start_deadline && !metrics.screen_share_started {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(network, signal, metrics).await?;
+        }
+        if !network.is_connected() {
+            return Err("Automation combo owner disconnected while starting screen share".into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if !metrics.screen_share_started {
+        return Err("Automation combo owner never observed ScreenShareStarted".into());
+    }
+
+    let audio_frame = generate_test_audio();
+    let steps = spec.message_count.max(spec.screen_frame_count).max(6);
+    for idx in 0..steps {
+        if spec.send_audio {
+            network
+                .send_audio(&audio_frame)
+                .await
+                .map_err(|err| format!("Failed to send automation combo audio: {err}"))?;
+            metrics.audio_frames_sent += 1;
+            metrics.last_status = "combo-audio-sent".into();
+        }
+
+        if idx < spec.screen_frame_count {
+            let frame = generate_test_screen_frame(idx);
+            network
+                .send_screen_frame(&frame)
+                .await
+                .map_err(|err| format!("Failed to send automation combo screen frame: {err}"))?;
+            metrics.screen_frames_sent += 1;
+            metrics.last_status = "combo-screen-sent".into();
+        }
+
+        if idx < spec.message_count {
+            let content = format!("automation-combo-message-{}-{idx}", spec.user_name);
+            network
+                .send_signal(&SignalMessage::SendTextMessage {
+                    channel_id: shared.text_channel_id.clone(),
+                    content,
+                    reply_to_message_id: None,
+                })
+                .await
+                .map_err(|err| format!("Failed to send automation combo text message: {err}"))?;
+            metrics.text_messages_sent += 1;
+            metrics.last_status = "combo-text-sent".into();
+        }
+
+        while let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(network, signal, metrics).await?;
+        }
+
+        if !network.is_connected() {
+            return Err("Automation combo owner disconnected unexpectedly".into());
+        }
+
+        sleep(Duration::from_millis(60)).await;
+    }
+
+    network
+        .send_signal(&SignalMessage::StopScreenShare)
+        .await
+        .map_err(|err| format!("Failed to stop automation combo screen share: {err}"))?;
+
+    let observe_deadline = Instant::now() + Duration::from_millis(spec.hold_ms);
+    while Instant::now() < observe_deadline {
+        if let Some(signal) = network.try_recv_signal() {
+            handle_nonblocking_signal(network, signal, metrics).await?;
+        }
+        if !network.is_connected() {
+            return Err("Automation combo owner disconnected during final observe window".into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if spec.expect_peers > 0 && (metrics.peer_join_events as usize) < spec.expect_peers {
+        return Err(format!(
+            "Owner expected {} peer joins before combo send but saw {}",
+            spec.expect_peers, metrics.peer_join_events
+        ));
+    }
+    if spec.send_audio && metrics.audio_frames_sent == 0 {
+        return Err("Automation combo owner never sent audio".into());
+    }
+    if metrics.text_messages_sent as usize != spec.message_count {
+        return Err(format!(
+            "Automation combo owner expected to send {} text messages but sent {}",
+            spec.message_count, metrics.text_messages_sent
+        ));
+    }
+    if metrics.screen_frames_sent as usize != spec.screen_frame_count {
+        return Err(format!(
+            "Automation combo owner expected to send {} screen frames but sent {}",
+            spec.screen_frame_count, metrics.screen_frames_sent
+        ));
+    }
+
+    Ok(())
+}
+
+async fn run_participant_media_combo(
+    spec: &AutomationSpec,
+    network: &mut NetworkClient,
+    metrics: &mut AutomationMetrics,
+) -> Result<(), String> {
+    let shared = wait_for_shared_info(&spec.shared_path, spec.invite_timeout_ms).await?;
+    join_space(spec, network, metrics, &shared).await?;
+
+    join_channel(network, &shared.voice_channel_id).await?;
+    wait_for_channel_join(network, metrics, &shared.voice_channel_id).await?;
+
+    select_text_channel(network, &shared.text_channel_id).await?;
+    wait_for_text_channel_selected(network, metrics, &shared.text_channel_id).await?;
+
+    let observe_deadline = Instant::now()
+        + Duration::from_millis(
+            spec.hold_ms
+                .max((spec.message_count as u64 * 70) + 1200)
+                .max((spec.screen_frame_count as u64 * 70) + 1200),
+        );
+    while Instant::now() < observe_deadline
+        && ((spec.expect_audio && metrics.audio_frames_recv == 0)
+            || (metrics.text_messages_recv as usize) < spec.message_count
+            || (metrics.screen_frames_recv as usize) < spec.screen_frame_count)
+    {
+        if let Some(frame) = network.try_recv_audio() {
+            if parse_audio_frame(&frame).is_some() {
+                metrics.audio_frames_recv += 1;
+                metrics.last_status = "combo-audio-received".into();
+            }
+        }
+        if let Some(frame) = network.try_recv_screen_frame() {
+            if parse_screen_frame(&frame).is_some() {
+                metrics.screen_frames_recv += 1;
+                metrics.last_status = "combo-screen-received".into();
+            }
+        }
+        if let Some(signal) = network.try_recv_signal() {
+            match signal {
+                SignalMessage::TextMessage { channel_id, .. }
+                    if channel_id == shared.text_channel_id =>
+                {
+                    metrics.text_messages_recv += 1;
+                    metrics.last_status = "combo-text-received".into();
+                }
+                other => handle_nonblocking_signal(network, other, metrics).await?,
+            }
+        }
+
+        if !network.is_connected() {
+            return Err(format!(
+                "Automation combo participant {} disconnected unexpectedly",
+                spec.user_name
+            ));
+        }
+
+        sleep(POLL_INTERVAL).await;
+    }
+
+    if spec.expect_audio && metrics.audio_frames_recv == 0 {
+        return Err(format!(
+            "Automation combo participant {} did not receive any audio",
+            spec.user_name
+        ));
+    }
+    if metrics.text_messages_recv as usize != spec.message_count {
+        return Err(format!(
+            "Automation combo participant {} expected {} text messages but received {}",
+            spec.user_name, spec.message_count, metrics.text_messages_recv
+        ));
+    }
+    if metrics.screen_frames_recv as usize != spec.screen_frame_count {
+        return Err(format!(
+            "Automation combo participant {} expected {} screen frames but received {}",
             spec.user_name, spec.screen_frame_count, metrics.screen_frames_recv
         ));
     }
@@ -596,7 +833,7 @@ async fn create_space_and_share(
                 metrics.last_status = "space-created".into();
                 break shared;
             }
-            signal => handle_nonblocking_signal(signal, metrics)?,
+            signal => handle_nonblocking_signal(network, signal, metrics).await?,
         }
     };
     Ok(shared)
@@ -624,7 +861,7 @@ async fn join_space(
                 metrics.last_status = "space-joined".into();
                 return Ok(());
             }
-            signal => handle_nonblocking_signal(signal, metrics)?,
+            signal => handle_nonblocking_signal(network, signal, metrics).await?,
         }
     }
 }
@@ -655,11 +892,13 @@ async fn create_text_channel(
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match recv_signal_until(network, deadline).await? {
-            SignalMessage::ChannelCreated { channel } if channel.channel_type == ChannelType::Text => {
+            SignalMessage::ChannelCreated { channel }
+                if channel.channel_type == ChannelType::Text =>
+            {
                 metrics.last_status = "text-channel-created".into();
                 return Ok(channel);
             }
-            signal => handle_nonblocking_signal(signal, metrics)?,
+            signal => handle_nonblocking_signal(network, signal, metrics).await?,
         }
     }
 }
@@ -706,7 +945,7 @@ async fn wait_for_channel_join(
             SignalMessage::PeerJoined { .. } => {
                 metrics.peer_join_events += 1;
             }
-            other => handle_nonblocking_signal(other, metrics)?,
+            other => handle_nonblocking_signal(network, other, metrics).await?,
         }
     }
     Ok(())
@@ -728,7 +967,7 @@ async fn wait_for_text_channel_selected(
                 metrics.last_status = "text-channel-selected".into();
                 return Ok(());
             }
-            signal => handle_nonblocking_signal(signal, metrics)?,
+            signal => handle_nonblocking_signal(network, signal, metrics).await?,
         }
     }
 }
@@ -749,7 +988,7 @@ async fn wait_for_member_online_count(
             return Ok(());
         }
         if let Some(signal) = network.try_recv_signal() {
-            handle_nonblocking_signal(signal, metrics)?;
+            handle_nonblocking_signal(network, signal, metrics).await?;
         }
         if !network.is_connected() {
             return Err("Automation client disconnected while waiting for members".into());
@@ -781,7 +1020,8 @@ async fn recv_signal_until(
     }
 }
 
-fn handle_nonblocking_signal(
+async fn handle_nonblocking_signal(
+    network: &mut NetworkClient,
     signal: SignalMessage,
     metrics: &mut AutomationMetrics,
 ) -> Result<(), String> {
@@ -791,6 +1031,15 @@ fn handle_nonblocking_signal(
             metrics.authenticated = true;
             Ok(())
         }
+        SignalMessage::UdpReady { token, port } => {
+            network
+                .setup_udp(&token, port)
+                .await
+                .map_err(|err| format!("Failed to set up UDP transport: {err}"))?;
+            metrics.udp_active = true;
+            Ok(())
+        }
+        SignalMessage::UdpUnavailable => Ok(()),
         SignalMessage::MemberOnline { .. } => {
             metrics.member_online_events += 1;
             Ok(())
@@ -909,7 +1158,9 @@ async fn wait_for_shared_info(path: &PathBuf, timeout_ms: u64) -> Result<SharedJ
                 .and_then(|value| value.as_str())
                 .unwrap_or_default()
                 .to_string();
-            if !invite_code.is_empty() && !voice_channel_id.is_empty() && !text_channel_id.is_empty()
+            if !invite_code.is_empty()
+                && !voice_channel_id.is_empty()
+                && !text_channel_id.is_empty()
             {
                 return Ok(SharedJoinInfo {
                     invite_code,
@@ -958,6 +1209,7 @@ fn write_report(
         "channel_joined": metrics.channel_joined,
         "text_channel_selected": metrics.text_channel_selected,
         "screen_share_started": metrics.screen_share_started,
+        "udp_active": metrics.udp_active,
         "self_channel_updates": metrics.self_channel_updates,
         "peer_join_events": metrics.peer_join_events,
         "member_channel_updates": metrics.member_channel_updates,
@@ -990,6 +1242,7 @@ fn scenario_label(scenario: AutomationScenario) -> &'static str {
         AutomationScenario::SpaceChannelSoak => "space_channel_soak",
         AutomationScenario::SpaceTextChatSoak => "space_text_chat_soak",
         AutomationScenario::SpaceScreenShareSoak => "space_screen_share_soak",
+        AutomationScenario::SpaceMediaComboSoak => "space_media_combo_soak",
     }
 }
 

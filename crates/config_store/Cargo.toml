@@ -1,6 +1,6 @@
 [package]
 name = "config_store"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 
 [dependencies]
@@ -9,3 +9,12 @@ serde_json = { workspace = true }
 directories = { workspace = true }
 log = { workspace = true }
 shared_types = { path = "../shared_types" }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
+keyring = { version = "3.6.3", features = ["sync-secret-service"] }

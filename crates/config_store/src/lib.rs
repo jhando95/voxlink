@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+const AUTH_TOKEN_SERVICE: &str = "Voxlink";
+const AUTH_TOKEN_ACCOUNT: &str = "auth-token";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub input_device: Option<String>,
@@ -48,7 +51,9 @@ pub struct AppConfig {
     pub output_volume: f32,
     #[serde(default = "default_notifications")]
     pub notifications_enabled: bool,
-    #[serde(default)]
+    /// Legacy plaintext auth token from older configs.
+    /// This is still deserialized for migration, but it is never serialized back to disk.
+    #[serde(default, skip_serializing)]
     pub auth_token: Option<String>,
     #[serde(default = "default_minimize_to_tray")]
     pub minimize_to_tray: bool,
@@ -193,9 +198,9 @@ fn default_minimize_to_tray() -> bool {
 }
 
 fn default_server_address() -> String {
-    // Default to the production Oracle Cloud server.
-    // Users can add additional servers via the saved servers UI.
-    "ws://129.158.231.26:9090".into()
+    // Do not ship an insecure public default.
+    // Users can connect to a saved server, enter a secure remote address, or self-host locally.
+    String::new()
 }
 
 fn default_theme_preset() -> String {
@@ -298,6 +303,144 @@ impl AppConfig {
     }
 }
 
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+))]
+fn auth_token_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(AUTH_TOKEN_SERVICE, AUTH_TOKEN_ACCOUNT)
+        .map_err(|e| format!("Failed to open secure credential entry: {e}"))
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+))]
+fn read_secure_auth_token() -> Option<String> {
+    let entry = match auth_token_entry() {
+        Ok(entry) => entry,
+        Err(err) => {
+            log::warn!("{err}");
+            return None;
+        }
+    };
+
+    match entry.get_password() {
+        Ok(token) if !token.is_empty() => Some(token),
+        Ok(_) => None,
+        Err(keyring::Error::NoEntry) => None,
+        Err(err) => {
+            log::warn!("Failed to read auth token from secure storage: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+)))]
+fn read_secure_auth_token() -> Option<String> {
+    None
+}
+
+pub fn store_auth_token(token: &str) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return clear_auth_token();
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+    ))]
+    {
+        let entry = auth_token_entry()?;
+        entry
+            .set_password(token)
+            .map_err(|e| format!("Failed to write auth token to secure storage: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+    )))]
+    {
+        let _ = token;
+        Err("Secure auth token storage is unavailable on this platform".into())
+    }
+}
+
+pub fn clear_auth_token() -> Result<(), String> {
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+    ))]
+    {
+        let entry = auth_token_entry()?;
+        return match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!(
+                "Failed to delete auth token from secure storage: {err}"
+            )),
+        };
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+    )))]
+    {
+        Ok(())
+    }
+}
+
+pub fn load_auth_token() -> Option<String> {
+    if let Some(token) = read_secure_auth_token() {
+        return Some(token);
+    }
+
+    let legacy_token = load_config().auth_token.filter(|token| !token.is_empty());
+    if let Some(ref token) = legacy_token {
+        if let Err(err) = store_auth_token(token) {
+            log::warn!("Failed to migrate legacy auth token to secure storage: {err}");
+        }
+    }
+    legacy_token
+}
+
+pub fn has_auth_token() -> bool {
+    load_auth_token().is_some()
+}
+
 fn config_path() -> Option<PathBuf> {
     ProjectDirs::from("com", "voxlink", "Voxlink").map(|dirs| dirs.config_dir().join("config.json"))
 }
@@ -309,14 +452,33 @@ pub fn config_dir_display() -> String {
         .unwrap_or_else(|| "(unknown)".into())
 }
 
-/// Reset config to defaults (preserving auth token so we don't log out).
+/// Reset config to defaults while preserving account identity metadata.
+/// Auth tokens live in secure storage and are not part of config.json anymore.
 pub fn reset_to_defaults() -> Result<(), String> {
     let existing = load_config();
     let mut fresh = AppConfig::default();
-    // Preserve authentication state so the user stays logged in
-    fresh.auth_token = existing.auth_token;
     fresh.account_email = existing.account_email;
     save_config(&fresh)
+}
+
+/// Migrate any legacy plaintext auth token from config.json into secure storage.
+pub fn migrate_legacy_auth_token() {
+    let mut cfg = load_config();
+    let Some(token) = cfg.auth_token.clone().filter(|token| !token.is_empty()) else {
+        return;
+    };
+
+    match store_auth_token(&token) {
+        Ok(()) => {
+            cfg.auth_token = None;
+            if let Err(err) = save_config(&cfg) {
+                log::warn!("Failed to scrub legacy auth token from config: {err}");
+            }
+        }
+        Err(err) => {
+            log::warn!("Failed to migrate legacy auth token to secure storage: {err}");
+        }
+    }
 }
 
 /// Serialize the current config to a pretty-printed JSON string (for export).
@@ -374,7 +536,7 @@ mod tests {
         assert!(config.push_to_talk_key.is_none());
         assert!((config.open_mic_sensitivity - 0.5).abs() < f32::EPSILON);
         assert_eq!(config.mic_mode, "open_mic");
-        assert_eq!(config.server_address, "ws://129.158.231.26:9090");
+        assert!(config.server_address.is_empty());
         assert!(config.last_room_code.is_none());
         assert!(config.window_width.is_none());
         assert!(config.window_height.is_none());
@@ -555,13 +717,11 @@ mod tests {
     fn effective_server_address_falls_back_to_legacy() {
         let config = AppConfig {
             server_address: "ws://legacy:9090".into(),
-            saved_servers: vec![
-                SavedServer {
-                    name: "NonDefault".into(),
-                    address: "ws://other:9090".into(),
-                    is_default: false,
-                },
-            ],
+            saved_servers: vec![SavedServer {
+                name: "NonDefault".into(),
+                address: "ws://other:9090".into(),
+                is_default: false,
+            }],
             ..AppConfig::default()
         };
         assert_eq!(config.effective_server_address(), "ws://legacy:9090");
@@ -575,6 +735,26 @@ mod tests {
             ..AppConfig::default()
         };
         assert_eq!(config.effective_server_address(), "ws://legacy:9090");
+    }
+
+    #[test]
+    fn auth_token_is_read_but_not_serialized() {
+        let json = r#"{
+            "input_device": null,
+            "output_device": null,
+            "push_to_talk_key": null,
+            "open_mic_sensitivity": 0.5,
+            "mic_mode": "open_mic",
+            "user_name": "LegacyUser",
+            "server_address": "ws://localhost:9090",
+            "auth_token": "legacy-token"
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.auth_token.as_deref(), Some("legacy-token"));
+
+        let reserialized = serde_json::to_string(&config).unwrap();
+        assert!(!reserialized.contains("auth_token"));
+        assert!(!reserialized.contains("legacy-token"));
     }
 
     #[test]
@@ -615,7 +795,9 @@ mod tests {
     #[test]
     fn user_notes_round_trip() {
         let mut config = AppConfig::default();
-        config.user_notes.insert("u123".into(), "Good moderator".into());
+        config
+            .user_notes
+            .insert("u123".into(), "Good moderator".into());
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.user_notes["u123"], "Good moderator");
@@ -723,9 +905,6 @@ mod tests {
         assert!((decoded.ducking_threshold - 0.08).abs() < f32::EPSILON);
         assert_eq!(decoded.soundboard_clips.len(), 1);
         assert_eq!(decoded.soundboard_clips[0].name, "Horn");
-        assert_eq!(
-            decoded.soundboard_clips[0].keybind.as_deref(),
-            Some("F1")
-        );
+        assert_eq!(decoded.soundboard_clips[0].keybind.as_deref(), Some("F1"));
     }
 }

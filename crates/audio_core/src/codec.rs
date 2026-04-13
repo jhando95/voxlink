@@ -60,7 +60,10 @@ impl NoiseGate {
                 let avg = self.calibration_sum / Self::CALIBRATION_FRAMES as f32;
                 // Set noise floor from measured ambient, with a minimum to avoid division by tiny values
                 self.noise_floor = avg.max(0.001);
-                log::debug!("Noise gate auto-calibrated: noise_floor={:.6}", self.noise_floor);
+                log::debug!(
+                    "Noise gate auto-calibrated: noise_floor={:.6}",
+                    self.noise_floor
+                );
             }
         }
 
@@ -218,7 +221,11 @@ impl HighPassFilter {
     pub fn process(&mut self, samples: &mut [f32]) {
         // Fade-in ramp on first frame to eliminate HPF warmup transient
         // 2ms at 48kHz = 96 samples
-        let fade_len = if !self.primed { 96.min(samples.len()) } else { 0 };
+        let fade_len = if !self.primed {
+            96.min(samples.len())
+        } else {
+            0
+        };
 
         for (i, s) in samples.iter_mut().enumerate() {
             let input = *s;
@@ -358,7 +365,6 @@ impl Agc {
             }
         }
     }
-
 }
 
 // ─── Playback AGC (per-peer volume normalization) ───
@@ -387,9 +393,9 @@ impl PlaybackAgc {
         Self {
             rms_estimate: 0.05,
             gain: 1.0,
-            target_rms, // default 0.15 — slightly louder target for playback clarity
-            max_gain: 6.0,    // +15dB max boost (less aggressive than capture)
-            min_gain: 0.15,   // -16dB max cut
+            target_rms,     // default 0.15 — slightly louder target for playback clarity
+            max_gain: 6.0,  // +15dB max boost (less aggressive than capture)
+            min_gain: 0.15, // -16dB max cut
         }
     }
 
@@ -527,7 +533,10 @@ impl NoiseSuppressor {
                 }
             } else {
                 // Scale back to [-1.0, 1.0]
-                for (i, s) in samples[offset..offset + Self::SUB_FRAME].iter_mut().enumerate() {
+                for (i, s) in samples[offset..offset + Self::SUB_FRAME]
+                    .iter_mut()
+                    .enumerate()
+                {
                     *s = (sub_out[i] / 32767.0).clamp(-1.0, 1.0);
                 }
             }
@@ -1036,7 +1045,10 @@ mod tests {
         hpf.process(&mut samples);
         let processed_energy: f32 = samples.iter().map(|s| s * s).sum();
         let ratio = processed_energy / original_energy;
-        assert!(ratio < 0.5, "20Hz should be attenuated by HPF: ratio={ratio}");
+        assert!(
+            ratio < 0.5,
+            "20Hz should be attenuated by HPF: ratio={ratio}"
+        );
     }
 
     #[test]
@@ -1088,7 +1100,10 @@ mod tests {
         let mut samples = [0.005f32; FRAME_SIZE];
         agc.process(&mut samples);
         let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
-        assert!(rms > 0.005, "PlaybackAgc should boost quiet signal: rms={rms}");
+        assert!(
+            rms > 0.005,
+            "PlaybackAgc should boost quiet signal: rms={rms}"
+        );
     }
 
     #[test]
@@ -1102,7 +1117,10 @@ mod tests {
         let mut samples = [0.8f32; FRAME_SIZE];
         agc.process(&mut samples);
         let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / FRAME_SIZE as f32).sqrt();
-        assert!(rms < 0.8, "PlaybackAgc should attenuate loud signal: rms={rms}");
+        assert!(
+            rms < 0.8,
+            "PlaybackAgc should attenuate loud signal: rms={rms}"
+        );
     }
 
     #[test]
@@ -1118,7 +1136,10 @@ mod tests {
         let mut samples = [0.5f32; 100];
         agc.process(&mut samples);
         let max = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(max <= 0.96, "PlaybackAgc limiter should cap output: max={max}");
+        assert!(
+            max <= 0.96,
+            "PlaybackAgc limiter should cap output: max={max}"
+        );
     }
 
     // ─── NoiseGate (extended) ───
@@ -1195,7 +1216,10 @@ mod tests {
         let original = [0.5f32; FRAME_SIZE];
         let mut samples = original;
         ns.process(&mut samples);
-        assert_eq!(samples, original, "Disabled NoiseSuppressor should not modify audio");
+        assert_eq!(
+            samples, original,
+            "Disabled NoiseSuppressor should not modify audio"
+        );
     }
 
     #[test]
@@ -1231,7 +1255,10 @@ mod tests {
         let mut short = [0.5f32; 100];
         let original = short;
         ns.process(&mut short);
-        assert_eq!(short, original, "Short buffer should pass through unchanged");
+        assert_eq!(
+            short, original,
+            "Short buffer should pass through unchanged"
+        );
     }
 
     // ─── EchoCanceller ───
@@ -1243,7 +1270,10 @@ mod tests {
         let original = [0.3f32; FRAME_SIZE];
         let mut samples = original;
         ec.process(&mut samples, &echo_ref);
-        assert_eq!(samples, original, "Disabled EchoCanceller should not modify audio");
+        assert_eq!(
+            samples, original,
+            "Disabled EchoCanceller should not modify audio"
+        );
     }
 
     #[test]
@@ -1284,8 +1314,16 @@ mod tests {
         let mut out = [0.0f32; 50];
         echo_ref.read_recent(&mut out);
         // Should contain the last 50 samples (0.50..0.99)
-        assert!((out[0] - 0.50).abs() < 0.01, "First read sample should be ~0.50: got {}", out[0]);
-        assert!((out[49] - 0.99).abs() < 0.01, "Last read sample should be ~0.99: got {}", out[49]);
+        assert!(
+            (out[0] - 0.50).abs() < 0.01,
+            "First read sample should be ~0.50: got {}",
+            out[0]
+        );
+        assert!(
+            (out[49] - 0.99).abs() < 0.01,
+            "Last read sample should be ~0.99: got {}",
+            out[49]
+        );
     }
 
     // ─── AGC (extended) ───
@@ -1332,7 +1370,10 @@ mod tests {
         // First sample should be near 0 (smooth ramp up)
         assert!(samples[0] < 0.1, "Unmute ramp should start low");
         // Last sample should be near 1.0
-        assert!(samples[959] > 0.9, "Unmute ramp should reach near-full by end");
+        assert!(
+            samples[959] > 0.9,
+            "Unmute ramp should reach near-full by end"
+        );
     }
 
     // ─── ComfortNoise (extended) ───
@@ -1346,7 +1387,10 @@ mod tests {
         cn1.fill(&mut s1);
         cn2.fill(&mut s2);
         // Same seed should produce same output
-        assert_eq!(s1, s2, "Comfort noise should be deterministic from same seed");
+        assert_eq!(
+            s1, s2,
+            "Comfort noise should be deterministic from same seed"
+        );
     }
 
     #[test]

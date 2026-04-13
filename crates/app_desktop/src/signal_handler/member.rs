@@ -102,6 +102,7 @@ pub fn handle_member_role_changed(
 ) {
     let mut s = state.borrow_mut();
     let self_user_id = s.self_user_id.clone();
+    let mut clear_audit_log = false;
     if let Some(ref mut space) = s.space {
         for member in &mut space.members {
             if member.user_id.as_deref() == Some(user_id) {
@@ -112,9 +113,16 @@ pub fn handle_member_role_changed(
             space.self_role = role;
             crate::signal_handler::apply_space_permissions(w, role);
             w.set_is_space_owner(role == SpaceRole::Owner);
+            if !super::space::can_view_space_audit(role) {
+                space.audit_log.clear();
+                clear_audit_log = true;
+            }
         }
     }
     drop(s);
+    if clear_audit_log {
+        ui_shell::set_space_audit_log(w, &[]);
+    }
     crate::friends::sync_ui(w, state);
 }
 
@@ -123,6 +131,13 @@ pub fn handle_space_audit_snapshot(
     state: &Rc<RefCell<shared_types::AppState>>,
     entries: &[shared_types::SpaceAuditEntry],
 ) {
+    if !w.get_can_view_space_audit() {
+        if let Some(ref mut space) = state.borrow_mut().space {
+            space.audit_log.clear();
+        }
+        ui_shell::set_space_audit_log(w, &[]);
+        return;
+    }
     if let Some(ref mut space) = state.borrow_mut().space {
         space.audit_log = entries.to_vec();
     }
@@ -137,9 +152,11 @@ pub fn handle_profile_updated(
 ) {
     // Update bio in member list if visible
     if let Some(ref mut space) = state.borrow_mut().space {
-        if let Some(member) = space.members.iter_mut().find(|m| {
-            m.user_id.as_deref() == Some(user_id) || m.id == user_id
-        }) {
+        if let Some(member) = space
+            .members
+            .iter_mut()
+            .find(|m| m.user_id.as_deref() == Some(user_id) || m.id == user_id)
+        {
             member.bio = bio.to_string();
         }
     }
@@ -157,6 +174,13 @@ pub fn handle_space_audit_appended(
     state: &Rc<RefCell<shared_types::AppState>>,
     entry: &shared_types::SpaceAuditEntry,
 ) {
+    if !w.get_can_view_space_audit() {
+        if let Some(ref mut space) = state.borrow_mut().space {
+            space.audit_log.clear();
+        }
+        ui_shell::set_space_audit_log(w, &[]);
+        return;
+    }
     let mut entries = Vec::new();
     if let Some(ref mut space) = state.borrow_mut().space {
         space.audit_log.insert(0, entry.clone());

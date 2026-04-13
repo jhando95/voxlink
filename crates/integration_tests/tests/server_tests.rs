@@ -165,6 +165,16 @@ impl TestClient {
             .unwrap();
     }
 
+    async fn send_screen(&mut self, data: &[u8]) {
+        let mut packet = Vec::with_capacity(data.len() + 1);
+        packet.push(shared_types::MEDIA_PACKET_SCREEN);
+        packet.extend_from_slice(data);
+        self.sink
+            .send(Message::Binary(packet.into()))
+            .await
+            .unwrap();
+    }
+
     async fn recv_binary_timeout(&mut self, dur: Duration) -> Option<Vec<u8>> {
         loop {
             match timeout(dur, self.stream.next()).await {
@@ -183,6 +193,28 @@ impl TestClient {
 }
 
 // ─── Helper: create a room and return the room code ───
+
+async fn recv_matching_signal<F>(
+    client: &mut TestClient,
+    dur: Duration,
+    mut predicate: F,
+) -> Option<SignalMessage>
+where
+    F: FnMut(&SignalMessage) -> bool,
+{
+    let started_at = std::time::Instant::now();
+    loop {
+        let remaining = dur.saturating_sub(started_at.elapsed());
+        if remaining.is_zero() {
+            return None;
+        }
+        match client.recv_signal_raw_timeout(remaining).await {
+            Some(msg) if predicate(&msg) => return Some(msg),
+            Some(_) => continue,
+            None => return None,
+        }
+    }
+}
 
 async fn create_room(client: &mut TestClient, name: &str) -> String {
     client
@@ -254,6 +286,21 @@ fn parse_audio_frame(frame: &[u8]) -> (&str, &[u8]) {
     (sender_id, audio)
 }
 
+fn parse_screen_frame(frame: &[u8]) -> (&str, &[u8]) {
+    assert!(
+        frame.len() >= 3 && frame[0] == shared_types::MEDIA_PACKET_SCREEN,
+        "Expected screen media packet"
+    );
+    let id_len = frame[1] as usize;
+    assert!(
+        frame.len() > 2 + id_len,
+        "Frame too short for sender header"
+    );
+    let sender_id = std::str::from_utf8(&frame[2..2 + id_len]).unwrap();
+    let screen = &frame[2 + id_len..];
+    (sender_id, screen)
+}
+
 fn desktop_bin_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -265,26 +312,31 @@ fn desktop_bin_path() -> std::path::PathBuf {
 
 fn spawn_automated_desktop_client(
     desktop_bin: &std::path::Path,
+    scenario: &str,
     server_url: &str,
     role: &str,
     user_name: &str,
     shared_path: &std::path::Path,
     report_path: &std::path::Path,
     space_name: &str,
+    hold_ms: u64,
     expect_peers: usize,
     expect_audio: bool,
     send_audio: bool,
+    message_count: Option<usize>,
+    screen_frame_count: Option<usize>,
 ) -> tokio::process::Child {
-    Command::new(desktop_bin)
+    let mut command = Command::new(desktop_bin);
+    command
         .env("RUST_LOG", "info")
-        .env("VOXLINK_AUTOMATION_SCENARIO", "space_channel_soak")
+        .env("VOXLINK_AUTOMATION_SCENARIO", scenario)
         .env("VOXLINK_AUTOMATION_ROLE", role)
         .env("VOXLINK_AUTOMATION_SERVER_URL", server_url)
         .env("VOXLINK_AUTOMATION_USER_NAME", user_name)
         .env("VOXLINK_AUTOMATION_SPACE_NAME", space_name)
         .env("VOXLINK_AUTOMATION_SHARED_PATH", shared_path)
         .env("VOXLINK_AUTOMATION_REPORT_PATH", report_path)
-        .env("VOXLINK_AUTOMATION_HOLD_MS", "2600")
+        .env("VOXLINK_AUTOMATION_HOLD_MS", hold_ms.to_string())
         .env("VOXLINK_AUTOMATION_INVITE_TIMEOUT_MS", "12000")
         .env("VOXLINK_AUTOMATION_EXPECT_PEERS", expect_peers.to_string())
         .env(
@@ -294,7 +346,20 @@ fn spawn_automated_desktop_client(
         .env(
             "VOXLINK_AUTOMATION_SEND_AUDIO",
             if send_audio { "1" } else { "0" },
-        )
+        );
+    if let Some(message_count) = message_count {
+        command.env(
+            "VOXLINK_AUTOMATION_MESSAGE_COUNT",
+            message_count.to_string(),
+        );
+    }
+    if let Some(screen_frame_count) = screen_frame_count {
+        command.env(
+            "VOXLINK_AUTOMATION_SCREEN_FRAME_COUNT",
+            screen_frame_count.to_string(),
+        );
+    }
+    command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -1058,7 +1123,9 @@ async fn join_space(
                 members,
                 ..
             } => return (space, channels, members),
-            SignalMessage::MemberOnline { .. } | SignalMessage::MemberOffline { .. } => continue,
+            SignalMessage::MemberOnline { .. }
+            | SignalMessage::MemberOffline { .. }
+            | SignalMessage::TextMessage { .. } => continue,
             other => panic!("Expected SpaceJoined, got: {:?}", other),
         }
     }
@@ -1506,6 +1573,193 @@ async fn test_owner_can_promote_admin_and_channel_access_updates() {
 }
 
 #[tokio::test]
+async fn test_audit_log_visibility_tracks_member_role() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    authenticate(&mut alice, "Alice", None).await;
+    let (_bob_token, bob_user_id) = authenticate(&mut bob, "Bob", None).await;
+
+    let (space, _) = create_space(&mut alice, "Audit Space", "Alice").await;
+    let _ = join_space(&mut bob, &space.invite_code, "Bob").await;
+
+    match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => {
+            assert_eq!(member.user_id.as_deref(), Some(bob_user_id.as_str()));
+        }
+        other => panic!("Expected MemberOnline, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "member-visible".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => {
+            assert_eq!(channel.name, "member-visible");
+        }
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    }
+
+    let unexpected_member_audit =
+        recv_matching_signal(&mut bob, Duration::from_millis(300), |msg| {
+            matches!(msg, SignalMessage::SpaceAuditLogAppended { .. })
+        })
+        .await;
+    assert!(
+        unexpected_member_audit.is_none(),
+        "Members should not receive live audit log updates, got: {:?}",
+        unexpected_member_audit
+    );
+
+    alice
+        .send_signal(&SignalMessage::SetMemberRole {
+            user_id: bob_user_id.clone(),
+            role: shared_types::SpaceRole::Moderator,
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::MemberRoleChanged { user_id, role } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(role, shared_types::SpaceRole::Moderator);
+        }
+        other => panic!("Expected MemberRoleChanged, got: {:?}", other),
+    }
+
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::MemberRoleChanged { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::MemberRoleChanged { user_id, role }) => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(role, shared_types::SpaceRole::Moderator);
+        }
+        other => panic!("Expected MemberRoleChanged for Bob, got: {:?}", other),
+    }
+
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::SpaceAuditLogSnapshot { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::SpaceAuditLogSnapshot { entries }) => {
+            assert!(
+                entries.iter().any(|entry| {
+                    entry.action == "channel" && entry.target_name == "member-visible"
+                }),
+                "Promoted moderator should receive historical channel audit entries"
+            );
+            assert!(
+                entries.iter().any(|entry| entry.action == "role"),
+                "Promoted moderator should receive the role-change audit entry"
+            );
+        }
+        other => panic!("Expected SpaceAuditLogSnapshot for Bob, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "mod-visible".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => {
+            assert_eq!(channel.name, "mod-visible");
+        }
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    }
+
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::SpaceAuditLogAppended { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::SpaceAuditLogAppended { entry }) => {
+            assert_eq!(entry.action, "channel");
+            assert_eq!(entry.target_name, "mod-visible");
+        }
+        other => panic!("Expected SpaceAuditLogAppended for Bob, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::SetMemberRole {
+            user_id: bob_user_id.clone(),
+            role: shared_types::SpaceRole::Member,
+        })
+        .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::MemberRoleChanged { user_id, role } => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(role, shared_types::SpaceRole::Member);
+        }
+        other => panic!("Expected MemberRoleChanged, got: {:?}", other),
+    }
+
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::MemberRoleChanged { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::MemberRoleChanged { user_id, role }) => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(role, shared_types::SpaceRole::Member);
+        }
+        other => panic!("Expected MemberRoleChanged for Bob, got: {:?}", other),
+    }
+
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::SpaceAuditLogSnapshot { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::SpaceAuditLogSnapshot { entries }) => {
+            assert!(
+                entries.is_empty(),
+                "Demoted members should receive an empty audit snapshot"
+            );
+        }
+        other => panic!(
+            "Expected empty SpaceAuditLogSnapshot for Bob, got: {:?}",
+            other
+        ),
+    }
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "after-demotion".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::ChannelCreated { channel } => {
+            assert_eq!(channel.name, "after-demotion");
+        }
+        other => panic!("Expected ChannelCreated, got: {:?}", other),
+    }
+
+    let unexpected_demoted_audit =
+        recv_matching_signal(&mut bob, Duration::from_millis(300), |msg| {
+            matches!(msg, SignalMessage::SpaceAuditLogAppended { .. })
+        })
+        .await;
+    assert!(
+        unexpected_demoted_audit.is_none(),
+        "Demoted members should stop receiving live audit log updates, got: {:?}",
+        unexpected_demoted_audit
+    );
+}
+
+#[tokio::test]
 async fn test_cannot_delete_last_channel() {
     let server = TestServer::start().await;
     let mut alice = server.connect().await;
@@ -1910,39 +2164,51 @@ async fn test_real_app_desktop_multi_process_same_channel_soak() {
 
     let owner = spawn_automated_desktop_client(
         &desktop_bin,
+        "space_channel_soak",
         &server_url,
         "owner",
         "Alice",
         &shared_path,
         &owner_report,
         "Desktop Soak",
+        2600,
         2,
         false,
         true,
+        None,
+        None,
     );
     let bob = spawn_automated_desktop_client(
         &desktop_bin,
+        "space_channel_soak",
         &server_url,
         "participant",
         "Bob",
         &shared_path,
         &bob_report,
         "Desktop Soak",
+        2600,
         0,
         true,
         false,
+        None,
+        None,
     );
     let carol = spawn_automated_desktop_client(
         &desktop_bin,
+        "space_channel_soak",
         &server_url,
         "participant",
         "Carol",
         &shared_path,
         &carol_report,
         "Desktop Soak",
+        2600,
         0,
         true,
         false,
+        None,
+        None,
     );
 
     let timeout_window = Duration::from_secs(20);
@@ -1979,6 +2245,9 @@ async fn test_real_app_desktop_multi_process_same_channel_soak() {
     assert_eq!(owner_json["ok"].as_bool(), Some(true));
     assert_eq!(bob_json["ok"].as_bool(), Some(true));
     assert_eq!(carol_json["ok"].as_bool(), Some(true));
+    assert_eq!(owner_json["udp_active"].as_bool(), Some(true));
+    assert_eq!(bob_json["udp_active"].as_bool(), Some(true));
+    assert_eq!(carol_json["udp_active"].as_bool(), Some(true));
 
     assert!(
         owner_json["peer_join_events"].as_u64().unwrap_or(0) >= 2,
@@ -1996,6 +2265,187 @@ async fn test_real_app_desktop_multi_process_same_channel_soak() {
         carol_json["audio_frames_recv"].as_u64().unwrap_or(0) > 0,
         "Carol should receive automation audio: {carol_json}"
     );
+
+    let _ = std::fs::remove_file(shared_path);
+    let _ = std::fs::remove_file(owner_report);
+    let _ = std::fs::remove_file(bob_report);
+    let _ = std::fs::remove_file(carol_report);
+    let _ = std::fs::remove_dir(&base_dir);
+}
+
+#[tokio::test]
+async fn test_real_app_desktop_multi_process_media_combo_soak() {
+    let desktop_bin = desktop_bin_path();
+    assert!(
+        desktop_bin.exists(),
+        "Desktop binary missing at {:?}. Run `cargo build -p app_desktop -p signaling_server` first.",
+        desktop_bin
+    );
+
+    let server = TestServer::start().await;
+    let server_url = format!("ws://127.0.0.1:{}", server.port);
+    let base_dir = std::env::temp_dir().join(format!(
+        "voxlink_app_combo_soak_{}_{}",
+        std::process::id(),
+        server.port
+    ));
+    std::fs::create_dir_all(&base_dir).unwrap();
+
+    let shared_path = base_dir.join("shared.json");
+    let owner_report = base_dir.join("owner.json");
+    let bob_report = base_dir.join("bob.json");
+    let carol_report = base_dir.join("carol.json");
+
+    let expected_messages = 8usize;
+    let expected_screen_frames = 8usize;
+
+    let owner = spawn_automated_desktop_client(
+        &desktop_bin,
+        "space_media_combo_soak",
+        &server_url,
+        "owner",
+        "Alice",
+        &shared_path,
+        &owner_report,
+        "Desktop Combo Soak",
+        4200,
+        2,
+        false,
+        true,
+        Some(expected_messages),
+        Some(expected_screen_frames),
+    );
+    let bob = spawn_automated_desktop_client(
+        &desktop_bin,
+        "space_media_combo_soak",
+        &server_url,
+        "participant",
+        "Bob",
+        &shared_path,
+        &bob_report,
+        "Desktop Combo Soak",
+        4200,
+        0,
+        true,
+        false,
+        Some(expected_messages),
+        Some(expected_screen_frames),
+    );
+    let carol = spawn_automated_desktop_client(
+        &desktop_bin,
+        "space_media_combo_soak",
+        &server_url,
+        "participant",
+        "Carol",
+        &shared_path,
+        &carol_report,
+        "Desktop Combo Soak",
+        4200,
+        0,
+        true,
+        false,
+        Some(expected_messages),
+        Some(expected_screen_frames),
+    );
+
+    let timeout_window = Duration::from_secs(25);
+    let (owner_out, bob_out, carol_out) = tokio::join!(
+        timeout(timeout_window, owner.wait_with_output()),
+        timeout(timeout_window, bob.wait_with_output()),
+        timeout(timeout_window, carol.wait_with_output()),
+    );
+
+    let owner_out = owner_out
+        .expect("Owner desktop combo client timed out")
+        .unwrap();
+    let bob_out = bob_out
+        .expect("Bob desktop combo client timed out")
+        .unwrap();
+    let carol_out = carol_out
+        .expect("Carol desktop combo client timed out")
+        .unwrap();
+
+    for (name, output) in [
+        ("owner", &owner_out),
+        ("bob", &bob_out),
+        ("carol", &carol_out),
+    ] {
+        assert!(
+            output.status.success(),
+            "{name} desktop combo client failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let owner_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&owner_report).unwrap()).unwrap();
+    let bob_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&bob_report).unwrap()).unwrap();
+    let carol_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&carol_report).unwrap()).unwrap();
+
+    assert_eq!(owner_json["ok"].as_bool(), Some(true));
+    assert_eq!(bob_json["ok"].as_bool(), Some(true));
+    assert_eq!(carol_json["ok"].as_bool(), Some(true));
+    assert_eq!(owner_json["udp_active"].as_bool(), Some(true));
+    assert_eq!(bob_json["udp_active"].as_bool(), Some(true));
+    assert_eq!(carol_json["udp_active"].as_bool(), Some(true));
+
+    assert!(
+        owner_json["peer_join_events"].as_u64().unwrap_or(0) >= 2,
+        "Owner should observe both other clients joining the voice channel: {owner_json}"
+    );
+    assert_eq!(
+        owner_json["screen_share_started"].as_bool(),
+        Some(true),
+        "Owner should observe screen share start: {owner_json}"
+    );
+    assert!(
+        owner_json["audio_frames_sent"].as_u64().unwrap_or(0) > 0,
+        "Owner should send automation combo audio: {owner_json}"
+    );
+    assert_eq!(
+        owner_json["text_messages_sent"].as_u64(),
+        Some(expected_messages as u64),
+        "Owner should send the expected combo text burst: {owner_json}"
+    );
+    assert_eq!(
+        owner_json["screen_frames_sent"].as_u64(),
+        Some(expected_screen_frames as u64),
+        "Owner should send the expected combo screen burst: {owner_json}"
+    );
+    assert!(
+        owner_json["elapsed_ms"].as_u64().unwrap_or(u64::MAX) < 12_000,
+        "Owner combo soak should complete within 12s locally: {owner_json}"
+    );
+
+    for (name, report) in [("bob", &bob_json), ("carol", &carol_json)] {
+        let owner_audio_sent = owner_json["audio_frames_sent"].as_u64().unwrap_or(0);
+        let received_audio = report["audio_frames_recv"].as_u64().unwrap_or(0);
+        assert!(
+            received_audio > 0,
+            "{name} should receive combo audio: {report}"
+        );
+        assert!(
+            received_audio.saturating_mul(4) >= owner_audio_sent.saturating_mul(3),
+            "{name} should receive at least 75% of combo audio frames: {report}"
+        );
+        assert_eq!(
+            report["text_messages_recv"].as_u64(),
+            Some(expected_messages as u64),
+            "{name} should receive the full combo text burst: {report}"
+        );
+        assert_eq!(
+            report["screen_frames_recv"].as_u64(),
+            Some(expected_screen_frames as u64),
+            "{name} should receive the full combo screen burst: {report}"
+        );
+        assert!(
+            report["elapsed_ms"].as_u64().unwrap_or(u64::MAX) < 12_000,
+            "{name} combo soak should complete within 12s locally: {report}"
+        );
+    }
 
     let _ = std::fs::remove_file(shared_path);
     let _ = std::fs::remove_file(owner_report);
@@ -3341,26 +3791,34 @@ async fn test_stress_concurrent_space_operations() {
         })
         .await;
 
-    // Both should get SpaceJoined
-    match bob.recv_signal().await {
-        SignalMessage::SpaceJoined { channels, .. } => {
-            assert_eq!(
-                channels.len(),
-                4,
-                "Bob should see 4 channels (1 default + 3 extra)"
-            );
+    // Both should get SpaceJoined (skip MemberOnline/MemberOffline that may arrive first)
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::SpaceJoined { channels, .. } => {
+                assert_eq!(
+                    channels.len(),
+                    4,
+                    "Bob should see 4 channels (1 default + 3 extra)"
+                );
+                break;
+            }
+            SignalMessage::MemberOnline { .. } | SignalMessage::MemberOffline { .. } => continue,
+            other => panic!("Expected SpaceJoined for Bob, got: {:?}", other),
         }
-        other => panic!("Expected SpaceJoined for Bob, got: {:?}", other),
     }
-    match charlie.recv_signal().await {
-        SignalMessage::SpaceJoined { channels, .. } => {
-            assert_eq!(
-                channels.len(),
-                4,
-                "Charlie should see 4 channels (1 default + 3 extra)"
-            );
+    loop {
+        match charlie.recv_signal().await {
+            SignalMessage::SpaceJoined { channels, .. } => {
+                assert_eq!(
+                    channels.len(),
+                    4,
+                    "Charlie should see 4 channels (1 default + 3 extra)"
+                );
+                break;
+            }
+            SignalMessage::MemberOnline { .. } | SignalMessage::MemberOffline { .. } => continue,
+            other => panic!("Expected SpaceJoined for Charlie, got: {:?}", other),
         }
-        other => panic!("Expected SpaceJoined for Charlie, got: {:?}", other),
     }
 
     // Now Alice deletes a channel while Bob is trying to join it
@@ -4196,6 +4654,234 @@ async fn test_screen_share_stops_on_disconnect() {
     }
     assert!(got_stopped, "Alice should receive ScreenShareStopped");
     assert!(got_left, "Alice should receive PeerLeft");
+}
+
+/// Test: screen frames, room audio, and direct chat continue to work together.
+#[tokio::test]
+async fn test_room_voice_screen_share_and_direct_chat_can_overlap() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let (_alice_token, alice_user_id) = authenticate(&mut alice, "Alice", None).await;
+    let (_bob_token, bob_user_id) = authenticate(&mut bob, "Bob", None).await;
+
+    alice
+        .send_signal(&SignalMessage::SendFriendRequest {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::FriendSnapshot { .. } => {}
+        other => panic!("Expected FriendSnapshot for Alice, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::FriendSnapshot { .. } => {}
+        other => panic!("Expected FriendSnapshot for Bob, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: alice_user_id.clone(),
+        accept: true,
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::FriendSnapshot { .. } => {}
+        other => panic!("Expected accepted FriendSnapshot for Bob, got: {:?}", other),
+    }
+    match alice.recv_signal().await {
+        SignalMessage::FriendSnapshot { .. } => {}
+        other => panic!(
+            "Expected accepted FriendSnapshot for Alice, got: {:?}",
+            other
+        ),
+    }
+
+    alice
+        .send_signal(&SignalMessage::SelectDirectMessage {
+            user_id: bob_user_id.clone(),
+        })
+        .await;
+    match alice.recv_signal().await {
+        SignalMessage::DirectMessageSelected { user_id, .. } => {
+            assert_eq!(user_id, bob_user_id);
+        }
+        other => panic!("Expected DirectMessageSelected for Alice, got: {:?}", other),
+    }
+
+    bob.send_signal(&SignalMessage::SelectDirectMessage {
+        user_id: alice_user_id.clone(),
+    })
+    .await;
+    match bob.recv_signal().await {
+        SignalMessage::DirectMessageSelected { user_id, .. } => {
+            assert_eq!(user_id, alice_user_id);
+        }
+        other => panic!("Expected DirectMessageSelected for Bob, got: {:?}", other),
+    }
+
+    let room_code = create_room(&mut alice, "Alice").await;
+    join_room(&mut bob, &room_code, "Bob").await;
+
+    match recv_matching_signal(&mut alice, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::PeerJoined { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::PeerJoined { peer }) => assert_eq!(peer.name, "Bob"),
+        other => panic!("Expected PeerJoined for Alice, got: {:?}", other),
+    }
+
+    let pre_share_frame = b"screen-frame-before-share";
+    alice.send_screen(pre_share_frame).await;
+    let unexpected_frame = bob.recv_binary_timeout(Duration::from_millis(400)).await;
+    assert!(
+        unexpected_frame.is_none(),
+        "Screen frames should be ignored before sharing starts"
+    );
+
+    alice.send_signal(&SignalMessage::StartScreenShare).await;
+    match recv_matching_signal(&mut alice, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::ScreenShareStarted { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::ScreenShareStarted {
+            sharer_name,
+            is_self,
+            ..
+        }) => {
+            assert_eq!(sharer_name, "Alice");
+            assert!(is_self);
+        }
+        other => panic!("Expected ScreenShareStarted for Alice, got: {:?}", other),
+    }
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::ScreenShareStarted { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::ScreenShareStarted {
+            sharer_name,
+            is_self,
+            ..
+        }) => {
+            assert_eq!(sharer_name, "Alice");
+            assert!(!is_self);
+        }
+        other => panic!("Expected ScreenShareStarted for Bob, got: {:?}", other),
+    }
+
+    let screen_data = b"frame-001:pretend-screen-delta";
+    alice.send_screen(screen_data).await;
+    let frame = bob
+        .recv_binary_timeout(Duration::from_secs(2))
+        .await
+        .expect("Bob should receive a relayed screen frame");
+    let (screen_sender, relayed_screen) = parse_screen_frame(&frame);
+    assert!(
+        !screen_sender.is_empty(),
+        "Screen frame should include sender id"
+    );
+    assert_eq!(relayed_screen, screen_data);
+
+    let audio = generate_test_audio();
+    alice.send_binary(&audio).await;
+    let frame = bob
+        .recv_binary_timeout(Duration::from_secs(2))
+        .await
+        .expect("Bob should receive relayed room audio while screen share is active");
+    let (audio_sender, relayed_audio) = parse_audio_frame(&frame);
+    assert!(
+        !audio_sender.is_empty(),
+        "Audio frame should include sender id"
+    );
+    assert_eq!(relayed_audio, &audio[..]);
+
+    bob.send_signal(&SignalMessage::SetDirectTyping {
+        user_id: alice_user_id.clone(),
+        is_typing: true,
+    })
+    .await;
+    match recv_matching_signal(&mut alice, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::DirectTypingState { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::DirectTypingState {
+            user_id,
+            user_name,
+            is_typing,
+        }) => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(user_name, "Bob");
+            assert!(is_typing);
+        }
+        other => panic!("Expected DirectTypingState for Alice, got: {:?}", other),
+    }
+
+    alice
+        .send_signal(&SignalMessage::SendDirectMessage {
+            user_id: bob_user_id.clone(),
+            content: "voice + stream + chat smoke test".into(),
+            reply_to_message_id: None,
+        })
+        .await;
+    let dm_id = match recv_matching_signal(&mut alice, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::DirectMessage { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::DirectMessage { user_id, message }) => {
+            assert_eq!(user_id, bob_user_id);
+            assert_eq!(message.content, "voice + stream + chat smoke test");
+            message.message_id
+        }
+        other => panic!("Expected sender DirectMessage echo, got: {:?}", other),
+    };
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::DirectMessage { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::DirectMessage { user_id, message }) => {
+            assert_eq!(user_id, alice_user_id);
+            assert_eq!(message.message_id, dm_id);
+            assert_eq!(message.content, "voice + stream + chat smoke test");
+        }
+        other => panic!("Expected recipient DirectMessage, got: {:?}", other),
+    }
+
+    alice.send_signal(&SignalMessage::StopScreenShare).await;
+    match recv_matching_signal(&mut alice, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::ScreenShareStopped { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::ScreenShareStopped { sharer_id }) => {
+            assert!(!sharer_id.is_empty());
+        }
+        other => panic!("Expected ScreenShareStopped for Alice, got: {:?}", other),
+    }
+    match recv_matching_signal(&mut bob, Duration::from_secs(2), |msg| {
+        matches!(msg, SignalMessage::ScreenShareStopped { .. })
+    })
+    .await
+    {
+        Some(SignalMessage::ScreenShareStopped { sharer_id }) => {
+            assert!(!sharer_id.is_empty());
+        }
+        other => panic!("Expected ScreenShareStopped for Bob, got: {:?}", other),
+    }
+
+    let post_share_frame = b"screen-frame-after-stop";
+    alice.send_screen(post_share_frame).await;
+    let leaked_frame = bob.recv_binary_timeout(Duration::from_millis(400)).await;
+    assert!(
+        leaked_frame.is_none(),
+        "Screen frames should stop relaying after screen share ends"
+    );
 }
 
 /// Test: typing indicators are broadcast and cleared.
@@ -5987,10 +6673,11 @@ async fn test_send_text_message() {
         }
     };
 
-    owner.send_signal(&SignalMessage::SelectTextChannel {
-        channel_id: text_ch.id.clone(),
-    })
-    .await;
+    owner
+        .send_signal(&SignalMessage::SelectTextChannel {
+            channel_id: text_ch.id.clone(),
+        })
+        .await;
 
     // Drain TextChannelSelected
     let _ = owner.recv_signal_timeout(Duration::from_secs(2)).await;

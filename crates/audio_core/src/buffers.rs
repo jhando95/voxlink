@@ -298,7 +298,6 @@ impl RingBuf {
         self.len -= count;
         count
     }
-
 }
 
 // ─── Per-peer playback state (lock-free) ───
@@ -306,12 +305,12 @@ impl RingBuf {
 // Wraps an SPSC ring buffer with per-peer volume, AGC, and jitter adaptation.
 // The playback callback holds `Arc<PeerPlaybackShared>` directly — no mutex needed.
 
-use std::sync::Arc;
+use super::codec::PlaybackAgc;
 use super::{
     JITTER_INITIAL, JITTER_MAX_FRAMES, JITTER_MIN_FRAMES, JITTER_STABLE_THRESHOLD,
     MAX_PEER_BUFFER_SAMPLES,
 };
-use super::codec::PlaybackAgc;
+use std::sync::Arc;
 
 pub(crate) struct PeerPlaybackShared {
     pub ring: SpscRingBuf,
@@ -419,20 +418,30 @@ impl PeerPlayback {
             self.stable_checks = 0;
             // Exponential expansion trigger: first at 3 underruns, then 6, 12, ...
             // Prevents rapid expansion from transient network bursts.
-            if self.consecutive_underrun_checks >= self.expansion_threshold && target < JITTER_MAX_FRAMES {
+            if self.consecutive_underrun_checks >= self.expansion_threshold
+                && target < JITTER_MAX_FRAMES
+            {
                 let new_target = target + 1;
-                self.shared.target_frames.store(new_target as u32, Ordering::Relaxed);
+                self.shared
+                    .target_frames
+                    .store(new_target as u32, Ordering::Relaxed);
                 self.shared.primed.store(false, Ordering::Relaxed);
                 self.consecutive_underrun_checks = 0;
                 self.expansion_threshold = (self.expansion_threshold * 2).min(24); // cap at 24
-                log::debug!("Jitter buffer expanded to {}ms (next threshold: {})", new_target as u32 * 20, self.expansion_threshold);
+                log::debug!(
+                    "Jitter buffer expanded to {}ms (next threshold: {})",
+                    new_target as u32 * 20,
+                    self.expansion_threshold
+                );
             }
         } else {
             self.consecutive_underrun_checks = 0;
             self.stable_checks += 1;
             if self.stable_checks > JITTER_STABLE_THRESHOLD && target > JITTER_MIN_FRAMES {
                 let new_target = target - 1;
-                self.shared.target_frames.store(new_target as u32, Ordering::Relaxed);
+                self.shared
+                    .target_frames
+                    .store(new_target as u32, Ordering::Relaxed);
                 self.stable_checks = 0;
                 log::debug!("Jitter buffer reduced to {}ms", new_target as u32 * 20);
             }
@@ -665,9 +674,7 @@ mod tests {
             peer.shared
                 .callback_count
                 .store(base_cb + i as u32 + 1, Ordering::Relaxed);
-            peer.shared
-                .underrun_count
-                .store(base_ur, Ordering::Relaxed);
+            peer.shared.underrun_count.store(base_ur, Ordering::Relaxed);
             peer.adapt_from_atomics();
         }
         assert_eq!(
@@ -699,9 +706,15 @@ mod tests {
             ring.push((std::f32::consts::TAU * 440.0 * t).sin() * 0.5);
         }
         let energy = ring.peek_energy();
-        assert!(energy > 0.0, "peek_energy should be non-zero after pushing samples, got {energy}");
+        assert!(
+            energy > 0.0,
+            "peek_energy should be non-zero after pushing samples, got {energy}"
+        );
         // RMS of 0.5 * sin should be ~0.35
-        assert!(energy > 0.1 && energy < 0.6, "Energy {energy} outside expected range");
+        assert!(
+            energy > 0.1 && energy < 0.6,
+            "Energy {energy} outside expected range"
+        );
         // peek_energy should not consume samples
         assert_eq!(ring.len(), 480);
     }

@@ -4,13 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, Notify};
 use ui_shell::{MainWindow, ShareSourceData};
 use xcap::image::codecs::jpeg::JpegEncoder;
 use xcap::image::imageops::FilterType;
 use xcap::{Monitor, Window};
 
-const SCREEN_SHARE_QUEUE_CAPACITY: usize = 2;
 const SCREEN_PRESSURE_THRESHOLD: u8 = 3;
 const SCREEN_SHARE_PREVIEW_MAX_WIDTH: u32 = 420;
 const SCREEN_SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(90);
@@ -197,6 +196,12 @@ struct PreviewFrame {
     pixels: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+struct CaptureControl {
+    stop: Arc<AtomicBool>,
+    frame_ready: Arc<Notify>,
+}
+
 impl Default for ShareUiStatus {
     fn default() -> Self {
         let profile = SHARE_PROFILES[0];
@@ -211,7 +216,7 @@ impl Default for ShareUiStatus {
 
 #[derive(Default)]
 pub struct ScreenShareController {
-    stop_flag: Mutex<Option<Arc<AtomicBool>>>,
+    stop_flag: Mutex<Option<CaptureControl>>,
     selected_source_id: Mutex<Option<String>>,
     selected_profile_index: Mutex<usize>,
     cached_sources: Mutex<Vec<ScreenShareSourceDescriptor>>,
@@ -433,9 +438,16 @@ impl ScreenShareController {
             *preview = None;
         }
 
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_for_thread = stop.clone();
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SCREEN_SHARE_QUEUE_CAPACITY);
+        let control = CaptureControl {
+            stop: Arc::new(AtomicBool::new(false)),
+            frame_ready: Arc::new(Notify::new()),
+        };
+        let stop_for_thread = control.stop.clone();
+        let stop_for_sender = control.stop.clone();
+        let frame_ready = control.frame_ready.clone();
+        let frame_ready_for_thread = control.frame_ready.clone();
+        let pending_frame = Arc::new(Mutex::new(None::<Vec<u8>>));
+        let pending_frame_sender = pending_frame.clone();
         let preview_frame = self.preview_frame.clone();
         let status = Arc::new(Mutex::new(ShareUiStatus {
             source_label: source.label.clone(),
@@ -456,7 +468,18 @@ impl ScreenShareController {
 
         let status_for_thread = status.clone();
         rt_handle.spawn(async move {
-            while let Some(frame) = rx.recv().await {
+            loop {
+                frame_ready.notified().await;
+                let frame = pending_frame_sender
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take());
+                let Some(frame) = frame else {
+                    if stop_for_sender.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    continue;
+                };
                 let net = network.lock().await;
                 if let Err(e) = net.send_screen_frame(&frame).await {
                     log::warn!("Failed to send screen frame: {e}");
@@ -495,7 +518,12 @@ impl ScreenShareController {
                                 {
                                     pressure = true;
                                 }
-                                if tx.try_send(encoded).is_err() {
+                                if let Ok(mut slot) = pending_frame.lock() {
+                                    if slot.replace(encoded).is_some() {
+                                        pressure = true;
+                                    }
+                                    frame_ready_for_thread.notify_one();
+                                } else {
                                     pressure = true;
                                 }
                             }
@@ -530,14 +558,15 @@ impl ScreenShareController {
             }
         });
 
-        *state = Some(stop);
+        *state = Some(control);
         Ok(())
     }
 
     pub fn stop_capture(&self) {
         if let Ok(mut state) = self.stop_flag.lock() {
-            if let Some(stop) = state.take() {
-                stop.store(true, Ordering::Relaxed);
+            if let Some(control) = state.take() {
+                control.stop.store(true, Ordering::Relaxed);
+                control.frame_ready.notify_waiters();
             }
         }
         if let Ok(mut preview) = self.preview_frame.lock() {
@@ -698,9 +727,7 @@ fn enumerate_windows() -> Result<Vec<CaptureSource>, String> {
         let width = window.width().unwrap_or_default();
         let height = window.height().unwrap_or_default();
         if width < 360 || height < 220 {
-            log::debug!(
-                "Skipping window (pid {pid}): too small ({width}x{height} < 360x220)"
-            );
+            log::debug!("Skipping window (pid {pid}): too small ({width}x{height} < 360x220)");
             continue;
         }
         let title = window.title().unwrap_or_default().trim().to_string();
@@ -856,6 +883,9 @@ mod tests {
         let preview = build_preview_frame(&image, 420);
         assert_eq!(preview.width, 420);
         assert_eq!(preview.height, 236);
-        assert_eq!(preview.pixels.len(), (preview.width * preview.height * 4) as usize);
+        assert_eq!(
+            preview.pixels.len(),
+            (preview.width * preview.height * 4) as usize
+        );
     }
 }
