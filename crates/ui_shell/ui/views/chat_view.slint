@@ -292,6 +292,7 @@ export component ChatView inherits Rectangle {
                         HorizontalLayout {
                             spacing: 8px;
                             search-input := VxInput {
+                                prominent: true;
                                 placeholder: "Search messages...";
                                 text <=> root.chat-search-query;
                                 horizontal-stretch: 1;
@@ -1149,10 +1150,12 @@ export component ChatView inherits Rectangle {
 
                         HorizontalLayout {
                             spacing: 10px;
+                            min-height: 58px * VxTheme.s;
 
                             Rectangle {
                                 horizontal-stretch: 1;
                                 VxInput {
+                                    prominent: true;
                                     width: parent.width;
                                     height: parent.height;
                                     text <=> root.chat-input;
@@ -1201,8 +1204,8 @@ export component ChatView inherits Rectangle {
                             }
 
                             Rectangle {
-                                width: 42px * VxTheme.s;
-                                height: 40px * VxTheme.s;
+                                width: 56px * VxTheme.s;
+                                height: 56px * VxTheme.s;
                                 border-radius: VxTheme.radius-control;
                                 background: emoji-toggle-touch.has-hover ? VxTheme.card-hover-bg : transparent;
                                 border-color: root.show-emoji-picker ? VxTheme.accent-border : transparent;

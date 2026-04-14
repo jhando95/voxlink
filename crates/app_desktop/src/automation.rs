@@ -63,6 +63,10 @@ struct AutomationMetrics {
     text_messages_recv: u32,
     screen_frames_sent: u32,
     screen_frames_recv: u32,
+    screen_chunk_packets_recv: u32,
+    screen_chunk_frames_completed: u32,
+    screen_chunk_frames_dropped: u32,
+    screen_chunk_frames_timed_out: u32,
     last_status: String,
     failures: Vec<String>,
 }
@@ -553,6 +557,7 @@ async fn run_participant_screen(
     while Instant::now() < observe_deadline
         && (metrics.screen_frames_recv as usize) < spec.screen_frame_count
     {
+        collect_screen_transport_metrics(network, metrics);
         if let Some(frame) = network.try_recv_screen_frame() {
             if parse_screen_frame(&frame).is_some() {
                 metrics.screen_frames_recv += 1;
@@ -572,6 +577,7 @@ async fn run_participant_screen(
 
         sleep(POLL_INTERVAL).await;
     }
+    collect_screen_transport_metrics(network, metrics);
 
     if metrics.screen_frames_recv as usize != spec.screen_frame_count {
         return Err(format!(
@@ -643,7 +649,7 @@ async fn run_owner_media_combo(
         }
 
         if idx < spec.screen_frame_count {
-            let frame = generate_test_screen_frame(idx);
+            let frame = generate_combo_screen_frame(idx);
             network
                 .send_screen_frame(&frame)
                 .await
@@ -743,6 +749,7 @@ async fn run_participant_media_combo(
             || (metrics.text_messages_recv as usize) < spec.message_count
             || (metrics.screen_frames_recv as usize) < spec.screen_frame_count)
     {
+        collect_screen_transport_metrics(network, metrics);
         if let Some(frame) = network.try_recv_audio() {
             if parse_audio_frame(&frame).is_some() {
                 metrics.audio_frames_recv += 1;
@@ -776,6 +783,7 @@ async fn run_participant_media_combo(
 
         sleep(POLL_INTERVAL).await;
     }
+    collect_screen_transport_metrics(network, metrics);
 
     if spec.expect_audio && metrics.audio_frames_recv == 0 {
         return Err(format!(
@@ -1220,6 +1228,10 @@ fn write_report(
         "text_messages_recv": metrics.text_messages_recv,
         "screen_frames_sent": metrics.screen_frames_sent,
         "screen_frames_recv": metrics.screen_frames_recv,
+        "screen_chunk_packets_recv": metrics.screen_chunk_packets_recv,
+        "screen_chunk_frames_completed": metrics.screen_chunk_frames_completed,
+        "screen_chunk_frames_dropped": metrics.screen_chunk_frames_dropped,
+        "screen_chunk_frames_timed_out": metrics.screen_chunk_frames_timed_out,
         "failures": failures,
     });
     fs::write(
@@ -1263,4 +1275,32 @@ fn generate_test_audio() -> Vec<u8> {
 fn generate_test_screen_frame(idx: usize) -> Vec<u8> {
     let payload = format!("synthetic-screen-frame-{idx}");
     payload.into_bytes()
+}
+
+fn generate_combo_screen_frame(idx: usize) -> Vec<u8> {
+    let header = format!("synthetic-combo-screen-frame-{idx}:");
+    let target_len = shared_types::MAX_UDP_SCREEN_CHUNK_SIZE + 1024;
+    let mut payload = Vec::with_capacity(target_len);
+    payload.extend_from_slice(header.as_bytes());
+    while payload.len() < target_len {
+        payload.push(b'a' + (idx % 26) as u8);
+    }
+    payload
+}
+
+fn collect_screen_transport_metrics(network: &NetworkClient, metrics: &mut AutomationMetrics) {
+    let _ = network.expire_stale_screen_chunks();
+    let counters = network.swap_screen_chunk_counters();
+    metrics.screen_chunk_packets_recv = metrics
+        .screen_chunk_packets_recv
+        .saturating_add(counters.chunk_packets.min(u32::MAX as u64) as u32);
+    metrics.screen_chunk_frames_completed = metrics
+        .screen_chunk_frames_completed
+        .saturating_add(counters.frames_completed.min(u32::MAX as u64) as u32);
+    metrics.screen_chunk_frames_dropped = metrics
+        .screen_chunk_frames_dropped
+        .saturating_add(counters.frames_superseded.min(u32::MAX as u64) as u32);
+    metrics.screen_chunk_frames_timed_out = metrics
+        .screen_chunk_frames_timed_out
+        .saturating_add(counters.frames_timed_out.min(u32::MAX as u64) as u32);
 }

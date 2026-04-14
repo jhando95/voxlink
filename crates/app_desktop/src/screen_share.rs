@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +14,9 @@ use xcap::{Monitor, Window};
 const SCREEN_PRESSURE_THRESHOLD: u8 = 3;
 const SCREEN_SHARE_PREVIEW_MAX_WIDTH: u32 = 420;
 const SCREEN_SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(90);
+const SCREEN_TRANSPORT_FEEDBACK_WINDOW: Duration = Duration::from_secs(4);
+const SCREEN_TRANSPORT_DROP_RATE_THRESHOLD: f32 = 0.12;
+const SCREEN_TRANSPORT_PACING_RECOVERY_WINDOWS: u8 = 2;
 
 const SHARE_PROFILES: [ShareProfile; 4] = [
     ShareProfile {
@@ -196,6 +200,136 @@ struct PreviewFrame {
     pixels: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TransportPacer {
+    level: u8,
+    stable_windows: u8,
+}
+
+impl TransportPacer {
+    fn level(self) -> u8 {
+        self.level
+    }
+
+    fn paced_interval(self, base: Duration) -> Duration {
+        base.mul_f32(match self.level {
+            0 => 1.0,
+            1 => 1.35,
+            _ => 1.75,
+        })
+    }
+
+    fn record_feedback(&mut self, summary: TransportFeedbackSummary) -> bool {
+        if summary.version == 0 {
+            return false;
+        }
+
+        if summary.is_under_pressure() {
+            self.stable_windows = 0;
+            let next = self.level.saturating_add(1).min(2);
+            let changed = next != self.level;
+            self.level = next;
+            return changed;
+        }
+
+        self.stable_windows = self.stable_windows.saturating_add(1);
+        if self.stable_windows >= SCREEN_TRANSPORT_PACING_RECOVERY_WINDOWS && self.level > 0 {
+            self.level -= 1;
+            self.stable_windows = 0;
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TransportFeedbackSample {
+    frames_completed: u32,
+    frames_dropped: u32,
+    frames_timed_out: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TransportFeedbackSummary {
+    version: u64,
+    frames_completed: u32,
+    frames_dropped: u32,
+    frames_timed_out: u32,
+}
+
+impl TransportFeedbackSummary {
+    fn is_under_pressure(self) -> bool {
+        let total = self
+            .frames_completed
+            .saturating_add(self.frames_dropped)
+            .saturating_add(self.frames_timed_out);
+        if total == 0 {
+            return false;
+        }
+        let troubled = self.frames_dropped.saturating_add(self.frames_timed_out);
+        self.frames_timed_out > 0
+            || (troubled as f32 / total as f32) >= SCREEN_TRANSPORT_DROP_RATE_THRESHOLD
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimedTransportFeedback {
+    sample: TransportFeedbackSample,
+    recorded_at: Instant,
+}
+
+#[derive(Debug, Default)]
+struct TransportFeedbackState {
+    version: u64,
+    reports: VecDeque<TimedTransportFeedback>,
+}
+
+impl TransportFeedbackState {
+    fn record(&mut self, sample: TransportFeedbackSample) {
+        let now = Instant::now();
+        self.prune(now);
+        self.reports.push_back(TimedTransportFeedback {
+            sample,
+            recorded_at: now,
+        });
+        self.version = self.version.wrapping_add(1);
+    }
+
+    fn summary(&mut self) -> TransportFeedbackSummary {
+        let now = Instant::now();
+        self.prune(now);
+        let mut summary = TransportFeedbackSummary {
+            version: self.version,
+            ..TransportFeedbackSummary::default()
+        };
+        for report in &self.reports {
+            summary.frames_completed = summary
+                .frames_completed
+                .saturating_add(report.sample.frames_completed);
+            summary.frames_dropped = summary
+                .frames_dropped
+                .saturating_add(report.sample.frames_dropped);
+            summary.frames_timed_out = summary
+                .frames_timed_out
+                .saturating_add(report.sample.frames_timed_out);
+        }
+        summary
+    }
+
+    fn clear(&mut self) {
+        self.reports.clear();
+        self.version = self.version.wrapping_add(1);
+    }
+
+    fn prune(&mut self, now: Instant) {
+        while self.reports.front().is_some_and(|report| {
+            now.duration_since(report.recorded_at) > SCREEN_TRANSPORT_FEEDBACK_WINDOW
+        }) {
+            self.reports.pop_front();
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CaptureControl {
     stop: Arc<AtomicBool>,
@@ -222,6 +356,7 @@ pub struct ScreenShareController {
     cached_sources: Mutex<Vec<ScreenShareSourceDescriptor>>,
     ui_status: Mutex<ShareUiStatus>,
     preview_frame: Arc<Mutex<Option<PreviewFrame>>>,
+    transport_feedback: Arc<Mutex<TransportFeedbackState>>,
 }
 
 impl ScreenShareController {
@@ -348,6 +483,21 @@ impl ScreenShareController {
         window.set_screen_share_image(slint::Image::from_rgba8(buffer));
     }
 
+    pub fn record_transport_feedback(
+        &self,
+        frames_completed: u32,
+        frames_dropped: u32,
+        frames_timed_out: u32,
+    ) {
+        if let Ok(mut feedback) = self.transport_feedback.lock() {
+            feedback.record(TransportFeedbackSample {
+                frames_completed,
+                frames_dropped,
+                frames_timed_out,
+            });
+        }
+    }
+
     pub fn ui_state(&self) -> ScreenShareUiState {
         let sources = self
             .cached_sources
@@ -449,6 +599,7 @@ impl ScreenShareController {
         let pending_frame = Arc::new(Mutex::new(None::<Vec<u8>>));
         let pending_frame_sender = pending_frame.clone();
         let preview_frame = self.preview_frame.clone();
+        let transport_feedback = self.transport_feedback.clone();
         let status = Arc::new(Mutex::new(ShareUiStatus {
             source_label: source.label.clone(),
             source_detail: format!("{} live in this room.", source.detail),
@@ -467,6 +618,9 @@ impl ScreenShareController {
         }
 
         let status_for_thread = status.clone();
+        if let Ok(mut feedback) = transport_feedback.lock() {
+            feedback.clear();
+        }
         rt_handle.spawn(async move {
             loop {
                 frame_ready.notified().await;
@@ -489,17 +643,48 @@ impl ScreenShareController {
 
         std::thread::spawn(move || {
             let mut adaptive = AdaptiveQuality::new(profile);
+            let mut pacer = TransportPacer::default();
             let mut last_preview_at = Instant::now() - SCREEN_SHARE_PREVIEW_INTERVAL;
+            let mut last_transport_version = 0u64;
+            let mut transport_warning_active = false;
             while !stop_for_thread.load(Ordering::Relaxed) {
                 let preset = adaptive.current();
                 if let Ok(mut state) = status_for_thread.lock() {
                     state.quality_label = format!("{} · {}", profile.name, preset.name);
-                    state.quality_detail = preset.detail.into();
+                    state.quality_detail =
+                        screen_share_detail(preset, transport_warning_active, pacer.level()).into();
                 }
 
-                let frame_interval = Duration::from_millis(1000 / preset.fps.max(1));
+                let base_frame_interval = Duration::from_millis(1000 / preset.fps.max(1));
                 let frame_start = Instant::now();
-                let mut pressure = false;
+                let transport_summary = transport_feedback
+                    .lock()
+                    .ok()
+                    .map(|mut feedback| feedback.summary())
+                    .unwrap_or_default();
+                let mut transport_pressure = transport_warning_active;
+                let mut detail_refresh_needed = false;
+                if transport_summary.version != last_transport_version {
+                    last_transport_version = transport_summary.version;
+                    transport_pressure = transport_summary.is_under_pressure();
+                    if pacer.record_feedback(transport_summary) {
+                        detail_refresh_needed = true;
+                    }
+                    if transport_warning_active != transport_pressure {
+                        transport_warning_active = transport_pressure;
+                        detail_refresh_needed = true;
+                    }
+                }
+
+                let paced_frame_interval = pacer.paced_interval(base_frame_interval);
+                let mut pressure = transport_pressure;
+                if detail_refresh_needed {
+                    if let Ok(mut state) = status_for_thread.lock() {
+                        state.quality_detail =
+                            screen_share_detail(preset, transport_warning_active, pacer.level())
+                                .into();
+                    }
+                }
 
                 match capture_frame(&source.target) {
                     Ok(image) => {
@@ -540,7 +725,7 @@ impl ScreenShareController {
                 }
 
                 let elapsed = frame_start.elapsed();
-                if elapsed >= frame_interval.mul_f32(0.90) {
+                if elapsed >= paced_frame_interval.mul_f32(0.90) {
                     pressure = true;
                 }
                 let preset_changed = adaptive.record_frame(pressure);
@@ -548,12 +733,14 @@ impl ScreenShareController {
                     let active = adaptive.current();
                     if let Ok(mut state) = status_for_thread.lock() {
                         state.quality_label = format!("{} · {}", profile.name, active.name);
-                        state.quality_detail = active.detail.into();
+                        state.quality_detail =
+                            screen_share_detail(active, transport_warning_active, pacer.level())
+                                .into();
                     }
                 }
 
-                if elapsed < frame_interval {
-                    std::thread::sleep(frame_interval - elapsed);
+                if elapsed < paced_frame_interval {
+                    std::thread::sleep(paced_frame_interval - elapsed);
                 }
             }
         });
@@ -568,6 +755,9 @@ impl ScreenShareController {
                 control.stop.store(true, Ordering::Relaxed);
                 control.frame_ready.notify_waiters();
             }
+        }
+        if let Ok(mut feedback) = self.transport_feedback.lock() {
+            feedback.clear();
         }
         if let Ok(mut preview) = self.preview_frame.lock() {
             *preview = None;
@@ -666,6 +856,26 @@ impl AdaptiveQuality {
         }
         false
     }
+}
+
+fn screen_share_detail(
+    preset: QualityPreset,
+    transport_warning_active: bool,
+    pacing_level: u8,
+) -> String {
+    let mut detail = preset.detail.to_string();
+    if transport_warning_active {
+        detail.push_str(
+            " Viewer transport loss was detected, so share quality is staying conservative.",
+        );
+    }
+    if pacing_level > 0 {
+        detail.push_str(match pacing_level {
+            1 => " Capture cadence is slightly throttled to reduce burst pressure.",
+            _ => " Capture cadence is heavily throttled to protect viewer stability.",
+        });
+    }
+    detail
 }
 
 fn enumerate_sources() -> Result<Vec<CaptureSource>, String> {
@@ -850,7 +1060,12 @@ fn encode_frame(image: xcap::image::RgbaImage, preset: QualityPreset) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{build_preview_frame, AdaptiveQuality, SHARE_PROFILES};
+    use super::{
+        build_preview_frame, screen_share_detail, AdaptiveQuality, QualityPreset,
+        TransportFeedbackSample, TransportFeedbackState, TransportFeedbackSummary, TransportPacer,
+        SHARE_PROFILES,
+    };
+    use std::time::{Duration, Instant};
     use xcap::image::{Rgba, RgbaImage};
 
     #[test]
@@ -887,5 +1102,103 @@ mod tests {
             preview.pixels.len(),
             (preview.width * preview.height * 4) as usize
         );
+    }
+
+    #[test]
+    fn transport_feedback_summary_marks_pressure_on_loss() {
+        let mut feedback = TransportFeedbackState::default();
+        feedback.record(TransportFeedbackSample {
+            frames_completed: 8,
+            frames_dropped: 2,
+            frames_timed_out: 0,
+        });
+        let summary = feedback.summary();
+        assert!(summary.is_under_pressure());
+    }
+
+    #[test]
+    fn transport_feedback_summary_prunes_stale_reports() {
+        let mut feedback = TransportFeedbackState::default();
+        feedback.record(TransportFeedbackSample {
+            frames_completed: 4,
+            frames_dropped: 0,
+            frames_timed_out: 0,
+        });
+        if let Some(report) = feedback.reports.front_mut() {
+            report.recorded_at =
+                Instant::now() - super::SCREEN_TRANSPORT_FEEDBACK_WINDOW - Duration::from_millis(5);
+        }
+        let summary = feedback.summary();
+        assert_eq!(summary.frames_completed, 0);
+        assert!(!summary.is_under_pressure());
+    }
+
+    #[test]
+    fn screen_share_detail_mentions_transport_loss() {
+        let detail = screen_share_detail(
+            QualityPreset {
+                name: "test",
+                max_width: 640,
+                fps: 8,
+                jpeg_quality: 50,
+                detail: "Base detail.",
+            },
+            true,
+            1,
+        );
+        assert!(detail.contains("Viewer transport loss"));
+        assert!(detail.contains("slightly throttled"));
+    }
+
+    #[test]
+    fn transport_pacer_steps_up_and_recovers() {
+        let mut pacer = TransportPacer::default();
+        assert_eq!(pacer.level(), 0);
+
+        assert!(pacer.record_feedback(TransportFeedbackSummary {
+            version: 1,
+            frames_completed: 8,
+            frames_dropped: 2,
+            frames_timed_out: 0,
+        }));
+        assert_eq!(pacer.level(), 1);
+
+        assert!(pacer.record_feedback(TransportFeedbackSummary {
+            version: 2,
+            frames_completed: 6,
+            frames_dropped: 0,
+            frames_timed_out: 1,
+        }));
+        assert_eq!(pacer.level(), 2);
+
+        assert!(!pacer.record_feedback(TransportFeedbackSummary {
+            version: 3,
+            frames_completed: 10,
+            frames_dropped: 0,
+            frames_timed_out: 0,
+        }));
+        assert_eq!(pacer.level(), 2);
+
+        assert!(pacer.record_feedback(TransportFeedbackSummary {
+            version: 4,
+            frames_completed: 12,
+            frames_dropped: 0,
+            frames_timed_out: 0,
+        }));
+        assert_eq!(pacer.level(), 1);
+    }
+
+    #[test]
+    fn transport_pacer_applies_longer_frame_interval() {
+        let mut pacer = TransportPacer::default();
+        let base = Duration::from_millis(100);
+        assert!(pacer.paced_interval(base) >= base);
+        assert!(pacer.record_feedback(TransportFeedbackSummary {
+            version: 1,
+            frames_completed: 5,
+            frames_dropped: 1,
+            frames_timed_out: 0,
+        }));
+        assert!(pacer.paced_interval(base) > base);
     }
 }

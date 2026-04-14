@@ -1678,9 +1678,10 @@ export component SettingsView inherits Rectangle {
                         Divider { }
                         // Change display name
                         FieldLabel { text: "Display Name"; }
-                        HorizontalLayout {
-                            spacing: 6px;
+                        VerticalLayout {
+                            spacing: 8px;
                             VxInput {
+                                prominent: true;
                                 horizontal-stretch: 1;
                                 text <=> root.acct-new-name;
                                 placeholder: "New display name";
@@ -1688,6 +1689,7 @@ export component SettingsView inherits Rectangle {
                             VxButton {
                                 label: "Save";
                                 accent: true;
+                                horizontal-stretch: 1;
                                 clicked => {
                                     if root.acct-new-name != "" {
                                         root.change-display-name(root.acct-new-name);
@@ -1698,14 +1700,16 @@ export component SettingsView inherits Rectangle {
                         }
                         // Change password
                         FieldLabel { text: "Change Password"; }
-                        HorizontalLayout {
-                            spacing: 6px;
+                        VerticalLayout {
+                            spacing: 8px;
                             VxInput {
+                                prominent: true;
                                 horizontal-stretch: 1;
                                 text <=> root.acct-old-pw;
                                 placeholder: "Current password";
                             }
                             VxInput {
+                                prominent: true;
                                 horizontal-stretch: 1;
                                 text <=> root.acct-new-pw;
                                 placeholder: "New password";
@@ -1713,6 +1717,7 @@ export component SettingsView inherits Rectangle {
                             VxButton {
                                 label: "Change";
                                 accent: true;
+                                horizontal-stretch: 1;
                                 clicked => {
                                     if root.acct-old-pw != "" && root.acct-new-pw != "" {
                                         root.change-password(root.acct-old-pw, root.acct-new-pw);
@@ -1730,9 +1735,10 @@ export component SettingsView inherits Rectangle {
                             color: VxTheme.text-muted;
                             font-size: 10px;
                         }
-                        HorizontalLayout {
-                            spacing: 6px;
+                        VerticalLayout {
+                            spacing: 8px;
                             VxInput {
+                                prominent: true;
                                 horizontal-stretch: 1;
                                 text <=> root.acct-delete-confirm;
                                 placeholder: "Type DELETE";
@@ -1741,6 +1747,7 @@ export component SettingsView inherits Rectangle {
                                 label: "Delete Account";
                                 soft: true;
                                 enabled: root.acct-delete-confirm == "DELETE";
+                                horizontal-stretch: 1;
                                 clicked => {
                                     root.delete-account();
                                     root.acct-delete-confirm = "";
@@ -1830,44 +1837,42 @@ export component SettingsView inherits Rectangle {
                     if root.soundboard-clips.length < 16 : VerticalLayout {
                         spacing: 6px;
                         Text { text: "ADD CLIP"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            VxInput {
-                                text <=> root.new-clip-name;
-                                placeholder: "Clip name";
-                                horizontal-stretch: 1;
-                            }
-                            VxInput {
-                                text <=> root.new-clip-keybind;
-                                placeholder: "Keybind (e.g. f5)";
-                            }
+                        VxInput {
+                            prominent: true;
+                            text <=> root.new-clip-name;
+                            placeholder: "Clip name";
+                            horizontal-stretch: 1;
                         }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            VxInput {
-                                text <=> root.new-clip-path;
-                                placeholder: "Path to .wav file";
-                                horizontal-stretch: 1;
-                                accepted => {
-                                    if root.new-clip-name != "" && root.new-clip-path != "" {
-                                        root.add-soundboard-clip(root.new-clip-name, root.new-clip-path, root.new-clip-keybind);
-                                        root.new-clip-name = "";
-                                        root.new-clip-path = "";
-                                        root.new-clip-keybind = "";
-                                    }
-                                }
-                            }
-                            VxButton {
-                                label: "Add";
-                                small: true;
-                                accent: true;
-                                enabled: root.new-clip-name != "" && root.new-clip-path != "";
-                                clicked => {
+                        VxInput {
+                            prominent: true;
+                            text <=> root.new-clip-keybind;
+                            placeholder: "Keybind (e.g. f5)";
+                            horizontal-stretch: 1;
+                        }
+                        VxInput {
+                            prominent: true;
+                            text <=> root.new-clip-path;
+                            placeholder: "Path to .wav file";
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if root.new-clip-name != "" && root.new-clip-path != "" {
                                     root.add-soundboard-clip(root.new-clip-name, root.new-clip-path, root.new-clip-keybind);
                                     root.new-clip-name = "";
                                     root.new-clip-path = "";
                                     root.new-clip-keybind = "";
                                 }
+                            }
+                        }
+                        VxButton {
+                            label: "Add";
+                            accent: true;
+                            horizontal-stretch: 1;
+                            enabled: root.new-clip-name != "" && root.new-clip-path != "";
+                            clicked => {
+                                root.add-soundboard-clip(root.new-clip-name, root.new-clip-path, root.new-clip-keybind);
+                                root.new-clip-name = "";
+                                root.new-clip-path = "";
+                                root.new-clip-keybind = "";
                             }
                         }
                         Text {

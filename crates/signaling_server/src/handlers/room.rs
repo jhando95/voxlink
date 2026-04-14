@@ -333,6 +333,50 @@ pub async fn handle_stop_screen_share(state: &State, peer_id: &str) {
     }
 }
 
+pub async fn handle_screen_share_transport_feedback(
+    state: &State,
+    peer_id: &str,
+    frames_completed: u32,
+    frames_dropped: u32,
+    frames_timed_out: u32,
+) {
+    if frames_completed == 0 && frames_dropped == 0 && frames_timed_out == 0 {
+        return;
+    }
+
+    let target = {
+        let s = state.read().await;
+        let Some(viewer) = s.peers.get(peer_id) else {
+            return;
+        };
+        let Some(room_code) = viewer.cached_room_code() else {
+            return;
+        };
+        let Some(room) = s.rooms.get(&room_code) else {
+            return;
+        };
+        let Some(sharer_id) = room.active_screen_share_peer_id.as_deref() else {
+            return;
+        };
+        if sharer_id == peer_id {
+            return;
+        }
+        s.peers.get(sharer_id).cloned()
+    };
+
+    if let Some(sharer) = target {
+        send_to(
+            &sharer,
+            &SignalMessage::ScreenShareTransportFeedback {
+                frames_completed,
+                frames_dropped,
+                frames_timed_out,
+            },
+        )
+        .await;
+    }
+}
+
 pub async fn stop_screen_share_in_room(state: &State, room_code: &str, sharer_id: &str) {
     let peers = {
         let mut s = state.write().await;

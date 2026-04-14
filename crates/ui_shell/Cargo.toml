@@ -1,6 +1,6 @@
 [package]
 name = "ui_shell"
-version = "0.10.3"
+version = "0.10.4"
 edition = "2021"
 build = "build.rs"
 
@@ -11,3 +11,6 @@ log = { workspace = true }
 
 [build-dependencies]
 slint-build = "1.9"
+
+[dev-dependencies]
+png = "0.17"

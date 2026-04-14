@@ -7012,6 +7012,7 @@ name = "ui_shell"
 version = "0.10.3"
 dependencies = [
  "log",
+ "png 0.17.16",
  "shared_types",
  "slint",
  "slint-build",

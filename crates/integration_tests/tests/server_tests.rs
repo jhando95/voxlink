@@ -2442,6 +2442,26 @@ async fn test_real_app_desktop_multi_process_media_combo_soak() {
             "{name} should receive the full combo screen burst: {report}"
         );
         assert!(
+            report["screen_chunk_packets_recv"].as_u64().unwrap_or(0)
+                > expected_screen_frames as u64,
+            "{name} should observe chunked screen packets during combo soak: {report}"
+        );
+        assert_eq!(
+            report["screen_chunk_frames_completed"].as_u64(),
+            Some(expected_screen_frames as u64),
+            "{name} should complete every chunked screen frame during combo soak: {report}"
+        );
+        assert_eq!(
+            report["screen_chunk_frames_dropped"].as_u64(),
+            Some(0),
+            "{name} should not supersede partial chunked frames during combo soak: {report}"
+        );
+        assert_eq!(
+            report["screen_chunk_frames_timed_out"].as_u64(),
+            Some(0),
+            "{name} should not time out chunked screen frames during combo soak: {report}"
+        );
+        assert!(
             report["elapsed_ms"].as_u64().unwrap_or(u64::MAX) < 12_000,
             "{name} combo soak should complete within 12s locally: {report}"
         );
@@ -4613,6 +4633,58 @@ async fn test_screen_share_mutual_exclusion() {
         }
         other => panic!("Expected ScreenShareStarted for Bob, got: {:?}", other),
     }
+}
+
+/// Test: viewer screen-share transport feedback is forwarded only to the active sharer.
+#[tokio::test]
+async fn test_screen_share_transport_feedback_reaches_sharer() {
+    let server = TestServer::start().await;
+
+    let mut alice = server.connect().await;
+    let code = create_room(&mut alice, "Alice").await;
+
+    let mut bob = server.connect().await;
+    bob.send_signal(&SignalMessage::JoinRoom {
+        room_code: code,
+        user_name: "Bob".to_string(),
+        password: None,
+    })
+    .await;
+    bob.recv_signal().await; // RoomJoined
+    alice.recv_signal().await; // PeerJoined
+
+    alice.send_signal(&SignalMessage::StartScreenShare).await;
+    alice.recv_signal().await; // ScreenShareStarted
+    bob.recv_signal().await; // ScreenShareStarted
+
+    bob.send_signal(&SignalMessage::ScreenShareTransportFeedback {
+        frames_completed: 9,
+        frames_dropped: 2,
+        frames_timed_out: 1,
+    })
+    .await;
+
+    match alice.recv_signal().await {
+        SignalMessage::ScreenShareTransportFeedback {
+            frames_completed,
+            frames_dropped,
+            frames_timed_out,
+        } => {
+            assert_eq!(frames_completed, 9);
+            assert_eq!(frames_dropped, 2);
+            assert_eq!(frames_timed_out, 1);
+        }
+        other => panic!(
+            "Expected ScreenShareTransportFeedback for active sharer, got: {:?}",
+            other
+        ),
+    }
+
+    let unexpected = bob.recv_signal_timeout(Duration::from_millis(300)).await;
+    assert!(
+        unexpected.is_none(),
+        "Viewer should not receive its own transport feedback relay"
+    );
 }
 
 /// Test: screen share stops on disconnect.

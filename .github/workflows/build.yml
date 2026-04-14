@@ -40,8 +40,24 @@ jobs:
       - name: Build server (needed by integration tests)
         run: cargo build -p signaling_server
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Test workspace
+        run: cargo test --workspace --exclude ui_shell
+
+      - name: Test UI shell layout guards
+        run: cargo test -p ui_shell --test ui_visibility_layout
+
+      - name: Capture UI visibility snapshots
+        env:
+          VOXLINK_UI_WRITE_SNAPSHOTS: 1
+        run: cargo test -p ui_shell --test ui_visibility_snapshots snapshot_matrix_covers_key_views_in_narrow_and_wide_layouts -- --exact
+
+      - name: Upload UI visibility snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-visibility-snapshots
+          path: target/ui_visibility_snapshots/*.png
+          if-no-files-found: warn
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings

@@ -24,6 +24,9 @@ pub struct PerfCollector {
     // Transport
     pub udp_active: Arc<AtomicBool>,
     pub ping_ms: Arc<std::sync::atomic::AtomicI32>,
+    pub screen_frames_completed: Arc<AtomicU32>,
+    pub screen_frames_dropped: Arc<AtomicU32>,
+    pub screen_frames_timed_out: Arc<AtomicU32>,
     // For computing frame loss rate
     last_decoded: u32,
     last_dropped: u32,
@@ -48,6 +51,9 @@ impl PerfCollector {
             encode_bitrate: Arc::new(AtomicU32::new(0)),
             udp_active: Arc::new(AtomicBool::new(false)),
             ping_ms: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+            screen_frames_completed: Arc::new(AtomicU32::new(0)),
+            screen_frames_dropped: Arc::new(AtomicU32::new(0)),
+            screen_frames_timed_out: Arc::new(AtomicU32::new(0)),
             last_decoded: 0,
             last_dropped: 0,
         }
@@ -97,6 +103,9 @@ impl PerfCollector {
             decode_peers: self.active_peers.load(Ordering::Relaxed),
             udp_active: self.udp_active.load(Ordering::Relaxed),
             ping_ms: self.ping_ms.load(Ordering::Relaxed),
+            screen_frames_completed: self.screen_frames_completed.load(Ordering::Relaxed),
+            screen_frames_dropped: self.screen_frames_dropped.load(Ordering::Relaxed),
+            screen_frames_timed_out: self.screen_frames_timed_out.load(Ordering::Relaxed),
         }
     }
 }
@@ -206,12 +215,22 @@ mod tests {
         collector.current_jitter_ms.store(60, Ordering::Relaxed);
         collector.encode_bitrate.store(64000, Ordering::Relaxed);
         collector.active_peers.store(3, Ordering::Relaxed);
+        collector
+            .screen_frames_completed
+            .store(7, Ordering::Relaxed);
+        collector.screen_frames_dropped.store(2, Ordering::Relaxed);
+        collector
+            .screen_frames_timed_out
+            .store(1, Ordering::Relaxed);
 
         let mut c = collector;
         let snap = c.snapshot();
         assert_eq!(snap.jitter_buffer_ms, 60);
         assert_eq!(snap.encode_bitrate_kbps, 64); // 64000/1000
         assert_eq!(snap.decode_peers, 3);
+        assert_eq!(snap.screen_frames_completed, 7);
+        assert_eq!(snap.screen_frames_dropped, 2);
+        assert_eq!(snap.screen_frames_timed_out, 1);
     }
 
     #[test]

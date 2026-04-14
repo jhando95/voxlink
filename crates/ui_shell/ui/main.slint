@@ -43,7 +43,23 @@ export component MainWindow inherits Window {
     in-out property <string> status-text: "Disconnected";
     in-out property <string> room-status: "";
     in-out property <[ParticipantData]> participants: [];
-    in-out property <PerfData> perf: { cpu-percent: 0, memory-mb: 0, uptime-secs: 0, audio-active: false, network-connected: false };
+    in-out property <PerfData> perf: {
+        cpu-percent: 0,
+        memory-mb: 0,
+        uptime-secs: 0,
+        audio-active: false,
+        network-connected: false,
+        dropped-frames: 0,
+        jitter-buffer-ms: 0,
+        frame-loss-percent: 0,
+        encode-bitrate-kbps: 0,
+        decode-peers: 0,
+        udp-active: false,
+        ping-ms: -1,
+        screen-frames-completed: 0,
+        screen-frames-dropped: 0,
+        screen-frames-timed-out: 0,
+    };
     in-out property <[string]> input-devices: ["Default Microphone"];
     in-out property <[string]> output-devices: ["Default Speaker"];
     in-out property <int> selected-input: 0;
@@ -52,7 +68,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
-    in-out property <string> version-text: "0.10.3";
+    in-out property <string> version-text: "0.10.4";
     in-out property <string> uptime-text: "0s";
     in-out property <string> listening-keybind: "";
     in-out property <string> ptt-key-display: "Space";
@@ -992,6 +1008,7 @@ export component MainWindow inherits Window {
                                     letter-spacing: 0.5px;
                                 }
                                 VxInput {
+                                    prominent: true;
                                     placeholder: "you@example.com";
                                     text <=> root.auth-email;
                                 }
@@ -1008,6 +1025,7 @@ export component MainWindow inherits Window {
                                     letter-spacing: 0.5px;
                                 }
                                 VxInput {
+                                    prominent: true;
                                     placeholder: root.login-mode ? "Enter password" : "Min 6 characters";
                                     text <=> root.auth-password;
                                     input-type: InputType.password;
@@ -1025,6 +1043,7 @@ export component MainWindow inherits Window {
                                     letter-spacing: 0.5px;
                                 }
                                 VxInput {
+                                    prominent: true;
                                     placeholder: "How others will see you";
                                     text <=> root.auth-display-name;
                                 }
@@ -1134,6 +1153,7 @@ export component MainWindow inherits Window {
                     }
 
                     VxInput {
+                        prominent: true;
                         text <=> root.quick-switcher-query;
                         placeholder: "Search channels, DMs, spaces...";
                         horizontal-stretch: 1;

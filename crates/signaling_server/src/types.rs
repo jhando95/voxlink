@@ -57,6 +57,9 @@ pub(crate) struct Peer {
     pub audio_rate_window_ms: AtomicU64,
     pub screen_frame_count: AtomicU32,
     pub screen_rate_window_ms: AtomicU64,
+    /// Last chunked screen-frame sequence accepted from this sender.
+    /// Lets the server rate-limit once per logical frame instead of once per chunk.
+    pub last_screen_chunk_sequence: AtomicU32,
     /// Cache of user_ids that have blocked this peer. Updated on auth + block/unblock.
     /// Uses std::sync::RwLock for lock-free reads in the audio relay hot path.
     pub blocked_by: std::sync::RwLock<HashSet<String>>,

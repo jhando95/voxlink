@@ -369,6 +369,10 @@ pub struct PerfSnapshot {
     // Transport (v0.6)
     pub udp_active: bool,
     pub ping_ms: i32,
+    // Screen-share transport health (1s window on the viewer)
+    pub screen_frames_completed: u32,
+    pub screen_frames_dropped: u32,
+    pub screen_frames_timed_out: u32,
 }
 
 /// Messages between client and signaling server
@@ -395,6 +399,11 @@ pub enum SignalMessage {
     },
     StartScreenShare,
     StopScreenShare,
+    ScreenShareTransportFeedback {
+        frames_completed: u32,
+        frames_dropped: u32,
+        frames_timed_out: u32,
+    },
 
     // Server -> Client
     RoomCreated {
@@ -1261,8 +1270,15 @@ pub const MAX_SCREEN_FRAME_SIZE: usize = 512 * 1024;
 /// Safe media payload budget for a single UDP datagram.
 /// Kept below the protocol maximum to leave room for token and sender headers.
 pub const MAX_UDP_MEDIA_PAYLOAD_SIZE: usize = 60 * 1024;
+/// Per-chunk metadata for oversized screen-share frames:
+/// sequence(u32) + chunk_index(u16) + chunk_count(u16).
+pub const SCREEN_CHUNK_METADATA_LEN: usize = 8;
+/// Chunked screen-share datagrams intentionally stay well below the protocol
+/// ceiling so they avoid `EMSGSIZE` and reduce fragmentation pressure.
+pub const MAX_UDP_SCREEN_CHUNK_SIZE: usize = 4 * 1024;
 pub const MEDIA_PACKET_AUDIO: u8 = 1;
 pub const MEDIA_PACKET_SCREEN: u8 = 2;
+pub const MEDIA_PACKET_SCREEN_CHUNK: u8 = 3;
 
 /// UDP session token length in bytes (random, assigned by server on RequestUdp).
 pub const UDP_SESSION_TOKEN_LEN: usize = 8;
@@ -1272,6 +1288,45 @@ pub const UDP_DEFAULT_PORT_OFFSET: u16 = 1;
 pub const UDP_KEEPALIVE: u8 = 0xFE;
 /// Interval between UDP keepalive packets.
 pub const UDP_KEEPALIVE_INTERVAL_SECS: u64 = 15;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenChunkMetadata {
+    pub sequence: u32,
+    pub chunk_index: u16,
+    pub chunk_count: u16,
+}
+
+pub fn encode_screen_chunk_metadata(
+    sequence: u32,
+    chunk_index: u16,
+    chunk_count: u16,
+) -> [u8; SCREEN_CHUNK_METADATA_LEN] {
+    let mut out = [0u8; SCREEN_CHUNK_METADATA_LEN];
+    out[..4].copy_from_slice(&sequence.to_be_bytes());
+    out[4..6].copy_from_slice(&chunk_index.to_be_bytes());
+    out[6..8].copy_from_slice(&chunk_count.to_be_bytes());
+    out
+}
+
+pub fn decode_screen_chunk_metadata(raw: &[u8]) -> Option<(ScreenChunkMetadata, &[u8])> {
+    if raw.len() < SCREEN_CHUNK_METADATA_LEN {
+        return None;
+    }
+    let sequence = u32::from_be_bytes(raw[..4].try_into().ok()?);
+    let chunk_index = u16::from_be_bytes(raw[4..6].try_into().ok()?);
+    let chunk_count = u16::from_be_bytes(raw[6..8].try_into().ok()?);
+    if chunk_count == 0 || chunk_index >= chunk_count {
+        return None;
+    }
+    Some((
+        ScreenChunkMetadata {
+            sequence,
+            chunk_index,
+            chunk_count,
+        },
+        &raw[SCREEN_CHUNK_METADATA_LEN..],
+    ))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantInfo {
@@ -1956,8 +2011,34 @@ mod tests {
         assert_eq!(FRAME_SIZE, 960); // 20ms at 48kHz
         assert_eq!(MAX_AUDIO_FRAME_SIZE, 4096);
         assert_eq!(MAX_UDP_MEDIA_PAYLOAD_SIZE, 60 * 1024);
+        assert_eq!(MAX_UDP_SCREEN_CHUNK_SIZE, 4 * 1024);
         assert_eq!(UDP_SESSION_TOKEN_LEN, 8);
         assert_eq!(UDP_DEFAULT_PORT_OFFSET, 1);
+    }
+
+    #[test]
+    fn screen_chunk_metadata_round_trip() {
+        let encoded = encode_screen_chunk_metadata(42, 2, 7);
+        let packet = [encoded.as_slice(), b"tail"].concat();
+        let (decoded, payload) = decode_screen_chunk_metadata(&packet).unwrap();
+        assert_eq!(
+            decoded,
+            ScreenChunkMetadata {
+                sequence: 42,
+                chunk_index: 2,
+                chunk_count: 7,
+            }
+        );
+        assert_eq!(payload, b"tail");
+    }
+
+    #[test]
+    fn screen_chunk_metadata_rejects_invalid_ranges() {
+        let encoded = encode_screen_chunk_metadata(7, 4, 4);
+        assert!(decode_screen_chunk_metadata(&encoded).is_none());
+
+        let zero_count = encode_screen_chunk_metadata(7, 0, 0);
+        assert!(decode_screen_chunk_metadata(&zero_count).is_none());
     }
 
     #[test]
@@ -1980,6 +2061,29 @@ mod tests {
             SignalMessage::UdpReady { token, port } => {
                 assert_eq!(token, "0123456789abcdef");
                 assert_eq!(port, 9091);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn signal_message_round_trip_screen_share_transport_feedback() {
+        let msg = SignalMessage::ScreenShareTransportFeedback {
+            frames_completed: 12,
+            frames_dropped: 3,
+            frames_timed_out: 1,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: SignalMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            SignalMessage::ScreenShareTransportFeedback {
+                frames_completed,
+                frames_dropped,
+                frames_timed_out,
+            } => {
+                assert_eq!(frames_completed, 12);
+                assert_eq!(frames_dropped, 3);
+                assert_eq!(frames_timed_out, 1);
             }
             _ => panic!("Wrong variant"),
         }

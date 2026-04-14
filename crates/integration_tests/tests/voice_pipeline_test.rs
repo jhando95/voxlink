@@ -239,6 +239,24 @@ fn parse_screen_frame(frame: &[u8]) -> (&str, &[u8]) {
     (sender_id, frame_data)
 }
 
+fn parse_screen_chunk_frame(frame: &[u8]) -> (&str, shared_types::ScreenChunkMetadata, &[u8]) {
+    assert!(
+        frame.len() >= 3 && frame[0] == shared_types::MEDIA_PACKET_SCREEN_CHUNK,
+        "Expected chunked screen media packet, got len={} type={}",
+        frame.len(),
+        frame.first().copied().unwrap_or(0)
+    );
+    let id_len = frame[1] as usize;
+    assert!(
+        frame.len() > 2 + id_len + shared_types::SCREEN_CHUNK_METADATA_LEN,
+        "Chunk frame too short for sender header"
+    );
+    let sender_id = std::str::from_utf8(&frame[2..2 + id_len]).unwrap();
+    let (metadata, payload) =
+        shared_types::decode_screen_chunk_metadata(&frame[2 + id_len..]).unwrap();
+    (sender_id, metadata, payload)
+}
+
 /// Generate `frame_count` frames of a sine wave tone at the given frequency.
 /// Each frame is FRAME_SIZE (960) f32 samples, continuous phase across frames.
 fn generate_tone_frames(freq_hz: f32, frame_count: usize) -> Vec<Vec<f32>> {
@@ -919,6 +937,109 @@ async fn test_screen_share_udp_relay() {
         "UDP screen relay should include sender id"
     );
     assert_eq!(frame_data, payload);
+
+    alice.send_signal(&SignalMessage::StopScreenShare).await;
+    match alice.recv_signal().await {
+        SignalMessage::ScreenShareStopped { .. } => {}
+        other => panic!("Expected ScreenShareStopped for Alice, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::ScreenShareStopped { .. } => {}
+        other => panic!("Expected ScreenShareStopped for Bob, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_screen_share_udp_relay_chunked() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+    let mut bob = server.connect().await;
+
+    let room_code = create_room(&mut alice, "Alice").await;
+    join_room(&mut bob, &room_code, "Bob").await;
+    let _ = alice.recv_signal().await; // PeerJoined
+
+    alice.send_signal(&SignalMessage::RequestUdp).await;
+    let alice_udp = match alice.recv_signal().await {
+        SignalMessage::UdpReady { token, port } => (token, port),
+        SignalMessage::UdpUnavailable => panic!("UDP unavailable on test server"),
+        other => panic!("Expected UdpReady, got: {:?}", other),
+    };
+
+    bob.send_signal(&SignalMessage::RequestUdp).await;
+    let bob_udp = match bob.recv_signal().await {
+        SignalMessage::UdpReady { token, port } => (token, port),
+        SignalMessage::UdpUnavailable => panic!("UDP unavailable on test server"),
+        other => panic!("Expected UdpReady, got: {:?}", other),
+    };
+
+    let alice_token = hex_decode_8(&alice_udp.0);
+    let bob_token = hex_decode_8(&bob_udp.0);
+    let udp_addr = format!("127.0.0.1:{}", alice_udp.1);
+
+    let alice_udp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+    alice_udp_sock.connect(&udp_addr).await.unwrap();
+    let bob_udp_sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
+    bob_udp_sock.connect(&udp_addr).await.unwrap();
+
+    alice_udp_sock.send(&alice_token).await.unwrap();
+    bob_udp_sock.send(&bob_token).await.unwrap();
+
+    alice.send_signal(&SignalMessage::StartScreenShare).await;
+    match alice.recv_signal().await {
+        SignalMessage::ScreenShareStarted { .. } => {}
+        other => panic!("Expected ScreenShareStarted for Alice, got: {:?}", other),
+    }
+    match bob.recv_signal().await {
+        SignalMessage::ScreenShareStarted { .. } => {}
+        other => panic!("Expected ScreenShareStarted for Bob, got: {:?}", other),
+    }
+
+    let payload = vec![0x5A; shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE + 2048];
+    let sequence = 1u32;
+    let chunk_count = payload
+        .len()
+        .div_ceil(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE);
+    for (chunk_index, chunk) in payload
+        .chunks(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE)
+        .enumerate()
+    {
+        let header = shared_types::encode_screen_chunk_metadata(
+            sequence,
+            chunk_index as u16,
+            chunk_count as u16,
+        );
+        let mut packet = Vec::with_capacity(8 + 1 + header.len() + chunk.len());
+        packet.extend_from_slice(&alice_token);
+        packet.push(shared_types::MEDIA_PACKET_SCREEN_CHUNK);
+        packet.extend_from_slice(&header);
+        packet.extend_from_slice(chunk);
+        alice_udp_sock.send(&packet).await.unwrap();
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut received = vec![None; chunk_count];
+    while received.iter().any(|chunk| chunk.is_none()) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let mut buf = vec![0u8; 2 + 256 + shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE];
+        let len = timeout(remaining, bob_udp_sock.recv(&mut buf))
+            .await
+            .expect("Timed out waiting for UDP screen chunks")
+            .expect("Failed to receive UDP screen chunk");
+        let (sender_id, metadata, chunk_data) = parse_screen_chunk_frame(&buf[..len]);
+        assert!(
+            !sender_id.is_empty(),
+            "Chunked UDP screen relay should include sender id"
+        );
+        assert_eq!(metadata.sequence, sequence);
+        received[metadata.chunk_index as usize] = Some(chunk_data.to_vec());
+    }
+
+    let mut reassembled = Vec::with_capacity(payload.len());
+    for chunk in received {
+        reassembled.extend_from_slice(&chunk.expect("missing relayed screen chunk"));
+    }
+    assert_eq!(reassembled, payload);
 
     alice.send_signal(&SignalMessage::StopScreenShare).await;
     match alice.recv_signal().await {

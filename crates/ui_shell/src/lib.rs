@@ -49,6 +49,9 @@ pub fn update_perf_display(window: &MainWindow, snap: &PerfSnapshot) {
         decode_peers: snap.decode_peers as i32,
         udp_active: snap.udp_active,
         ping_ms: snap.ping_ms,
+        screen_frames_completed: snap.screen_frames_completed as i32,
+        screen_frames_dropped: snap.screen_frames_dropped as i32,
+        screen_frames_timed_out: snap.screen_frames_timed_out as i32,
     };
     window.set_perf(perf);
 

@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use shared_types::SignalMessage;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -13,6 +16,119 @@ type WsTx = futures_util::stream::SplitSink<
 /// Max queued audio frames before dropping oldest. At 50fps, 200 = ~4 seconds.
 /// Prevents unbounded memory growth if consumer falls behind.
 const AUDIO_QUEUE_CAPACITY: usize = 200;
+const SCREEN_CHUNK_REASSEMBLY_TIMEOUT: Duration = Duration::from_millis(1500);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScreenChunkCounters {
+    pub chunk_packets: u64,
+    pub frames_completed: u64,
+    pub frames_superseded: u64,
+    pub frames_timed_out: u64,
+}
+
+#[derive(Debug, Default)]
+struct ScreenChunkCounterSet {
+    chunk_packets: AtomicU64,
+    frames_completed: AtomicU64,
+    frames_superseded: AtomicU64,
+    frames_timed_out: AtomicU64,
+}
+
+impl ScreenChunkCounterSet {
+    fn record_chunk_packet(&self) {
+        self.chunk_packets.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_completed_frame(&self) {
+        self.frames_completed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_superseded_frame(&self) {
+        self.frames_superseded.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_timed_out_frame(&self) {
+        self.frames_timed_out.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn swap(&self) -> ScreenChunkCounters {
+        ScreenChunkCounters {
+            chunk_packets: self.chunk_packets.swap(0, Ordering::Relaxed),
+            frames_completed: self.frames_completed.swap(0, Ordering::Relaxed),
+            frames_superseded: self.frames_superseded.swap(0, Ordering::Relaxed),
+            frames_timed_out: self.frames_timed_out.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ScreenChunkAssembler {
+    sequence: u32,
+    chunk_count: u16,
+    received_chunks: u16,
+    total_len: usize,
+    last_chunk_at: Instant,
+    chunks: Vec<Option<Vec<u8>>>,
+}
+
+impl ScreenChunkAssembler {
+    fn new(meta: shared_types::ScreenChunkMetadata) -> Self {
+        let now = Instant::now();
+        Self {
+            sequence: meta.sequence,
+            chunk_count: meta.chunk_count,
+            received_chunks: 0,
+            total_len: 0,
+            last_chunk_at: now,
+            chunks: vec![None; meta.chunk_count as usize],
+        }
+    }
+
+    fn store_chunk(&mut self, meta: shared_types::ScreenChunkMetadata, chunk: &[u8]) -> bool {
+        if self.sequence != meta.sequence || self.chunk_count != meta.chunk_count {
+            return false;
+        }
+        self.last_chunk_at = Instant::now();
+        let slot = &mut self.chunks[meta.chunk_index as usize];
+        if slot.is_none() {
+            self.received_chunks = self.received_chunks.saturating_add(1);
+            self.total_len = self.total_len.saturating_add(chunk.len());
+            if self.total_len > shared_types::MAX_SCREEN_FRAME_SIZE {
+                return false;
+            }
+            *slot = Some(chunk.to_vec());
+        }
+        true
+    }
+
+    fn is_complete(&self) -> bool {
+        self.received_chunks == self.chunk_count
+    }
+
+    fn is_timed_out(&self, now: Instant) -> bool {
+        now.duration_since(self.last_chunk_at) >= SCREEN_CHUNK_REASSEMBLY_TIMEOUT
+    }
+
+    fn into_frame(self, sender_id: &str) -> Option<Vec<u8>> {
+        if !self.is_complete() || sender_id.len() > u8::MAX as usize {
+            return None;
+        }
+        let mut frame = Vec::with_capacity(2 + sender_id.len() + self.total_len);
+        frame.push(shared_types::MEDIA_PACKET_SCREEN);
+        frame.push(sender_id.len() as u8);
+        frame.extend_from_slice(sender_id.as_bytes());
+        for chunk in self.chunks {
+            frame.extend_from_slice(chunk?.as_slice());
+        }
+        Some(frame)
+    }
+}
+
+struct ScreenChunkFrame<'a> {
+    sender_id: &'a str,
+    metadata: shared_types::ScreenChunkMetadata,
+    chunk_data: &'a [u8],
+}
 
 pub struct NetworkClient {
     ws_tx: Arc<Mutex<Option<WsTx>>>,
@@ -22,6 +138,8 @@ pub struct NetworkClient {
     /// Latest raw binary screen frame. Screen sharing is freshness-sensitive, so
     /// we overwrite stale pending frames instead of queueing them.
     screen_latest: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    screen_chunks: Arc<std::sync::Mutex<HashMap<String, ScreenChunkAssembler>>>,
+    screen_chunk_counters: Arc<ScreenChunkCounterSet>,
     signal_tx_internal: mpsc::UnboundedSender<SignalMessage>,
     audio_tx_internal: mpsc::Sender<Vec<u8>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
@@ -41,6 +159,7 @@ pub struct NetworkClient {
     bytes_recv: Arc<std::sync::atomic::AtomicU64>,
     packets_sent: Arc<std::sync::atomic::AtomicU64>,
     packets_recv: Arc<std::sync::atomic::AtomicU64>,
+    next_screen_sequence: std::sync::atomic::AtomicU32,
 }
 
 impl Default for NetworkClient {
@@ -58,6 +177,8 @@ impl NetworkClient {
             signal_rx: sig_rx,
             audio_rx,
             screen_latest: Arc::new(std::sync::Mutex::new(None)),
+            screen_chunks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            screen_chunk_counters: Arc::new(ScreenChunkCounterSet::default()),
             signal_tx_internal: sig_tx,
             audio_tx_internal: audio_tx,
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -71,6 +192,7 @@ impl NetworkClient {
             bytes_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             packets_sent: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             packets_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            next_screen_sequence: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -102,6 +224,8 @@ impl NetworkClient {
         let sig_tx = self.signal_tx_internal.clone();
         let audio_tx = self.audio_tx_internal.clone();
         let screen_latest = self.screen_latest.clone();
+        let screen_chunks = self.screen_chunks.clone();
+        let screen_chunk_counters = self.screen_chunk_counters.clone();
         let connected = self.connected.clone();
         let last_ping_ms_rx = self.last_ping_ms.clone();
         let ping_sent_at_rx = self.ping_sent_at.clone();
@@ -145,6 +269,28 @@ impl NetworkClient {
                                         store_latest_frame(screen_latest.as_ref(), data.into());
                                     }
                                 }
+                                shared_types::MEDIA_PACKET_SCREEN_CHUNK => {
+                                    if let Some(frame) = absorb_screen_chunk(
+                                        screen_chunks.as_ref(),
+                                        screen_chunk_counters.as_ref(),
+                                        &data,
+                                    ) {
+                                        bytes_recv_rx.fetch_add(
+                                            data.len() as u64,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        packets_recv_rx
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        store_latest_frame(screen_latest.as_ref(), frame);
+                                    } else if parse_screen_chunk_frame(&data).is_some() {
+                                        bytes_recv_rx.fetch_add(
+                                            data.len() as u64,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        packets_recv_rx
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -178,6 +324,12 @@ impl NetworkClient {
             .store(false, std::sync::atomic::Ordering::Release);
         *self.udp_socket.lock().await = None;
         *self.udp_token.lock().await = None;
+        if let Ok(mut chunks) = self.screen_chunks.lock() {
+            chunks.clear();
+        }
+        if let Ok(mut latest) = self.screen_latest.lock() {
+            *latest = None;
+        }
 
         let url = self.server_url.lock().await.clone();
         match url {
@@ -253,35 +405,88 @@ impl NetworkClient {
     }
 
     pub async fn send_screen_frame(&self, data: &[u8]) -> Result<()> {
-        if self.udp_active.load(std::sync::atomic::Ordering::Acquire)
-            && data.len() <= shared_types::MAX_UDP_MEDIA_PAYLOAD_SIZE
-        {
+        if self.udp_active.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(ref token) = *self.udp_token.lock().await {
                 if let Some(ref socket) = *self.udp_socket.lock().await {
-                    let pkt_len = 8 + 1 + data.len();
-                    let mut packet = Vec::with_capacity(pkt_len);
-                    packet.extend_from_slice(token);
-                    packet.push(shared_types::MEDIA_PACKET_SCREEN);
-                    packet.extend_from_slice(data);
-                    let _ = socket.send(&packet).await;
-                    self.bytes_sent
-                        .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
-                    self.packets_sent
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return Ok(());
+                    if data.len() <= shared_types::MAX_UDP_SCREEN_CHUNK_SIZE {
+                        let pkt_len = 8 + 1 + data.len();
+                        let mut packet = Vec::with_capacity(pkt_len);
+                        packet.extend_from_slice(token);
+                        packet.push(shared_types::MEDIA_PACKET_SCREEN);
+                        packet.extend_from_slice(data);
+                        let _ = socket.send(&packet).await;
+                        self.bytes_sent
+                            .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+                        self.packets_sent
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return Ok(());
+                    }
+
+                    let sequence = self.next_screen_sequence();
+                    let chunk_count = data.len().div_ceil(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE);
+                    if chunk_count <= u16::MAX as usize {
+                        for (chunk_index, chunk) in data
+                            .chunks(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE)
+                            .enumerate()
+                        {
+                            let header = shared_types::encode_screen_chunk_metadata(
+                                sequence,
+                                chunk_index as u16,
+                                chunk_count as u16,
+                            );
+                            let pkt_len = 8 + 1 + header.len() + chunk.len();
+                            let mut packet = Vec::with_capacity(pkt_len);
+                            packet.extend_from_slice(token);
+                            packet.push(shared_types::MEDIA_PACKET_SCREEN_CHUNK);
+                            packet.extend_from_slice(&header);
+                            packet.extend_from_slice(chunk);
+                            let _ = socket.send(&packet).await;
+                            self.bytes_sent
+                                .fetch_add(pkt_len as u64, std::sync::atomic::Ordering::Relaxed);
+                            self.packets_sent
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        return Ok(());
+                    }
                 }
             }
         }
 
         if let Some(tx) = self.ws_tx.lock().await.as_mut() {
-            let mut packet = Vec::with_capacity(data.len() + 1);
-            packet.push(shared_types::MEDIA_PACKET_SCREEN);
-            packet.extend_from_slice(data);
-            self.bytes_sent
-                .fetch_add(packet.len() as u64, std::sync::atomic::Ordering::Relaxed);
-            self.packets_sent
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            tx.send(Message::Binary(packet.into())).await?;
+            if data.len() <= shared_types::MAX_UDP_SCREEN_CHUNK_SIZE {
+                let mut packet = Vec::with_capacity(data.len() + 1);
+                packet.push(shared_types::MEDIA_PACKET_SCREEN);
+                packet.extend_from_slice(data);
+                self.bytes_sent
+                    .fetch_add(packet.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.packets_sent
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tx.send(Message::Binary(packet.into())).await?;
+            } else {
+                let sequence = self.next_screen_sequence();
+                let chunk_count = data.len().div_ceil(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE);
+                if chunk_count <= u16::MAX as usize {
+                    for (chunk_index, chunk) in data
+                        .chunks(shared_types::MAX_UDP_SCREEN_CHUNK_SIZE)
+                        .enumerate()
+                    {
+                        let header = shared_types::encode_screen_chunk_metadata(
+                            sequence,
+                            chunk_index as u16,
+                            chunk_count as u16,
+                        );
+                        let mut packet = Vec::with_capacity(1 + header.len() + chunk.len());
+                        packet.push(shared_types::MEDIA_PACKET_SCREEN_CHUNK);
+                        packet.extend_from_slice(&header);
+                        packet.extend_from_slice(chunk);
+                        self.bytes_sent
+                            .fetch_add(packet.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                        self.packets_sent
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tx.send(Message::Binary(packet.into())).await?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -348,6 +553,8 @@ impl NetworkClient {
         // Start UDP receive task — pushes incoming media to the same hot-path queues.
         let audio_tx = self.audio_tx_internal.clone();
         let screen_latest_udp = self.screen_latest.clone();
+        let screen_chunks_udp = self.screen_chunks.clone();
+        let screen_chunk_counters_udp = self.screen_chunk_counters.clone();
         let recv_socket = socket.clone();
         let udp_active = self.udp_active.clone();
         let bytes_recv_udp = self.bytes_recv.clone();
@@ -372,6 +579,15 @@ impl NetworkClient {
                                         screen_latest_udp.as_ref(),
                                         buf[..len].to_vec(),
                                     );
+                                }
+                                shared_types::MEDIA_PACKET_SCREEN_CHUNK => {
+                                    if let Some(frame) = absorb_screen_chunk(
+                                        screen_chunks_udp.as_ref(),
+                                        screen_chunk_counters_udp.as_ref(),
+                                        &buf[..len],
+                                    ) {
+                                        store_latest_frame(screen_latest_udp.as_ref(), frame);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -458,12 +674,31 @@ impl NetworkClient {
         (sent, recv)
     }
 
+    /// Remove stalled partial screen-share frames and return how many timed out.
+    pub fn expire_stale_screen_chunks(&self) -> u64 {
+        expire_stale_screen_chunks(
+            self.screen_chunks.as_ref(),
+            self.screen_chunk_counters.as_ref(),
+        )
+    }
+
+    /// Snapshot and reset logical screen-chunk counters for the last sampling window.
+    pub fn swap_screen_chunk_counters(&self) -> ScreenChunkCounters {
+        self.screen_chunk_counters.swap()
+    }
+
     pub async fn disconnect(&mut self) {
         // Shut down UDP
         self.udp_active
             .store(false, std::sync::atomic::Ordering::Relaxed);
         *self.udp_socket.lock().await = None;
         *self.udp_token.lock().await = None;
+        if let Ok(mut chunks) = self.screen_chunks.lock() {
+            chunks.clear();
+        }
+        if let Ok(mut latest) = self.screen_latest.lock() {
+            *latest = None;
+        }
 
         if let Some(mut tx) = self.ws_tx.lock().await.take() {
             let _ = tx.close().await;
@@ -503,6 +738,23 @@ pub fn parse_screen_frame(raw: &[u8]) -> Option<(&str, &[u8])> {
     Some((sender_id, frame_data))
 }
 
+fn parse_screen_chunk_frame(raw: &[u8]) -> Option<ScreenChunkFrame<'_>> {
+    if raw.len() < 3 || raw[0] != shared_types::MEDIA_PACKET_SCREEN_CHUNK {
+        return None;
+    }
+    let id_len = raw[1] as usize;
+    if raw.len() <= 2 + id_len + shared_types::SCREEN_CHUNK_METADATA_LEN {
+        return None;
+    }
+    let sender_id = std::str::from_utf8(&raw[2..2 + id_len]).ok()?;
+    let (metadata, chunk_data) = shared_types::decode_screen_chunk_metadata(&raw[2 + id_len..])?;
+    Some(ScreenChunkFrame {
+        sender_id,
+        metadata,
+        chunk_data,
+    })
+}
+
 fn hex_decode_8(hex: &str) -> Option<[u8; 8]> {
     if hex.len() != 16 {
         return None;
@@ -517,6 +769,120 @@ fn hex_decode_8(hex: &str) -> Option<[u8; 8]> {
 fn store_latest_frame(slot: &std::sync::Mutex<Option<Vec<u8>>>, frame: Vec<u8>) {
     if let Ok(mut latest) = slot.lock() {
         *latest = Some(frame);
+    }
+}
+
+fn next_sequence_is_newer(sequence: u32, current: u32) -> bool {
+    sequence != current && sequence.wrapping_sub(current) < 0x8000_0000
+}
+
+fn expire_stale_screen_chunks(
+    slot: &std::sync::Mutex<HashMap<String, ScreenChunkAssembler>>,
+    counters: &ScreenChunkCounterSet,
+) -> u64 {
+    let now = Instant::now();
+    let mut expired = 0u64;
+    if let Ok(mut all) = slot.lock() {
+        all.retain(|_, assembler| {
+            if assembler.is_timed_out(now) {
+                expired = expired.saturating_add(1);
+                counters.record_timed_out_frame();
+                false
+            } else {
+                true
+            }
+        });
+    }
+    expired
+}
+
+fn absorb_screen_chunk(
+    slot: &std::sync::Mutex<HashMap<String, ScreenChunkAssembler>>,
+    counters: &ScreenChunkCounterSet,
+    raw: &[u8],
+) -> Option<Vec<u8>> {
+    let packet = parse_screen_chunk_frame(raw)?;
+    counters.record_chunk_packet();
+    let sender_key = packet.sender_id.to_string();
+    let mut all = slot.lock().ok()?;
+    let now = Instant::now();
+    all.retain(|_, assembler| {
+        if assembler.is_timed_out(now) {
+            counters.record_timed_out_frame();
+            false
+        } else {
+            true
+        }
+    });
+    let replace = match all.get(&sender_key) {
+        Some(existing) if existing.sequence == packet.metadata.sequence => {
+            existing.chunk_count != packet.metadata.chunk_count
+        }
+        Some(existing) => next_sequence_is_newer(packet.metadata.sequence, existing.sequence),
+        None => true,
+    };
+
+    if replace {
+        if let Some(existing) = all.insert(
+            sender_key.clone(),
+            ScreenChunkAssembler::new(packet.metadata),
+        ) {
+            if !existing.is_complete() {
+                counters.record_superseded_frame();
+            }
+        }
+    } else if all
+        .get(&sender_key)
+        .map(|existing| existing.sequence != packet.metadata.sequence)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let complete = {
+        let entry = all.get_mut(&sender_key)?;
+        if !entry.store_chunk(packet.metadata, packet.chunk_data) {
+            all.remove(&sender_key);
+            return None;
+        }
+        entry.is_complete()
+    };
+
+    if !complete {
+        return None;
+    }
+
+    let frame = all.remove(&sender_key)?.into_frame(packet.sender_id)?;
+    counters.record_completed_frame();
+    Some(frame)
+}
+
+#[cfg(test)]
+fn build_screen_chunk_frame(
+    sender_id: &str,
+    metadata: shared_types::ScreenChunkMetadata,
+    chunk_data: &[u8],
+) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(
+        2 + sender_id.len() + shared_types::SCREEN_CHUNK_METADATA_LEN + chunk_data.len(),
+    );
+    frame.push(shared_types::MEDIA_PACKET_SCREEN_CHUNK);
+    frame.push(sender_id.len() as u8);
+    frame.extend_from_slice(sender_id.as_bytes());
+    frame.extend_from_slice(&shared_types::encode_screen_chunk_metadata(
+        metadata.sequence,
+        metadata.chunk_index,
+        metadata.chunk_count,
+    ));
+    frame.extend_from_slice(chunk_data);
+    frame
+}
+
+impl NetworkClient {
+    fn next_screen_sequence(&self) -> u32 {
+        self.next_screen_sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(1)
     }
 }
 
@@ -641,6 +1007,149 @@ mod tests {
     fn parse_screen_frame_invalid() {
         assert!(parse_screen_frame(&[]).is_none());
         assert!(parse_screen_frame(&[shared_types::MEDIA_PACKET_AUDIO, 1, b'x', 0xFF]).is_none());
+    }
+
+    #[test]
+    fn parse_screen_chunk_frame_valid() {
+        let frame = build_screen_chunk_frame(
+            "abc",
+            shared_types::ScreenChunkMetadata {
+                sequence: 9,
+                chunk_index: 1,
+                chunk_count: 3,
+            },
+            b"tail",
+        );
+        let parsed = parse_screen_chunk_frame(&frame).unwrap();
+        assert_eq!(parsed.sender_id, "abc");
+        assert_eq!(
+            parsed.metadata,
+            shared_types::ScreenChunkMetadata {
+                sequence: 9,
+                chunk_index: 1,
+                chunk_count: 3,
+            }
+        );
+        assert_eq!(parsed.chunk_data, b"tail");
+    }
+
+    #[test]
+    fn absorb_screen_chunk_reassembles_frame() {
+        let slot = std::sync::Mutex::new(HashMap::new());
+        let counters = ScreenChunkCounterSet::default();
+        let meta0 = shared_types::ScreenChunkMetadata {
+            sequence: 77,
+            chunk_index: 0,
+            chunk_count: 2,
+        };
+        let meta1 = shared_types::ScreenChunkMetadata {
+            sequence: 77,
+            chunk_index: 1,
+            chunk_count: 2,
+        };
+        let chunk0 = build_screen_chunk_frame("peer-1", meta0, b"hello ");
+        let chunk1 = build_screen_chunk_frame("peer-1", meta1, b"world");
+
+        assert!(absorb_screen_chunk(&slot, &counters, &chunk0).is_none());
+        let frame = absorb_screen_chunk(&slot, &counters, &chunk1).unwrap();
+        let (sender, payload) = parse_screen_frame(&frame).unwrap();
+        assert_eq!(sender, "peer-1");
+        assert_eq!(payload, b"hello world");
+        assert_eq!(
+            counters.swap(),
+            ScreenChunkCounters {
+                chunk_packets: 2,
+                frames_completed: 1,
+                frames_superseded: 0,
+                frames_timed_out: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn absorb_screen_chunk_drops_stale_sequence_after_newer_frame_starts() {
+        let slot = std::sync::Mutex::new(HashMap::new());
+        let counters = ScreenChunkCounterSet::default();
+        let old_chunk = build_screen_chunk_frame(
+            "peer-1",
+            shared_types::ScreenChunkMetadata {
+                sequence: 11,
+                chunk_index: 0,
+                chunk_count: 2,
+            },
+            b"old-",
+        );
+        let new_chunk0 = build_screen_chunk_frame(
+            "peer-1",
+            shared_types::ScreenChunkMetadata {
+                sequence: 12,
+                chunk_index: 0,
+                chunk_count: 2,
+            },
+            b"new-",
+        );
+        let stale_old_chunk1 = build_screen_chunk_frame(
+            "peer-1",
+            shared_types::ScreenChunkMetadata {
+                sequence: 11,
+                chunk_index: 1,
+                chunk_count: 2,
+            },
+            b"frame",
+        );
+        let new_chunk1 = build_screen_chunk_frame(
+            "peer-1",
+            shared_types::ScreenChunkMetadata {
+                sequence: 12,
+                chunk_index: 1,
+                chunk_count: 2,
+            },
+            b"frame",
+        );
+
+        assert!(absorb_screen_chunk(&slot, &counters, &old_chunk).is_none());
+        assert!(absorb_screen_chunk(&slot, &counters, &new_chunk0).is_none());
+        assert!(absorb_screen_chunk(&slot, &counters, &stale_old_chunk1).is_none());
+        let frame = absorb_screen_chunk(&slot, &counters, &new_chunk1).unwrap();
+        let (_, payload) = parse_screen_frame(&frame).unwrap();
+        assert_eq!(payload, b"new-frame");
+        assert_eq!(
+            counters.swap(),
+            ScreenChunkCounters {
+                chunk_packets: 4,
+                frames_completed: 1,
+                frames_superseded: 1,
+                frames_timed_out: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn expire_stale_screen_chunks_counts_timeouts() {
+        let slot = std::sync::Mutex::new(HashMap::new());
+        let counters = ScreenChunkCounterSet::default();
+        let chunk = build_screen_chunk_frame(
+            "peer-1",
+            shared_types::ScreenChunkMetadata {
+                sequence: 25,
+                chunk_index: 0,
+                chunk_count: 2,
+            },
+            b"partial",
+        );
+
+        assert!(absorb_screen_chunk(&slot, &counters, &chunk).is_none());
+        std::thread::sleep(SCREEN_CHUNK_REASSEMBLY_TIMEOUT + Duration::from_millis(20));
+        assert_eq!(expire_stale_screen_chunks(&slot, &counters), 1);
+        assert_eq!(
+            counters.swap(),
+            ScreenChunkCounters {
+                chunk_packets: 1,
+                frames_completed: 0,
+                frames_superseded: 0,
+                frames_timed_out: 1,
+            }
+        );
     }
 
     #[test]

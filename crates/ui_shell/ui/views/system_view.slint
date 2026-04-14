@@ -285,6 +285,51 @@ export component SystemView inherits Rectangle {
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
+                            spacing: 8px;
+                            SectionLabel { text: "SCREEN SHARE"; }
+                            MetricRow {
+                                metric-label: "Frames OK/s";
+                                metric-value: root.perf.screen-frames-completed
+                                              + root.perf.screen-frames-dropped
+                                              + root.perf.screen-frames-timed-out > 0
+                                    ? root.perf.screen-frames-completed + ""
+                                    : "—";
+                                indicator-color: root.perf.screen-frames-completed
+                                                 + root.perf.screen-frames-dropped
+                                                 + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                                 root.perf.screen-frames-completed > 0 ? VxTheme.success : VxTheme.warning;
+                            }
+                            MetricRow {
+                                metric-label: "Dropped/s";
+                                metric-value: root.perf.screen-frames-completed
+                                              + root.perf.screen-frames-dropped
+                                              + root.perf.screen-frames-timed-out > 0
+                                    ? root.perf.screen-frames-dropped + ""
+                                    : "—";
+                                indicator-color: root.perf.screen-frames-completed
+                                                 + root.perf.screen-frames-dropped
+                                                 + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                                 root.perf.screen-frames-dropped == 0 ? VxTheme.success :
+                                                 root.perf.screen-frames-dropped < 3 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Timed out/s";
+                                metric-value: root.perf.screen-frames-completed
+                                              + root.perf.screen-frames-dropped
+                                              + root.perf.screen-frames-timed-out > 0
+                                    ? root.perf.screen-frames-timed-out + ""
+                                    : "—";
+                                indicator-color: root.perf.screen-frames-completed
+                                                 + root.perf.screen-frames-dropped
+                                                 + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                                 root.perf.screen-frames-timed-out == 0 ? VxTheme.success : VxTheme.danger;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
                             spacing: 10px;
                             HorizontalLayout {
                                 spacing: 8px;
@@ -438,9 +483,10 @@ export component SystemView inherits Rectangle {
                                 font-size: 10px;
                                 wrap: word-wrap;
                             }
-                            HorizontalLayout {
+                            VerticalLayout {
                                 spacing: 8px;
                                 add-friend-narrow := VxInput {
+                                    prominent: true;
                                     placeholder: "Enter a username...";
                                     text <=> root.add-friend-input;
                                     horizontal-stretch: 1;
@@ -455,8 +501,8 @@ export component SystemView inherits Rectangle {
                                 VxButton {
                                     label: "Send Request";
                                     glyph: "FR";
-                                    small: true;
                                     accent: true;
+                                    horizontal-stretch: 1;
                                     clicked => {
                                         if root.add-friend-input != "" {
                                             root.add-friend-status = "Sending...";
@@ -847,6 +893,51 @@ export component SystemView inherits Rectangle {
                 VxCard {
                     VerticalLayout {
                         padding: 18px;
+                        spacing: 8px;
+                        SectionLabel { text: "SCREEN SHARE"; }
+                        MetricRow {
+                            metric-label: "Frames OK/s";
+                            metric-value: root.perf.screen-frames-completed
+                                          + root.perf.screen-frames-dropped
+                                          + root.perf.screen-frames-timed-out > 0
+                                ? root.perf.screen-frames-completed + ""
+                                : "—";
+                            indicator-color: root.perf.screen-frames-completed
+                                             + root.perf.screen-frames-dropped
+                                             + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                             root.perf.screen-frames-completed > 0 ? VxTheme.success : VxTheme.warning;
+                        }
+                        MetricRow {
+                            metric-label: "Dropped/s";
+                            metric-value: root.perf.screen-frames-completed
+                                          + root.perf.screen-frames-dropped
+                                          + root.perf.screen-frames-timed-out > 0
+                                ? root.perf.screen-frames-dropped + ""
+                                : "—";
+                            indicator-color: root.perf.screen-frames-completed
+                                             + root.perf.screen-frames-dropped
+                                             + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                             root.perf.screen-frames-dropped == 0 ? VxTheme.success :
+                                             root.perf.screen-frames-dropped < 3 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Timed out/s";
+                            metric-value: root.perf.screen-frames-completed
+                                          + root.perf.screen-frames-dropped
+                                          + root.perf.screen-frames-timed-out > 0
+                                ? root.perf.screen-frames-timed-out + ""
+                                : "—";
+                            indicator-color: root.perf.screen-frames-completed
+                                             + root.perf.screen-frames-dropped
+                                             + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
+                                             root.perf.screen-frames-timed-out == 0 ? VxTheme.success : VxTheme.danger;
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
                         spacing: 10px;
                         SectionLabel { text: "CONVERSATIONS"; }
                         if root.direct-message-threads.length == 0 : Text {
@@ -947,6 +1038,7 @@ export component SystemView inherits Rectangle {
                         HorizontalLayout {
                             spacing: 8px;
                             add-friend-wide := VxInput {
+                                prominent: true;
                                 placeholder: "Enter a username...";
                                 text <=> root.add-friend-input;
                                 horizontal-stretch: 1;

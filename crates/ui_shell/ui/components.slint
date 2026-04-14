@@ -289,9 +289,10 @@ export component VxInput inherits Rectangle {
     in property <string> placeholder: "";
     in property <InputType> input-type: InputType.text;
     in property <bool> enabled: true;
+    in property <bool> prominent: false;
     callback accepted();
 
-    height: 42px * VxTheme.s;
+    height: (root.prominent ? 56px : 48px) * VxTheme.s;
     border-radius: VxTheme.radius-control;
     background: @linear-gradient(180deg,
         VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
@@ -319,13 +320,14 @@ export component VxInput inherits Rectangle {
     }
 
     inner := LineEdit {
-        x: 12px * VxTheme.s;
-        y: 8px * VxTheme.s;
-        width: parent.width - 24px * VxTheme.s;
-        height: parent.height - 16px * VxTheme.s;
+        x: (root.prominent ? 16px : 14px) * VxTheme.s;
+        y: (root.prominent ? 12px : 10px) * VxTheme.s;
+        width: parent.width - (root.prominent ? 32px : 28px) * VxTheme.s;
+        height: parent.height - (root.prominent ? 24px : 20px) * VxTheme.s;
         placeholder-text: root.placeholder;
         input-type: root.input-type;
         enabled: root.enabled;
+        font-size: (root.prominent ? 15px : 14px) * VxTheme.s;
         accepted => { root.accepted(); }
     }
 }

@@ -81,6 +81,18 @@ pub fn process_signals(
             SignalMessage::ScreenShareStopped { sharer_id } => {
                 room::handle_screen_share_stopped(w, state, sharer_id, ctx);
             }
+            SignalMessage::ScreenShareTransportFeedback {
+                frames_completed,
+                frames_dropped,
+                frames_timed_out,
+            } => {
+                ctx.screen_share.record_transport_feedback(
+                    *frames_completed,
+                    *frames_dropped,
+                    *frames_timed_out,
+                );
+                ctx.screen_share.apply_to_window(w);
+            }
             SignalMessage::Error { message } => {
                 let stale_saved_space = message.contains("Invalid invite code")
                     && w.get_current_view() == ui_shell::view_to_index(AppView::Space)

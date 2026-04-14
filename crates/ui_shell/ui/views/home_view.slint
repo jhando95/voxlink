@@ -350,6 +350,7 @@ export component HomeView inherits Rectangle {
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VxInput {
+                                        prominent: true;
                                         text <=> root.server-address;
                                         placeholder: "wss://voice.example.com:443 or ws://127.0.0.1:9090";
                                         horizontal-stretch: 1;
@@ -784,6 +785,7 @@ export component HomeView inherits Rectangle {
                                     wrap: word-wrap;
                                 }
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.space-name;
                                     placeholder: "Studio, Guild, Squad";
                                     accepted => {
@@ -808,6 +810,7 @@ export component HomeView inherits Rectangle {
                                 spacing: 6px;
                                 FieldLabel { text: "Join by invite"; }
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.space-invite-code;
                                     placeholder: "Paste invite code";
                                     accepted => {
@@ -867,6 +870,7 @@ export component HomeView inherits Rectangle {
                                     spacing: 6px;
                                     FieldLabel { text: "Join by room code"; }
                                     VxInput {
+                                        prominent: true;
                                         text <=> root.join-code;
                                         placeholder: "Room code";
                                         accepted => {
@@ -877,19 +881,21 @@ export component HomeView inherits Rectangle {
                                     }
                                 }
 
-                                HorizontalLayout {
+                                VerticalLayout {
                                     spacing: 8px;
-                                    VxButton {
-                                        label: "Join";
-                                        soft: true;
-                                        enabled: root.is-connected && root.join-code != "";
-                                        clicked => { root.join-room(root.join-code); }
-                                    }
                                     VxInput {
+                                        prominent: true;
                                         text <=> root.room-password;
                                         placeholder: "Password (optional)";
                                         input-type: InputType.password;
                                         horizontal-stretch: 1;
+                                    }
+                                    VxButton {
+                                        label: "Join";
+                                        soft: true;
+                                        horizontal-stretch: 1;
+                                        enabled: root.is-connected && root.join-code != "";
+                                        clicked => { root.join-room(root.join-code); }
                                     }
                                 }
                             }
@@ -911,9 +917,10 @@ export component HomeView inherits Rectangle {
                         VerticalLayout {
                             spacing: 6px;
                             FieldLabel { text: "Server address"; }
-                            HorizontalLayout {
+                            VerticalLayout {
                                 spacing: 8px;
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.server-address;
                                     placeholder: "wss://voice.example.com:443 or ws://127.0.0.1:9090";
                                     horizontal-stretch: 1;
@@ -926,6 +933,7 @@ export component HomeView inherits Rectangle {
                                 VxButton {
                                     label: "Save";
                                     soft: true;
+                                    horizontal-stretch: 1;
                                     clicked => { root.save-server(root.server-address); }
                                 }
                             }
@@ -1033,6 +1041,7 @@ export component HomeView inherits Rectangle {
                             spacing: 6px;
                             FieldLabel { text: "Display name"; }
                             VxInput {
+                                prominent: true;
                                 text <=> root.user-name;
                                 placeholder: "Enter a display name";
                             }
@@ -1050,6 +1059,7 @@ export component HomeView inherits Rectangle {
                             spacing: 6px;
                             FieldLabel { text: "Create a new space"; }
                             VxInput {
+                                prominent: true;
                                 text <=> root.space-name;
                                 placeholder: "Studio, Guild, Squad";
                                 accepted => {
@@ -1074,6 +1084,7 @@ export component HomeView inherits Rectangle {
                             spacing: 6px;
                             FieldLabel { text: "Join by invite"; }
                             VxInput {
+                                prominent: true;
                                 text <=> root.space-invite-code;
                                 placeholder: "Paste invite code";
                                 accepted => {
@@ -1133,6 +1144,7 @@ export component HomeView inherits Rectangle {
                                 clicked => { root.create-room(); }
                             }
                             VxInput {
+                                prominent: true;
                                 text <=> root.join-code;
                                 placeholder: "Room code";
                                 accepted => {
@@ -1141,19 +1153,21 @@ export component HomeView inherits Rectangle {
                                     }
                                 }
                             }
-                            HorizontalLayout {
+                            VerticalLayout {
                                 spacing: 8px;
-                                VxButton {
-                                    label: "Join";
-                                    soft: true;
-                                    enabled: root.is-connected && root.join-code != "";
-                                    clicked => { root.join-room(root.join-code); }
-                                }
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.room-password;
                                     placeholder: "Password";
                                     input-type: InputType.password;
                                     horizontal-stretch: 1;
+                                }
+                                VxButton {
+                                    label: "Join";
+                                    soft: true;
+                                    horizontal-stretch: 1;
+                                    enabled: root.is-connected && root.join-code != "";
+                                    clicked => { root.join-room(root.join-code); }
                                 }
                             }
                         }

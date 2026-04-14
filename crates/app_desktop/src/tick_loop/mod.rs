@@ -552,9 +552,43 @@ pub fn start(
                     (total_dropped_frames - w.get_dropped_frames_baseline()).max(0),
                 );
 
+                let viewing_remote_screen_share = w.get_has_screen_share()
+                    && !w.get_is_sharing_screen()
+                    && !w.get_screen_share_owner_id().is_empty();
+                let mut screen_feedback = None;
+
                 // --- Bandwidth tracking (every ~1s) ---
-                if in_call {
-                    if let Ok(net) = network.try_lock() {
+                if let Ok(net) = network.try_lock() {
+                    let _ = net.expire_stale_screen_chunks();
+                    let chunk_counters = net.swap_screen_chunk_counters();
+                    let observed_chunk_frames = chunk_counters
+                        .frames_completed
+                        .saturating_add(chunk_counters.frames_superseded)
+                        .saturating_add(chunk_counters.frames_timed_out);
+                    {
+                        let perf = perf.borrow();
+                        perf.screen_frames_completed.store(
+                            chunk_counters.frames_completed.min(u32::MAX as u64) as u32,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        perf.screen_frames_dropped.store(
+                            chunk_counters.frames_superseded.min(u32::MAX as u64) as u32,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        perf.screen_frames_timed_out.store(
+                            chunk_counters.frames_timed_out.min(u32::MAX as u64) as u32,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
+                    if viewing_remote_screen_share && observed_chunk_frames > 0 {
+                        screen_feedback = Some((
+                            chunk_counters.frames_completed.min(u32::MAX as u64) as u32,
+                            chunk_counters.frames_superseded.min(u32::MAX as u64) as u32,
+                            chunk_counters.frames_timed_out.min(u32::MAX as u64) as u32,
+                        ));
+                    }
+
+                    if in_call {
                         let (bytes_sent, bytes_recv) = net.swap_bandwidth_counters();
                         // kbps = bytes * 8 / 1000 (1-second window)
                         let kbps_up = (bytes_sent * 8 / 1000) as i32;
@@ -593,12 +627,38 @@ pub fn start(
                             }
                         }
                     }
-                } else {
+                }
+                if !in_call {
                     // Reset bandwidth display when not in a call
                     if w.get_bandwidth_up_kbps() != 0 {
                         w.set_bandwidth_up_kbps(0);
                         w.set_bandwidth_down_kbps(0);
                     }
+                    let perf = perf.borrow();
+                    perf.screen_frames_completed
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    perf.screen_frames_dropped
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    perf.screen_frames_timed_out
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+
+                if let Some((frames_completed, frames_dropped, frames_timed_out)) = screen_feedback
+                {
+                    let network = network.clone();
+                    rt_handle.spawn(async move {
+                        let net = network.lock().await;
+                        if let Err(err) = net
+                            .send_signal(&SignalMessage::ScreenShareTransportFeedback {
+                                frames_completed,
+                                frames_dropped,
+                                frames_timed_out,
+                            })
+                            .await
+                        {
+                            log::debug!("Failed to send screen-share transport feedback: {err}");
+                        }
+                    });
                 }
 
                 signal_handler::connection::check_connection(

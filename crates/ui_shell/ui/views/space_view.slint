@@ -163,6 +163,7 @@ export component SpaceView inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
                 VxInput {
+                    prominent: true;
                     text <=> root.search-query;
                     placeholder: "Search channels and members...";
                     horizontal-stretch: 1;
@@ -1222,9 +1223,10 @@ export component SpaceView inherits Rectangle {
                                 }
                             }
 
-                            HorizontalLayout {
-                                spacing: 10px;
+                            VerticalLayout {
+                                spacing: 8px;
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.new-channel-name;
                                     placeholder: "channel-name";
                                     horizontal-stretch: 1;
@@ -1237,6 +1239,7 @@ export component SpaceView inherits Rectangle {
                                 VxButton {
                                     label: "Create";
                                     accent: true;
+                                    horizontal-stretch: 1;
                                     enabled: root.new-channel-name != "";
                                     clicked => { root.create-channel(); }
                                 }
@@ -1255,9 +1258,10 @@ export component SpaceView inherits Rectangle {
                             padding: 14px;
                             spacing: 8px;
                             SectionLabel { text: "YOUR PROFILE"; }
-                            HorizontalLayout {
-                                spacing: 6px;
+                            VerticalLayout {
+                                spacing: 8px;
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.user-status-input;
                                     placeholder: "Set status";
                                     horizontal-stretch: 1;
@@ -1271,8 +1275,8 @@ export component SpaceView inherits Rectangle {
                                 VxButton {
                                     label: "Set";
                                     glyph: "ST";
-                                    small: true;
                                     soft: true;
+                                    horizontal-stretch: 1;
                                     enabled: root.user-status-input != "";
                                     clicked => {
                                         if root.user-status-input != "" {
@@ -1282,9 +1286,10 @@ export component SpaceView inherits Rectangle {
                                     }
                                 }
                             }
-                            HorizontalLayout {
-                                spacing: 6px;
+                            VerticalLayout {
+                                spacing: 8px;
                                 VxInput {
+                                    prominent: true;
                                     text <=> root.user-bio-input;
                                     placeholder: "Set bio";
                                     horizontal-stretch: 1;
@@ -1298,8 +1303,8 @@ export component SpaceView inherits Rectangle {
                                 VxButton {
                                     label: "Save";
                                     glyph: "SV";
-                                    small: true;
                                     soft: true;
+                                    horizontal-stretch: 1;
                                     enabled: root.user-bio-input != "";
                                     clicked => {
                                         if root.user-bio-input != "" {
@@ -1540,6 +1545,7 @@ export component SpaceView inherits Rectangle {
                                     }
 
                                     if root.expanded-member-id == member.id && !member.is-self : VxInput {
+                                        prominent: true;
                                         placeholder: "Private note...";
                                         text: member.user-note;
                                         accepted => {
@@ -1672,6 +1678,7 @@ export component SpaceView inherits Rectangle {
                             HorizontalLayout {
                                 spacing: 8px;
                                 rename-input := VxInput {
+                                    prominent: true;
                                     placeholder: "New space name";
                                     horizontal-stretch: 1;
                                     accepted => {
@@ -1697,6 +1704,7 @@ export component SpaceView inherits Rectangle {
                             HorizontalLayout {
                                 spacing: 8px;
                                 desc-input := VxInput {
+                                    prominent: true;
                                     placeholder: "Space description (optional)";
                                     horizontal-stretch: 1;
                                     accepted => {
