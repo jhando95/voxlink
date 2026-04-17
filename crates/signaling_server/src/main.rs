@@ -4,6 +4,7 @@ mod types;
 mod tls;
 mod metrics_server;
 mod discovery;
+mod validation;
 
 pub(crate) use types::{
     max_channel_messages, ChannelMeta, Db, Peer, Room, ServerState, Space, State,
@@ -11,6 +12,13 @@ pub(crate) use types::{
 };
 pub(crate) use tls::{bind_requires_tls, allow_insecure_public_bind, load_tls_config, ServerStream};
 pub(crate) use metrics_server::{ServerMetrics, run_metrics_server};
+pub(crate) use validation::{
+    atomic_rate_check, check_rate_limit, chunked_screen_sequence_state, instant_to_ms,
+    validate_name, validate_password, validate_room_code, now_epoch_secs,
+    ChunkedScreenSequenceState,
+};
+#[allow(unused_imports)]
+pub(crate) use validation::{MAX_NAME_LEN, MAX_PASSWORD_LEN};
 
 use futures_util::{SinkExt, StreamExt};
 use rand::rngs::OsRng;
@@ -27,9 +35,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 // ─── Limits ───
 
-const MAX_NAME_LEN: usize = 32;
-const MAX_PASSWORD_LEN: usize = 64;
-const DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Server limits, configurable via environment variables with sensible defaults.
 struct ServerLimits {
@@ -837,110 +843,6 @@ async fn handle_connection(
     log::info!("Peer {peer_id} disconnected");
 }
 
-/// Monotonic millisecond timestamp for lock-free rate limiting.
-fn instant_to_ms() -> u64 {
-    // Using system uptime-style monotonic clock avoids Instant → u64 issues.
-    // We only need relative 1-second windows, so wrapping after ~584 million years is fine.
-    static EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    EPOCH.elapsed().as_millis() as u64
-}
-
-/// Lock-free rate limit check using atomic timestamp + counter.
-fn atomic_rate_check(window_ms: &AtomicU64, counter: &AtomicU32, limit: u32) -> bool {
-    let now = instant_to_ms();
-    let prev = window_ms.load(Ordering::Relaxed);
-    if now.wrapping_sub(prev) >= 1000 {
-        // New window — reset counter. CAS to avoid races resetting twice.
-        if window_ms
-            .compare_exchange(prev, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            counter.store(1, Ordering::Relaxed);
-            return true;
-        }
-        // CAS failed — another thread already reset. Fall through to count check.
-    }
-    let count = counter.fetch_add(1, Ordering::Relaxed);
-    count < limit
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChunkedScreenSequenceState {
-    NewFrame,
-    ExistingFrame,
-    StaleFrame,
-}
-
-fn chunked_screen_sequence_state(
-    last_sequence: &AtomicU32,
-    sequence: u32,
-) -> ChunkedScreenSequenceState {
-    let mut current = last_sequence.load(Ordering::Relaxed);
-    loop {
-        if current == sequence {
-            return ChunkedScreenSequenceState::ExistingFrame;
-        }
-        if current != 0 && sequence.wrapping_sub(current) >= 0x8000_0000 {
-            return ChunkedScreenSequenceState::StaleFrame;
-        }
-        match last_sequence.compare_exchange(
-            current,
-            sequence,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return ChunkedScreenSequenceState::NewFrame,
-            Err(updated) => current = updated,
-        }
-    }
-}
-
-async fn check_rate_limit(state: &State, peer_id: &str) -> bool {
-    let s = state.read().await;
-    let peer = match s.peers.get(peer_id) {
-        Some(p) => p.clone(),
-        None => return false,
-    };
-    drop(s);
-
-    atomic_rate_check(
-        &peer.rate_window_ms,
-        &peer.msg_count,
-        LIMITS.rate_limit_per_sec,
-    )
-}
-
-// ─── Input Validation ───
-
-fn validate_name(name: &str) -> Result<(), String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("Name cannot be empty".into());
-    }
-    if trimmed.len() > MAX_NAME_LEN {
-        return Err(format!("Name too long (max {} characters)", MAX_NAME_LEN));
-    }
-    Ok(())
-}
-
-fn validate_room_code(code: &str) -> Result<(), String> {
-    if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
-        return Err("Invalid room code (must be 6 digits)".into());
-    }
-    Ok(())
-}
-
-fn validate_password(pw: &Option<String>) -> Result<(), String> {
-    if let Some(ref p) = pw {
-        if p.len() > MAX_PASSWORD_LEN {
-            return Err(format!(
-                "Password too long (max {} characters)",
-                MAX_PASSWORD_LEN
-            ));
-        }
-    }
-    Ok(())
-}
 
 // ─── Signal Handler ───
 
@@ -3763,13 +3665,6 @@ async fn handle_whisper_stopped(state: &State, peer_id: &str) {
 }
 
 // ─── Timeout ───
-
-fn now_epoch_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 async fn handle_timeout_member(
     state: &State,
