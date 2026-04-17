@@ -404,10 +404,10 @@ pub(crate) async fn handle_signal(
             handlers::channel_settings::handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
         }
         SignalMessage::WhisperTo { target_peer_ids } => {
-            crate::handle_whisper_to(state, peer_id, target_peer_ids).await;
+            handlers::whisper::handle_whisper_to(state, peer_id, target_peer_ids).await;
         }
         SignalMessage::WhisperStopped => {
-            crate::handle_whisper_stopped(state, peer_id).await;
+            handlers::whisper::handle_whisper_stopped(state, peer_id).await;
         }
         SignalMessage::TimeoutMember {
             member_id,

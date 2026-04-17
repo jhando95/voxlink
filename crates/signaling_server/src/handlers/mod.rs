@@ -7,6 +7,7 @@ pub mod events;
 pub mod recording;
 pub mod scheduling;
 pub mod timeouts;
+pub mod whisper;
 pub mod chat;
 pub mod friends;
 pub mod moderation;
