@@ -19,7 +19,7 @@ use ui_shell::MainWindow;
 /// Accepts the pre-formatted error chain as a `&str` so this module does not
 /// need to take a direct dependency on the `anyhow` crate.  Callers should
 /// pass `&format!("{e:#}")` to include the full cause chain.
-fn classify_connect_error(chain: &str) -> &'static str {
+pub(crate) fn classify_connect_error(chain: &str) -> &'static str {
     let lower = chain.to_lowercase();
     if lower.contains("invalidcertificate")
         || lower.contains("unknownissuer")

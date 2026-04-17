@@ -59,18 +59,15 @@ pub fn setup_connect(
                 Err(e) => {
                     log::error!("Connection failed: {e}");
                     if let Some(w) = window_weak.upgrade() {
-                        let msg = format!("{e}");
-                        let friendly = if msg.contains("timed out") {
-                            "Failed: Server not reachable"
-                        } else if msg.contains("refused") {
-                            "Failed: Connection refused"
-                        } else if msg.contains("dns") || msg.contains("resolve") {
-                            "Failed: Server not found"
-                        } else {
-                            "Failed: Could not connect"
+                        let chain = format!("{e:#}");
+                        let kind = crate::signal_handler::connection::classify_connect_error(&chain);
+                        let friendly = match kind {
+                            "tls" => "Could not connect: server's TLS certificate is invalid or expired. Ask the server operator to run deploy/setup-tls.sh.".to_string(),
+                            "timeout" => "Could not connect: timed out after 5 seconds. Check the server address and your network.".to_string(),
+                            _ => format!("Could not connect: {e}"),
                         };
-                        w.set_status_text(friendly.into());
-                        crate::helpers::show_toast(&w, friendly, 3);
+                        w.set_status_text(friendly.clone().into());
+                        crate::helpers::show_toast(&w, &friendly, 3);
                     }
                 }
             }
