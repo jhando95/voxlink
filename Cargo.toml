@@ -13,6 +13,7 @@ members = [
     "crates/signaling_server",
     "crates/integration_tests",
 ]
+exclude = ["fuzz"]
 
 [workspace.dependencies]
 slint = { version = "1.9", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2", "accessibility"] }

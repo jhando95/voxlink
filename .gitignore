@@ -10,3 +10,8 @@ installer/redist/
 *.db-shm
 *.db-wal
 installer/dist/
+
+# cargo-fuzz
+fuzz/target/
+fuzz/corpus/
+# We DO want to keep fuzz/artifacts/ as regression reproducers, so it's NOT listed here.

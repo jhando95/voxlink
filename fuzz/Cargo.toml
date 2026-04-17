@@ -1,0 +1,31 @@
+[package]
+name = "voxlink-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+shared_types = { path = "../crates/shared_types" }
+serde_json = "1"
+
+[[bin]]
+name = "fuzz_signal_message"
+path = "fuzz_targets/fuzz_signal_message.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_udp_frame"
+path = "fuzz_targets/fuzz_udp_frame.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_screen_chunk_metadata"
+path = "fuzz_targets/fuzz_screen_chunk_metadata.rs"
+test = false
+doc = false
