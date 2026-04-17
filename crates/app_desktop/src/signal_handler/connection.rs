@@ -12,6 +12,31 @@ use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
 
+/// Classify a connection failure so we can give the user a useful message.
+/// Walks the full anyhow error chain (stringified) and looks for known TLS
+/// handshake signatures without taking a direct dependency on rustls.
+///
+/// Accepts the pre-formatted error chain as a `&str` so this module does not
+/// need to take a direct dependency on the `anyhow` crate.  Callers should
+/// pass `&format!("{e:#}")` to include the full cause chain.
+fn classify_connect_error(chain: &str) -> &'static str {
+    let lower = chain.to_lowercase();
+    if lower.contains("invalidcertificate")
+        || lower.contains("unknownissuer")
+        || lower.contains("unknown_issuer")
+        || lower.contains("badcertificate")
+        || lower.contains("notvalidforname")
+        || lower.contains("certificate has expired")
+        || lower.contains("expired")
+    {
+        "tls"
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "timeout"
+    } else {
+        "generic"
+    }
+}
+
 const REMOTE_SCREEN_RENDER_MAX_WIDTH: u32 = 960;
 const REMOTE_SCREEN_RENDER_MAX_HEIGHT: u32 = 540;
 const REMOTE_SCREEN_RENDER_MIN_WIDTH: u32 = 480;
@@ -445,9 +470,15 @@ pub fn check_connection(
                         }
                         Ok(false) => {}
                         Err(e) => {
-                            log::warn!("Reconnect failed: {e}");
+                            log::warn!("Reconnect failed: {e:#}");
+                            let chain = format!("{e:#}");
+                            let msg = match classify_connect_error(&chain) {
+                                "tls" => "Could not connect: server's TLS certificate is invalid or expired. Ask the server operator to run deploy/setup-tls.sh.".to_string(),
+                                "timeout" => "Could not connect: timed out after 5 seconds. Check the server address and your network.".to_string(),
+                                _ => "Reconnect failed, retrying...".to_string(),
+                            };
                             if let Some(w) = window_weak.upgrade() {
-                                w.set_status_text("Reconnect failed, retrying...".into());
+                                w.set_status_text(msg.into());
                             }
                         }
                     }
@@ -473,6 +504,42 @@ pub fn check_connection(
     if w.get_current_view() == ui_shell::view_to_index(AppView::Performance) {
         let snap = perf.borrow_mut().snapshot();
         ui_shell::update_perf_display(w, &snap);
+    }
+}
+
+#[cfg(test)]
+mod tls_classify_tests {
+    use super::classify_connect_error;
+
+    #[test]
+    fn classifies_invalid_cert() {
+        assert_eq!(
+            classify_connect_error("tls handshake failed: InvalidCertificate(UnknownIssuer)"),
+            "tls"
+        );
+    }
+
+    #[test]
+    fn classifies_expired_cert() {
+        assert_eq!(
+            classify_connect_error("handshake error: certificate has expired"),
+            "tls"
+        );
+    }
+
+    #[test]
+    fn classifies_name_mismatch() {
+        assert_eq!(classify_connect_error("tls: NotValidForName"), "tls");
+    }
+
+    #[test]
+    fn classifies_timeout() {
+        assert_eq!(classify_connect_error("Connection timed out (5s)"), "timeout");
+    }
+
+    #[test]
+    fn classifies_generic() {
+        assert_eq!(classify_connect_error("connection refused"), "generic");
     }
 }
 
