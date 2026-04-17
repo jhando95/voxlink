@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod calls;
 pub mod channel;
+pub mod events;
 pub mod chat;
 pub mod friends;
 pub mod moderation;

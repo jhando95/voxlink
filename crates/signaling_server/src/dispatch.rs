@@ -571,16 +571,16 @@ pub(crate) async fn handle_signal(
             start_time,
             end_time,
         } => {
-            crate::handle_create_event(state, peer_id, title, description, start_time, end_time, db).await;
+            handlers::events::handle_create_event(state, peer_id, title, description, start_time, end_time, db).await;
         }
         SignalMessage::DeleteScheduledEvent { event_id } => {
-            crate::handle_delete_event(state, peer_id, event_id, db).await;
+            handlers::events::handle_delete_event(state, peer_id, event_id, db).await;
         }
         SignalMessage::ToggleEventInterest { event_id } => {
-            crate::handle_toggle_event_interest(state, peer_id, event_id, db).await;
+            handlers::events::handle_toggle_event_interest(state, peer_id, event_id, db).await;
         }
         SignalMessage::ListScheduledEvents => {
-            crate::handle_list_events(state, peer_id, db).await;
+            handlers::events::handle_list_events(state, peer_id, db).await;
         }
         // Message Scheduling
         SignalMessage::ScheduleMessage {
