@@ -19,6 +19,9 @@ pub(crate) struct ServerMetrics {
     pub(crate) screen_frames_out_total: AtomicU64,
     pub(crate) udp_frames_in_total: AtomicU64,
     pub(crate) udp_frames_out_total: AtomicU64,
+    pub(crate) udp_send_failures_total: AtomicU64,
+    pub(crate) udp_invalid_packets_total: AtomicU64,
+    pub(crate) udp_rate_limited_total: AtomicU64,
     /// One counter per SignalMessage variant, indexed by
     /// `SignalMessage::variant_index()`. Array size is
     /// `shared_types::SIGNAL_MESSAGE_VARIANT_COUNT` (= 201).
@@ -44,6 +47,9 @@ impl Default for ServerMetrics {
             screen_frames_out_total: AtomicU64::new(0),
             udp_frames_in_total: AtomicU64::new(0),
             udp_frames_out_total: AtomicU64::new(0),
+            udp_send_failures_total: AtomicU64::new(0),
+            udp_invalid_packets_total: AtomicU64::new(0),
+            udp_rate_limited_total: AtomicU64::new(0),
             per_message_counters: std::array::from_fn(|_| AtomicU64::new(0)),
             started_at: Instant::now(),
         }
@@ -193,6 +199,22 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
         if tls_enabled { 1 } else { 0 },
     );
 
+    out.push_str(&format!(
+        concat!(
+            "# HELP voxlink_udp_send_failures_total UDP datagrams the server failed to send\n",
+            "# TYPE voxlink_udp_send_failures_total counter\n",
+            "voxlink_udp_send_failures_total {}\n",
+            "# HELP voxlink_udp_invalid_packets_total UDP datagrams rejected due to invalid headers or unknown tokens\n",
+            "# TYPE voxlink_udp_invalid_packets_total counter\n",
+            "voxlink_udp_invalid_packets_total {}\n",
+            "# HELP voxlink_udp_rate_limited_total UDP datagrams dropped because the peer exceeded its fps budget\n",
+            "# TYPE voxlink_udp_rate_limited_total counter\n",
+            "voxlink_udp_rate_limited_total {}\n",
+        ),
+        metrics.udp_send_failures_total.load(Ordering::Relaxed),
+        metrics.udp_invalid_packets_total.load(Ordering::Relaxed),
+        metrics.udp_rate_limited_total.load(Ordering::Relaxed),
+    ));
     out.push_str("# HELP voxlink_signaling_messages_by_type_total Signaling messages received, broken down by SignalMessage variant\n");
     out.push_str("# TYPE voxlink_signaling_messages_by_type_total counter\n");
     for (i, name) in shared_types::SignalMessage::VARIANT_NAMES.iter().enumerate() {

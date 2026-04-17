@@ -115,7 +115,9 @@ pub(crate) async fn send_screen_frame_to_peers(
             let udp_addr = peer.udp_addr.read().ok().and_then(|addr| *addr);
             if let Some(addr) = udp_addr {
                 if let Some(socket) = UDP_SOCKET.get() {
-                    let _ = socket.send_to(frame, addr).await;
+                    if let Err(_e) = socket.send_to(frame, addr).await {
+                        metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+                    }
                     metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
@@ -251,6 +253,7 @@ pub(crate) async fn relay_screen_udp(
         &peer.screen_frame_count,
         LIMITS.max_screen_fps,
     ) {
+        metrics.udp_rate_limited_total.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -327,7 +330,9 @@ pub(crate) async fn relay_screen_udp(
             None
         };
         if let Some(addr) = udp_addr {
-            let _ = udp_socket.send_to(frame, addr).await;
+            if let Err(_e) = udp_socket.send_to(frame, addr).await {
+                metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+            }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
             let frame_clone = frame.to_vec();

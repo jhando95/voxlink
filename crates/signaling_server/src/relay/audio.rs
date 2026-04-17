@@ -194,6 +194,7 @@ pub(crate) async fn relay_audio_udp(
         &peer.audio_frame_count,
         LIMITS.max_audio_fps,
     ) {
+        metrics.udp_rate_limited_total.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -273,7 +274,9 @@ pub(crate) async fn relay_audio_udp(
         let udp_addr = peer.udp_addr.read().ok().and_then(|a| *a);
         if let Some(addr) = udp_addr {
             // Send via UDP — fire-and-forget (UDP is unreliable by design)
-            let _ = udp_socket.send_to(frame, addr).await;
+            if let Err(_e) = udp_socket.send_to(frame, addr).await {
+                metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+            }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
             // Fallback: send via WebSocket

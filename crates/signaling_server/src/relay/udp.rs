@@ -77,12 +77,16 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
 
         // Minimum packet: 8-byte session token.
         if len < shared_types::UDP_SESSION_TOKEN_LEN {
+            metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
             continue;
         }
 
         let token: [u8; 8] = match buf[..8].try_into() {
             Ok(t) => t,
-            Err(_) => continue,
+            Err(_) => {
+                metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
         };
         let packet_type = if len > shared_types::UDP_SESSION_TOKEN_LEN {
             Some(buf[8])
@@ -95,7 +99,10 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
             let s = state.read().await;
             let pid = match s.udp_sessions.get(&token) {
                 Some(pid) => pid.clone(),
-                None => continue, // Unknown token, silently drop
+                None => {
+                    metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+                    continue; // Unknown token, silently drop
+                }
             };
             // Register/update the peer's UDP address on first packet (or address change)
             if let Some(peer) = s.peers.get(&pid) {
@@ -121,6 +128,7 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
         }
 
         if len < 10 {
+            metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
             continue;
         }
 
@@ -156,7 +164,9 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
                 let screen_data = &buf[9..len];
                 relay_screen_chunk(&state, &metrics, &peer_id, screen_data).await;
             }
-            _ => {}
+            _ => {
+                metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 }
