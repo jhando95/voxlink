@@ -75,6 +75,8 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
             }
         };
 
+        let t0 = std::time::Instant::now();
+
         // Minimum packet: 8-byte session token.
         if len < shared_types::UDP_SESSION_TOKEN_LEN {
             metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
@@ -168,5 +170,7 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
                 metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
             }
         }
+
+        metrics.udp_relay_latency.observe(t0.elapsed().as_secs_f64());
     }
 }

@@ -29,6 +29,7 @@ pub(crate) struct ServerMetrics {
     pub(crate) per_message_counters:
         [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
     pub(crate) signaling_dispatch_latency: Histogram,
+    pub(crate) udp_relay_latency: Histogram,
     pub(crate) started_at: Instant,
 }
 
@@ -56,6 +57,10 @@ impl Default for ServerMetrics {
             signaling_dispatch_latency: Histogram::new(
                 "voxlink_signaling_dispatch_seconds",
                 "Time spent dispatching a single signal message",
+            ),
+            udp_relay_latency: Histogram::new(
+                "voxlink_udp_relay_seconds",
+                "Time from UDP packet receive to final send_to call",
             ),
             started_at: Instant::now(),
         }
@@ -234,6 +239,7 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
     }
 
     metrics.signaling_dispatch_latency.render(&mut out);
+    metrics.udp_relay_latency.render(&mut out);
 
     out
 }
