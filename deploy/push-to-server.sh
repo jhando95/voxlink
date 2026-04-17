@@ -18,13 +18,46 @@
 
 set -e
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <user>@<server-ip>"
-    echo "Example: $0 ubuntu@129.146.123.45"
+TLS_DOMAIN=""
+SERVER=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tls)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --tls requires a domain argument."
+                exit 2
+            fi
+            TLS_DOMAIN="$2"
+            shift 2
+            ;;
+        --tls=*)
+            TLS_DOMAIN="${1#--tls=}"
+            shift
+            ;;
+        -*)
+            echo "ERROR: unknown flag: $1"
+            exit 2
+            ;;
+        *)
+            if [ -z "$SERVER" ]; then
+                SERVER="$1"
+            else
+                echo "ERROR: unexpected positional argument: $1"
+                exit 2
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$SERVER" ]; then
+    echo "Usage: $0 [--tls <domain>] <user>@<server-ip>"
+    echo "Example:"
+    echo "  $0 ubuntu@129.146.123.45"
+    echo "  $0 --tls voice.example.com ubuntu@129.146.123.45"
     exit 1
 fi
-
-SERVER="$1"
 REMOTE_DIR="~/voxlink"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -74,4 +107,12 @@ ssh $SSH_KEY "$SERVER" "cd ${REMOTE_DIR} && chmod +x setup-server.sh && ./setup-
 
 echo ""
 echo "[3/3] Done!"
+
+if [ -n "$TLS_DOMAIN" ]; then
+    echo
+    echo "=== Configuring TLS for $TLS_DOMAIN ==="
+    scp "$SCRIPT_DIR/setup-tls.sh" "$SERVER:/tmp/voxlink-setup-tls.sh"
+    ssh "$SERVER" "chmod +x /tmp/voxlink-setup-tls.sh && sudo /tmp/voxlink-setup-tls.sh '$TLS_DOMAIN'"
+fi
+
 echo ""
