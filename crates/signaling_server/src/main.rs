@@ -99,6 +99,32 @@ async fn main() {
         (Ok(cert_path), Ok(key_path)) => match load_tls_config(&cert_path, &key_path) {
             Ok(config) => {
                 log::info!("TLS enabled (cert: {cert_path}, key: {key_path})");
+                match tls::read_cert_info(&cert_path) {
+                    Ok(info) => {
+                        let days = info.secs_until_expiry / 86_400;
+                        if info.secs_until_expiry < 0 {
+                            log::error!(
+                                "TLS cert for {} has EXPIRED ({} days ago) — refusing to start",
+                                info.subject,
+                                -days
+                            );
+                            std::process::exit(1);
+                        } else if days <= 14 {
+                            log::warn!(
+                                "TLS cert for {} expires in {} days — schedule a renewal",
+                                info.subject,
+                                days
+                            );
+                        } else {
+                            log::info!(
+                                "TLS cert for {} expires in {} days",
+                                info.subject,
+                                days
+                            );
+                        }
+                    }
+                    Err(e) => log::warn!("Could not parse cert for expiry check: {e}"),
+                }
                 Some(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
             }
             Err(e) => {
