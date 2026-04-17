@@ -1,3 +1,4 @@
+pub mod account;
 pub mod auth;
 pub mod calls;
 pub mod channel;

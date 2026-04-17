@@ -265,7 +265,7 @@ pub(crate) async fn handle_signal(
             .await;
         }
         SignalMessage::SetUserStatus { status } => {
-            crate::handle_set_user_status(state, peer_id, status, db).await;
+            handlers::account::handle_set_user_status(state, peer_id, status, db).await;
         }
         SignalMessage::SetChannelTopic { channel_id, topic } => {
             crate::handle_set_channel_topic(state, peer_id, channel_id, topic, db).await;
@@ -303,7 +303,7 @@ pub(crate) async fn handle_signal(
             handlers::chat::handle_search_space_messages(state, peer_id, query, limit, db).await;
         }
         SignalMessage::SetProfile { bio } => {
-            crate::handle_set_profile(state, peer_id, bio, db).await;
+            handlers::account::handle_set_profile(state, peer_id, bio, db).await;
         }
         SignalMessage::RequestUdp => {
             crate::handle_request_udp(state, peer_id).await;
@@ -606,10 +606,10 @@ pub(crate) async fn handle_signal(
         }
         // Account management
         SignalMessage::SetDisplayName { name } => {
-            crate::handle_set_display_name(state, peer_id, name, db).await;
+            handlers::account::handle_set_display_name(state, peer_id, name, db).await;
         }
         SignalMessage::DeleteAccount => {
-            crate::handle_delete_account(state, peer_id, db).await;
+            handlers::account::handle_delete_account(state, peer_id, db).await;
         }
         // Server discovery
         SignalMessage::SetSpacePublic { is_public } => {
