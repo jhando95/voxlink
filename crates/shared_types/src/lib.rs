@@ -13,6 +13,9 @@ pub use protocol::*;
 pub mod screen;
 pub use screen::*;
 
+pub mod helpers;
+pub use helpers::*;
+
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
 pub const MAX_AUDIO_FRAME_SIZE: usize = 4096;
 /// Safe media payload budget for a single UDP datagram.
@@ -32,18 +35,6 @@ pub const UDP_KEEPALIVE_INTERVAL_SECS: u64 = 15;
 pub const SAMPLE_RATE: u32 = 48000;
 pub const CHANNELS: u16 = 1;
 pub const FRAME_SIZE: usize = 960; // 20ms at 48kHz
-
-/// Extract the first URL (http:// or https://) from message content.
-pub fn extract_first_url(content: &str) -> Option<String> {
-    for word in content.split_whitespace() {
-        if word.starts_with("http://") || word.starts_with("https://") {
-            // Strip trailing punctuation that's likely not part of the URL
-            let trimmed = word.trim_end_matches([',', '.', ')', ']', '>', ';']);
-            return Some(trimmed.to_string());
-        }
-    }
-    None
-}
 
 #[cfg(test)]
 mod tests {
