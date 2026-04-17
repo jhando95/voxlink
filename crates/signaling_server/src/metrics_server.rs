@@ -19,6 +19,11 @@ pub(crate) struct ServerMetrics {
     pub(crate) screen_frames_out_total: AtomicU64,
     pub(crate) udp_frames_in_total: AtomicU64,
     pub(crate) udp_frames_out_total: AtomicU64,
+    /// One counter per SignalMessage variant, indexed by
+    /// `SignalMessage::variant_index()`. Array size is
+    /// `shared_types::SIGNAL_MESSAGE_VARIANT_COUNT` (= 201).
+    pub(crate) per_message_counters:
+        [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
     pub(crate) started_at: Instant,
 }
 
@@ -39,6 +44,7 @@ impl Default for ServerMetrics {
             screen_frames_out_total: AtomicU64::new(0),
             udp_frames_in_total: AtomicU64::new(0),
             udp_frames_out_total: AtomicU64::new(0),
+            per_message_counters: std::array::from_fn(|_| AtomicU64::new(0)),
             started_at: Instant::now(),
         }
     }
@@ -109,7 +115,7 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
 
     let uptime_secs = metrics.started_at.elapsed().as_secs();
 
-    format!(
+    let mut out = format!(
         concat!(
             "# TYPE voxlink_connection_attempts_total counter\n",
             "voxlink_connection_attempts_total {}\n",
@@ -185,5 +191,19 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
         total_space_members,
         uptime_secs,
         if tls_enabled { 1 } else { 0 },
-    )
+    );
+
+    out.push_str("# HELP voxlink_signaling_messages_by_type_total Signaling messages received, broken down by SignalMessage variant\n");
+    out.push_str("# TYPE voxlink_signaling_messages_by_type_total counter\n");
+    for (i, name) in shared_types::SignalMessage::VARIANT_NAMES.iter().enumerate() {
+        let count = metrics.per_message_counters[i]
+            .load(Ordering::Relaxed);
+        if count > 0 {
+            out.push_str(&format!(
+                "voxlink_signaling_messages_by_type_total{{type=\"{name}\"}} {count}\n"
+            ));
+        }
+    }
+
+    out
 }

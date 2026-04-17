@@ -127,6 +127,9 @@ pub(crate) async fn handle_connection(
                     metrics
                         .signaling_messages_total
                         .fetch_add(1, Ordering::Relaxed);
+                    metrics
+                        .per_message_counters[signal.variant_index()]
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     crate::handle_signal(&state, &metrics, &peer_id, signal, &db).await;
                 } else {
                     metrics
