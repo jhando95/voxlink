@@ -15,8 +15,7 @@ use crate::handlers;
 // Mirror the private type alias from main.rs so the function signature compiles.
 type Metrics = Arc<ServerMetrics>;
 
-// ChannelSetting is defined in main.rs (crate root); reference it via crate::.
-use crate::ChannelSetting;
+use crate::handlers::channel_settings::ChannelSetting;
 
 pub(crate) async fn handle_signal(
     state: &State,
@@ -268,7 +267,7 @@ pub(crate) async fn handle_signal(
             handlers::account::handle_set_user_status(state, peer_id, status, db).await;
         }
         SignalMessage::SetChannelTopic { channel_id, topic } => {
-            crate::handle_set_channel_topic(state, peer_id, channel_id, topic, db).await;
+            handlers::channel_settings::handle_set_channel_topic(state, peer_id, channel_id, topic, db).await;
         }
         SignalMessage::KickMember { member_id } => {
             handlers::moderation::handle_kick_member(state, peer_id, member_id, db).await;
@@ -312,7 +311,7 @@ pub(crate) async fn handle_signal(
             channel_id,
             user_limit,
         } => {
-            crate::handle_channel_setting(
+            handlers::channel_settings::handle_channel_setting(
                 state,
                 peer_id,
                 channel_id,
@@ -324,7 +323,7 @@ pub(crate) async fn handle_signal(
             channel_id,
             slow_mode_secs,
         } => {
-            crate::handle_channel_setting(
+            handlers::channel_settings::handle_channel_setting(
                 state,
                 peer_id,
                 channel_id,
@@ -336,7 +335,7 @@ pub(crate) async fn handle_signal(
             channel_id,
             category,
         } => {
-            crate::handle_channel_setting(
+            handlers::channel_settings::handle_channel_setting(
                 state,
                 peer_id,
                 channel_id,
@@ -345,7 +344,7 @@ pub(crate) async fn handle_signal(
             .await;
         }
         SignalMessage::SetChannelStatus { channel_id, status } => {
-            crate::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
+            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
                 .await;
         }
         SignalMessage::SetChannelPermissions {
@@ -360,7 +359,7 @@ pub(crate) async fn handle_signal(
             };
             let role_str = min_role.to_lowercase();
             let cid = channel_id.clone();
-            crate::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
+            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
             // Persist min_role to DB
             if let Some(ref db) = db {
                 let db = db.clone();
@@ -380,7 +379,7 @@ pub(crate) async fn handle_signal(
         } => {
             let cid = channel_id.clone();
             let hours = auto_delete_hours;
-            crate::handle_channel_setting(
+            handlers::channel_settings::handle_channel_setting(
                 state,
                 peer_id,
                 channel_id,
@@ -402,7 +401,7 @@ pub(crate) async fn handle_signal(
             peer_id: target_id,
             enabled,
         } => {
-            crate::handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
+            handlers::channel_settings::handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
         }
         SignalMessage::WhisperTo { target_peer_ids } => {
             crate::handle_whisper_to(state, peer_id, target_peer_ids).await;
@@ -613,10 +612,10 @@ pub(crate) async fn handle_signal(
         }
         // Server discovery
         SignalMessage::SetSpacePublic { is_public } => {
-            crate::handle_set_space_public(state, peer_id, is_public, db).await;
+            handlers::channel_settings::handle_set_space_public(state, peer_id, is_public, db).await;
         }
         SignalMessage::BrowsePublicSpaces => {
-            crate::handle_browse_public_spaces(state, peer_id, db).await;
+            handlers::channel_settings::handle_browse_public_spaces(state, peer_id, db).await;
         }
         // Favorites are client-side only (stored in config_store)
         SignalMessage::ToggleFavoriteChannel { .. } => {}

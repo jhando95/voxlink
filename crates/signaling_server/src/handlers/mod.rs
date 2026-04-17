@@ -2,6 +2,7 @@ pub mod account;
 pub mod auth;
 pub mod calls;
 pub mod channel;
+pub mod channel_settings;
 pub mod events;
 pub mod recording;
 pub mod scheduling;
