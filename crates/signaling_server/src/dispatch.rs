@@ -413,7 +413,7 @@ pub(crate) async fn handle_signal(
             member_id,
             duration_secs,
         } => {
-            crate::handle_timeout_member(state, peer_id, member_id, duration_secs, db).await;
+            handlers::timeouts::handle_timeout_member(state, peer_id, member_id, duration_secs, db).await;
         }
         // v0.8.0: Block/Unblock
         SignalMessage::BlockUser { user_id } => {
