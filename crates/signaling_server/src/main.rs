@@ -8,6 +8,7 @@ mod validation;
 mod relay;
 mod connection;
 mod dispatch;
+mod histogram;
 
 pub(crate) use types::{
     max_channel_messages, ChannelMeta, Db, Peer, Room, ServerState, Space, State,
