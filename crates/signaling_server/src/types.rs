@@ -8,7 +8,8 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{ServerStream, LIMITS};
+use crate::tls::ServerStream;
+use crate::LIMITS;
 
 // ─── Types ───
 
