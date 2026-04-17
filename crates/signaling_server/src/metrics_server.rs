@@ -3,6 +3,7 @@ use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use crate::types::State;
+use crate::histogram::Histogram;
 
 pub(crate) struct ServerMetrics {
     pub(crate) connection_attempts_total: AtomicU64,
@@ -27,6 +28,7 @@ pub(crate) struct ServerMetrics {
     /// `shared_types::SIGNAL_MESSAGE_VARIANT_COUNT` (= 201).
     pub(crate) per_message_counters:
         [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
+    pub(crate) signaling_dispatch_latency: Histogram,
     pub(crate) started_at: Instant,
 }
 
@@ -51,6 +53,10 @@ impl Default for ServerMetrics {
             udp_invalid_packets_total: AtomicU64::new(0),
             udp_rate_limited_total: AtomicU64::new(0),
             per_message_counters: std::array::from_fn(|_| AtomicU64::new(0)),
+            signaling_dispatch_latency: Histogram::new(
+                "voxlink_signaling_dispatch_seconds",
+                "Time spent dispatching a single signal message",
+            ),
             started_at: Instant::now(),
         }
     }
@@ -226,6 +232,8 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
             ));
         }
     }
+
+    metrics.signaling_dispatch_latency.render(&mut out);
 
     out
 }

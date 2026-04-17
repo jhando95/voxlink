@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 use futures_util::{SinkExt, StreamExt};
 use shared_types::SignalMessage;
 use tokio::sync::Mutex;
@@ -130,7 +131,11 @@ pub(crate) async fn handle_connection(
                     metrics
                         .per_message_counters[signal.variant_index()]
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let t0 = Instant::now();
                     crate::handle_signal(&state, &metrics, &peer_id, signal, &db).await;
+                    metrics
+                        .signaling_dispatch_latency
+                        .observe(t0.elapsed().as_secs_f64());
                 } else {
                     metrics
                         .malformed_signaling_messages_total
