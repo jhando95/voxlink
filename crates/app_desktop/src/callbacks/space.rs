@@ -112,6 +112,11 @@ pub fn setup_select_space(
             return;
         };
         let space_id_str = space_id.to_string();
+        let already_selected_space = state
+            .borrow()
+            .space
+            .as_ref()
+            .is_some_and(|space| space.id == space_id_str);
         w.set_current_space_id(space_id.clone());
         w.set_space_search_query(slint::SharedString::default());
 
@@ -136,6 +141,11 @@ pub fn setup_select_space(
 
         w.set_current_view(ui_shell::view_to_index(AppView::Space));
         state.borrow_mut().current_view = AppView::Space;
+
+        if already_selected_space {
+            w.set_status_text("Space ready".into());
+            return;
+        }
 
         // Re-join the space on the server so the peer is registered
         let invite_code = invite_code.or_else(|| {
@@ -272,9 +282,7 @@ pub fn setup_leave_space(
         w.set_is_sharing_screen(false);
         w.set_screen_share_owner_name(slint::SharedString::default());
         w.set_screen_share_owner_id(slint::SharedString::default());
-        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-            slint::Rgba8Pixel,
-        >::new(1, 1)));
+        crate::signal_handler::connection::reset_remote_screen_share_surface(&w);
         ui_shell::set_channels(&w, &[]);
         ui_shell::set_members(&w, &[]);
         ui_shell::set_space_audit_log(&w, &[]);

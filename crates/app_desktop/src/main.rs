@@ -13,16 +13,17 @@ mod signal_handler;
 mod tick_loop;
 mod tray;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use device_query::Keycode;
+use i_slint_backend_winit::WinitWindowAccessor;
 use shared_types::MicMode;
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
-use ui_shell::{MainWindow, MemberWidgetWindow};
+use ui_shell::{MainWindow, MemberWidgetWindow, ScreenShareWidgetWindow};
 
 fn main() {
     // #18: Set up logging — stderr + log file
@@ -122,15 +123,25 @@ fn main() {
             return;
         }
     };
+    window.set_screen_share_image(ui_shell::safe_blank_image());
+    window.set_screen_share_image_ready(false);
     window.set_theme_preset(theme_preset);
     window.set_dark_mode(is_dark);
     let member_widget = Rc::new(RefCell::new(None::<MemberWidgetWindow>));
+    let screen_share_widget = Rc::new(RefCell::new(None::<ScreenShareWidgetWindow>));
     register_member_widget_initializer(
         &window,
         &network,
         &rt_handle,
         &member_widget,
         config.member_widget_x.zip(config.member_widget_y),
+    );
+    register_screen_share_widget_initializer(
+        &window,
+        &screen_share_widget,
+        config
+            .screen_share_widget_x
+            .zip(config.screen_share_widget_y),
     );
     friends::load_from_config(&window, &state, config.favorite_friends.clone());
     direct_messages::load_from_config_filtered(
@@ -353,10 +364,15 @@ fn main() {
         let position = widget.window().position();
         (position.x, position.y)
     });
+    let screen_share_widget_position = screen_share_widget.borrow().as_ref().map(|widget| {
+        let position = widget.window().position();
+        (position.x, position.y)
+    });
     helpers::save_member_widget_state_async(
         window.get_member_widget_visible(),
         member_widget_position,
     );
+    helpers::save_screen_share_widget_position_async(screen_share_widget_position);
 
     // Cleanup with timeout — prevents freeze if tasks are stuck
     let cleanup_done = rt.block_on(async {
@@ -514,6 +530,184 @@ fn register_member_widget_initializer(
 
         *member_widget_slot.borrow_mut() = Some(member_widget);
     });
+}
+
+fn register_screen_share_widget_initializer(
+    window: &MainWindow,
+    screen_share_widget_slot: &Rc<RefCell<Option<ScreenShareWidgetWindow>>>,
+    initial_position: Option<(i32, i32)>,
+) {
+    let screen_share_widget_slot = screen_share_widget_slot.clone();
+    let destroy_slot = screen_share_widget_slot.clone();
+    let window_weak = window.as_weak();
+
+    ui_shell::register_screen_share_widget_destroyer(move || {
+        if let Some(widget) = destroy_slot.borrow_mut().take() {
+            let _ = widget.hide();
+        }
+    });
+
+    ui_shell::register_screen_share_widget_initializer(move || {
+        if screen_share_widget_slot.borrow().is_some() {
+            return;
+        }
+
+        let screen_share_widget = match ScreenShareWidgetWindow::new() {
+            Ok(widget) => widget,
+            Err(err) => {
+                log::warn!("Failed to create screen share widget window: {err}");
+                return;
+            }
+        };
+        let start_position = window_weak
+            .upgrade()
+            .map(|window| normalized_screen_share_widget_position(initial_position, &window))
+            .unwrap_or_else(|| initial_position.unwrap_or((96, 96)));
+        {
+            screen_share_widget
+                .window()
+                .set_position(slint::PhysicalPosition::new(
+                    start_position.0,
+                    start_position.1,
+                ));
+        }
+        screen_share_widget.set_screen_image(ui_shell::safe_blank_image());
+        screen_share_widget.set_has_screen_image(false);
+        ui_shell::register_screen_share_widget(&screen_share_widget);
+
+        let focus_window_weak = window_weak.clone();
+        screen_share_widget.on_focus_room(move || {
+            let Some(window) = focus_window_weak.upgrade() else {
+                return;
+            };
+            let _ = window.window().show();
+            window.invoke_navigate(ui_shell::view_to_index(shared_types::AppView::Room));
+        });
+
+        let dismiss_widget_weak = screen_share_widget.as_weak();
+        screen_share_widget.on_dismiss(move || {
+            ui_shell::dismiss_screen_share_widget();
+            if let Some(widget) = dismiss_widget_weak.upgrade() {
+                let position = widget.window().position();
+                helpers::save_screen_share_widget_position_async(Some((position.x, position.y)));
+            }
+        });
+
+        let drag_origin = Rc::new(Cell::new((
+            start_position.0 as f32,
+            start_position.1 as f32,
+        )));
+        let drag_origin_begin = drag_origin.clone();
+        let drag_widget_weak = screen_share_widget.as_weak();
+        screen_share_widget.on_drag_begin(move || {
+            let Some(widget) = drag_widget_weak.upgrade() else {
+                return;
+            };
+            let position = widget.window().position();
+            let scale = widget.window().scale_factor().max(1.0);
+            drag_origin_begin.set((position.x as f32 / scale, position.y as f32 / scale));
+        });
+
+        let drag_origin_move = drag_origin.clone();
+        let drag_widget_weak = screen_share_widget.as_weak();
+        screen_share_widget.on_drag_move(move |delta_x, delta_y| {
+            let Some(widget) = drag_widget_weak.upgrade() else {
+                return;
+            };
+            let scale = widget.window().scale_factor().max(1.0);
+            let (origin_x, origin_y) = drag_origin_move.get();
+            let next_x = ((origin_x + delta_x) * scale).round() as i32;
+            let next_y = ((origin_y + delta_y) * scale).round() as i32;
+            widget
+                .window()
+                .set_position(slint::PhysicalPosition::new(next_x.max(0), next_y.max(0)));
+        });
+
+        let drag_widget_weak = screen_share_widget.as_weak();
+        screen_share_widget.on_drag_end(move || {
+            if let Some(widget) = drag_widget_weak.upgrade() {
+                let position = widget.window().position();
+                helpers::save_screen_share_widget_position_async(Some((position.x, position.y)));
+            }
+        });
+
+        let close_window_weak = window_weak.clone();
+        let screen_share_widget_weak = screen_share_widget.as_weak();
+        screen_share_widget.window().on_close_requested(move || {
+            ui_shell::dismiss_screen_share_widget();
+            if let Some(widget) = screen_share_widget_weak.upgrade() {
+                let position = widget.window().position();
+                helpers::save_screen_share_widget_position_async(Some((position.x, position.y)));
+            }
+            if let Some(window) = close_window_weak.upgrade() {
+                window.set_status_text("Share preview hidden until the share ends".into());
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+
+        *screen_share_widget_slot.borrow_mut() = Some(screen_share_widget);
+    });
+}
+
+fn default_screen_share_widget_position(window: &MainWindow) -> (i32, i32) {
+    let position = window.window().position();
+    let size = window.window().size();
+    let popup_width = 360;
+    let popup_height = 248;
+
+    let monitor = window.window().with_winit_window(|winit_window| {
+        winit_window.current_monitor().map(|monitor| {
+            let size = monitor.size();
+            let position = monitor.position();
+            (
+                position.x,
+                position.y,
+                position.x + size.width as i32,
+                position.y + size.height as i32,
+            )
+        })
+    });
+
+    let default_bounds = monitor.flatten().unwrap_or((0, 0, 2560, 1600));
+    let (monitor_left, monitor_top, monitor_right, monitor_bottom) = default_bounds;
+
+    let gap = 28;
+    let right_candidate = position.x + size.width as i32 + gap;
+    let left_candidate = position.x - popup_width - gap;
+    let x = if right_candidate + popup_width <= monitor_right {
+        right_candidate
+    } else if left_candidate >= monitor_left {
+        left_candidate
+    } else {
+        (monitor_right - popup_width - gap).max(monitor_left + gap)
+    };
+
+    let max_y = (monitor_bottom - popup_height - gap).max(monitor_top + gap);
+    let y = (position.y + 72).clamp(monitor_top + gap, max_y);
+    (x, y)
+}
+
+fn normalized_screen_share_widget_position(
+    saved_position: Option<(i32, i32)>,
+    window: &MainWindow,
+) -> (i32, i32) {
+    let fallback = default_screen_share_widget_position(window);
+    let Some((x, y)) = saved_position else {
+        return fallback;
+    };
+
+    let main_position = window.window().position();
+    let main_size = window.window().size();
+    let horizontal_ok =
+        x >= main_position.x - 800 && x <= main_position.x + main_size.width as i32 + 800;
+    let vertical_ok =
+        y >= main_position.y - 600 && y <= main_position.y + main_size.height as i32 + 600;
+
+    if horizontal_ok && vertical_ok {
+        (x, y)
+    } else {
+        fallback
+    }
 }
 
 fn apply_config(

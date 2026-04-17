@@ -11,6 +11,7 @@ pub struct PerfCollector {
     system: Option<System>,
     pid: Pid,
     num_cpus: f32,
+    peak_memory_mb: f32,
     pub audio_active: Arc<AtomicBool>,
     pub network_connected: Arc<AtomicBool>,
     /// Shared counter for dropped audio frames (#11)
@@ -41,6 +42,7 @@ impl PerfCollector {
             num_cpus: std::thread::available_parallelism()
                 .map(|n| n.get() as f32)
                 .unwrap_or(1.0),
+            peak_memory_mb: 0.0,
             audio_active: Arc::new(AtomicBool::new(false)),
             network_connected: Arc::new(AtomicBool::new(false)),
             dropped_frames: Arc::new(AtomicU64::new(0)),
@@ -73,6 +75,8 @@ impl PerfCollector {
             .map(|p| (p.cpu_usage(), p.memory() as f32 / (1024.0 * 1024.0)))
             .unwrap_or((0.0, 0.0));
 
+        self.peak_memory_mb = self.peak_memory_mb.max(mem);
+
         // #16: Normalize CPU% by core count so 100% = all cores saturated
         let cpu_normalized = cpu / self.num_cpus;
 
@@ -93,6 +97,7 @@ impl PerfCollector {
         PerfSnapshot {
             cpu_percent: cpu_normalized,
             memory_mb: mem,
+            peak_memory_mb: self.peak_memory_mb,
             uptime_secs: self.start_time.elapsed().as_secs(),
             audio_active: self.audio_active.load(Ordering::Relaxed),
             network_connected: self.network_connected.load(Ordering::Relaxed),
@@ -160,6 +165,7 @@ mod tests {
         let snap = collector.snapshot();
         assert!(snap.cpu_percent >= 0.0);
         assert!(snap.memory_mb >= 0.0);
+        assert!(snap.peak_memory_mb >= snap.memory_mb);
         // uptime should be 0 or very small since we just created it
         assert!(snap.uptime_secs <= 1);
         assert!(!snap.audio_active);

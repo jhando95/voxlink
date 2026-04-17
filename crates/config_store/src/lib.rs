@@ -64,6 +64,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub member_widget_y: Option<i32>,
     #[serde(default)]
+    pub screen_share_widget_x: Option<i32>,
+    #[serde(default)]
+    pub screen_share_widget_y: Option<i32>,
+    #[serde(default)]
     pub favorite_friends: Vec<shared_types::FavoriteFriend>,
     #[serde(default)]
     pub recent_direct_messages: Vec<shared_types::DirectMessageThread>,
@@ -259,6 +263,8 @@ impl Default for AppConfig {
             member_widget_visible: false,
             member_widget_x: None,
             member_widget_y: None,
+            screen_share_widget_x: None,
+            screen_share_widget_y: None,
             favorite_friends: Vec::new(),
             recent_direct_messages: Vec::new(),
             peer_volumes: std::collections::HashMap::new(),
@@ -582,6 +588,8 @@ mod tests {
             member_widget_visible: true,
             member_widget_x: Some(120),
             member_widget_y: Some(80),
+            screen_share_widget_x: Some(420),
+            screen_share_widget_y: Some(140),
             favorite_friends: vec![shared_types::FavoriteFriend {
                 user_id: "u1".into(),
                 name: "Alice".into(),
@@ -655,6 +663,8 @@ mod tests {
         assert!(decoded.member_widget_visible);
         assert_eq!(decoded.member_widget_x, Some(120));
         assert_eq!(decoded.member_widget_y, Some(80));
+        assert_eq!(decoded.screen_share_widget_x, Some(420));
+        assert_eq!(decoded.screen_share_widget_y, Some(140));
         assert_eq!(decoded.favorite_friends.len(), 1);
         assert_eq!(decoded.favorite_friends[0].user_id, "u1");
         assert_eq!(decoded.recent_direct_messages.len(), 1);
@@ -688,6 +698,8 @@ mod tests {
         assert!(!config.member_widget_visible);
         assert!(config.member_widget_x.is_none());
         assert!(config.member_widget_y.is_none());
+        assert!(config.screen_share_widget_x.is_none());
+        assert!(config.screen_share_widget_y.is_none());
         assert!(config.favorite_friends.is_empty());
         assert!(config.saved_servers.is_empty());
     }

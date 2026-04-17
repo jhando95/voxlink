@@ -7,12 +7,14 @@ import { RoomView } from "views/room_view.slint";
 import { SettingsView } from "views/settings_view.slint";
 import { SpaceView } from "views/space_view.slint";
 import { SystemView } from "views/system_view.slint";
+import { ScrollView } from "std-widgets.slint";
 
 import "../../../assets/fonts/Inter-Regular.ttf";
 import "../../../assets/fonts/Inter-SemiBold.ttf";
 import "../../../assets/fonts/Inter-Bold.ttf";
 
 export { MemberWidgetWindow } from "member_widget.slint";
+export { ScreenShareWidgetWindow } from "screen_share_widget.slint";
 
 export component MainWindow inherits Window {
     in-out property <string> window-title: "Voxlink";
@@ -46,6 +48,7 @@ export component MainWindow inherits Window {
     in-out property <PerfData> perf: {
         cpu-percent: 0,
         memory-mb: 0,
+        peak-memory-mb: 0,
         uptime-secs: 0,
         audio-active: false,
         network-connected: false,
@@ -100,6 +103,7 @@ export component MainWindow inherits Window {
     in-out property <string> screen-share-owner-name: "";
     in-out property <string> screen-share-owner-id: "";
     in-out property <image> screen-share-image;
+    in-out property <bool> screen-share-image-ready: false;
     in-out property <[ShareSourceData]> screen-share-sources: [];
     in-out property <int> selected-screen-share-source: -1;
     in-out property <int> selected-screen-share-profile: 0;
@@ -278,15 +282,14 @@ export component MainWindow inherits Window {
     // Layout state
     property <bool> desktop-layout: true;
     property <bool> shell-compact: true;
-    property <bool> rail-open: desktop-layout || sidebar-expanded;
+    property <bool> chat-focus-layout: root.current-view == 5;
+    property <bool> rail-open: (root.desktop-layout && !root.chat-focus-layout) || sidebar-expanded;
     changed width => {
-        root.desktop-layout = self.width >= 1180px;
-        root.shell-compact = self.width < 1460px;
+        root.desktop-layout = self.width >= 960px;
+        root.shell-compact = self.width < 1280px;
         if root.desktop-layout {
             root.sidebar-expanded = false;
         }
-        // Keep the shell readable as the window narrows instead of over-compressing it.
-        VxTheme.ui-scale = clamp(self.width / 1120px, 0.80, 1.0);
     }
     property <string> context-title:
         current-view == 0 ? "Home" :
@@ -501,14 +504,14 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 0px;
 
-            if root.rail-open : WorkspaceRail {
-                width: root.desktop-layout ? (root.shell-compact ? 224px : 252px) : 236px;
+            if !root.chat-focus-layout && root.rail-open : WorkspaceRail {
+                width: root.desktop-layout ? (root.shell-compact ? 196px : 236px) : 236px;
                 compact: root.shell-compact;
                 current-view: root.current-view;
                 spaces: root.spaces;
                 current-space-id: root.current-space-id;
                 members: root.members;
-                show-members: root.current-view == 4 || root.current-view == 5;
+                show-members: root.current-view == 4 && !root.shell-compact;
                 room-code: root.room-code;
                 unread-direct-messages-count: root.unread-direct-messages-count;
                 favorite-friends-count: root.favorite-friends-count;
@@ -548,7 +551,7 @@ export component MainWindow inherits Window {
                         ping-ms: root.ping-ms;
                         room-code: root.room-code;
                         unread-direct-messages-count: root.unread-direct-messages-count;
-                        show-nav-button: !root.desktop-layout;
+                        show-nav-button: !root.desktop-layout || root.chat-focus-layout;
                         in-call: root.current-view == 1;
                         is-muted: root.is-muted;
                         is-deafened: root.is-deafened;
@@ -662,6 +665,7 @@ export component MainWindow inherits Window {
                             is-sharing-screen: root.is-sharing-screen;
                             screen-share-owner-name: root.screen-share-owner-name;
                             screen-share-image: root.screen-share-image;
+                            screen-share-image-ready: root.screen-share-image-ready;
                             screen-share-sources: root.screen-share-sources;
                             selected-screen-share-source: root.selected-screen-share-source;
                             selected-screen-share-profile: root.selected-screen-share-profile;
@@ -847,51 +851,352 @@ export component MainWindow inherits Window {
                             list-automod-words => { root.list-automod-words(); }
                         }
 
-                        if root.current-view == 5 : ChatView {
-                            wide: root.desktop-layout;
-                            compact-mode: root.compact-chat;
-                            current-space-name: root.current-space-name;
-                            chat-channel-name: root.chat-channel-name;
-                            chat-is-direct-message: root.chat-is-direct-message;
-                            chat-context-subtitle: root.chat-context-subtitle;
-                            chat-back-view: root.chat-back-view;
-                            chat-messages: root.chat-messages;
-                            chat-pinned-messages: root.chat-pinned-messages;
-                            chat-input <=> root.chat-input;
-                            chat-typing-text: root.chat-typing-text;
-                            editing-message-id <=> root.editing-message-id;
-                            editing-original-content <=> root.editing-original-content;
-                            reply-target-message-id <=> root.reply-target-message-id;
-                            reply-target-sender-name <=> root.reply-target-sender-name;
-                            reply-target-preview <=> root.reply-target-preview;
-                            navigate(view-index) => { root.navigate(view-index); }
-                            chat-typing-activity(is-typing) => { root.chat-typing-activity(is-typing); }
-                            send-text-message => { root.send-text-message(); }
-                            edit-text-message(message-id, content) => { root.edit-text-message(message-id, content); }
-                            delete-text-message(message-id) => { root.delete-text-message(message-id); }
-                            react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
-                            toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
-                            forward-message(message-id) => { root.forward-message(message-id); }
-                            copy-message-text(content) => { root.copy-message-text(content); }
-                            show-profile(user-id) => { root.show-profile(user-id); }
-                            chat-search-results: root.chat-search-results;
-                            chat-search-query <=> root.chat-search-query;
-                            search-messages(query) => { root.search-messages(query); }
-                            typing-dot-phase: root.typing-dot-phase;
-                            slow-mode-secs: root.slow-mode-secs;
-                            slow-mode-remaining <=> root.slow-mode-remaining;
-                            thread-messages: root.thread-messages;
-                            thread-panel-visible: root.thread-panel-visible;
-                            thread-parent-sender: root.thread-parent-sender;
-                            thread-parent-content: root.thread-parent-content;
-                            thread-parent-timestamp: root.thread-parent-timestamp;
-                            open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
-                            close-thread => { root.close-thread(); }
-                            mention-popup-visible: root.mention-popup-visible;
-                            mention-suggestions: root.mention-suggestions;
-                            mention-selected-index <=> root.mention-selected-index;
-                            mention-input-changed(text) => { root.mention-input-changed(text); }
-                            mention-selected(idx) => { root.mention-selected(idx); }
+                        if root.current-view == 5 : Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            background: transparent;
+
+                            if !root.chat-is-direct-message && root.desktop-layout : Rectangle {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width;
+                                height: parent.height;
+                                background: transparent;
+
+                                chat-workspace-sidebar := Rectangle {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: clamp(root.width * 0.23, 236px, 286px);
+                                    height: parent.height;
+                                    background: @linear-gradient(180deg,
+                                        VxTheme.bg-surface.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
+                                        VxTheme.bg-surface 100%);
+                                    border-color: VxTheme.border-subtle;
+                                    border-width: 1px;
+                                    clip: true;
+
+                                    VerticalLayout {
+                                        spacing: 0px;
+
+                                        Rectangle {
+                                            height: 62px;
+                                            background: VxTheme.bg-panel;
+
+                                            Rectangle {
+                                                y: parent.height - 1px;
+                                                width: parent.width;
+                                                height: 1px;
+                                                background: VxTheme.border-subtle;
+                                            }
+
+                                            HorizontalLayout {
+                                                padding-left: 14px;
+                                                padding-right: 12px;
+                                                alignment: space-between;
+                                                spacing: 10px;
+
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    spacing: 1px;
+
+                                                    Text {
+                                                        text: root.current-space-name != "" ? root.current-space-name : "Space";
+                                                        color: VxTheme.text-primary;
+                                                        font-size: 15px;
+                                                        font-weight: 700;
+                                                        overflow: elide;
+                                                    }
+
+                                                    Text {
+                                                        text: root.visible-text-channels + " text · " + root.visible-voice-channels + " voice";
+                                                        color: VxTheme.text-muted;
+                                                        font-size: 9px;
+                                                        overflow: elide;
+                                                    }
+                                                }
+
+                                                VxButton {
+                                                    label: "Space";
+                                                    glyph: "BK";
+                                                    small: true;
+                                                    soft: true;
+                                                    clicked => { root.navigate(4); }
+                                                }
+                                            }
+                                        }
+
+                                        ScrollView {
+                                            vertical-stretch: 1;
+
+                                            VerticalLayout {
+                                                padding-left: 10px;
+                                                padding-right: 10px;
+                                                padding-top: 10px;
+                                                padding-bottom: 12px;
+                                                spacing: 6px;
+
+                                                Text {
+                                                    text: "TEXT CHANNELS";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                    font-weight: 700;
+                                                }
+
+                                                for channel in root.channels : Rectangle {
+                                                    visible: !channel.is-category-header && !channel.is-voice;
+                                                    height: self.visible ? 38px : 0px;
+                                                    border-radius: 10px;
+                                                    background: channel.id == root.chat-channel-id
+                                                        ? VxTheme.tab-active-bg
+                                                        : text-channel-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    border-color: channel.id == root.chat-channel-id ? VxTheme.accent-border : transparent;
+                                                    border-width: channel.id == root.chat-channel-id ? 1px : 0px;
+
+                                                    text-channel-touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.select-text-channel(channel.id); }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        padding-left: 12px;
+                                                        padding-right: 10px;
+                                                        spacing: 8px;
+                                                        alignment: center;
+
+                                                        Text {
+                                                            text: "#";
+                                                            color: channel.id == root.chat-channel-id ? VxTheme.accent : VxTheme.text-secondary;
+                                                            font-size: 13px;
+                                                            font-weight: 700;
+                                                            vertical-alignment: center;
+                                                        }
+
+                                                        Text {
+                                                            text: channel.name;
+                                                            color: channel.id == root.chat-channel-id ? VxTheme.accent : VxTheme.text-primary;
+                                                            font-size: 11px;
+                                                            font-weight: channel.id == root.chat-channel-id ? 700 : 600;
+                                                            horizontal-stretch: 1;
+                                                            overflow: elide;
+                                                            vertical-alignment: center;
+                                                        }
+
+                                                        if channel.mention-count > 0 : Rectangle {
+                                                            height: 18px;
+                                                            border-radius: 9px;
+                                                            background: VxTheme.warning-soft;
+                                                            width: mention-pill.preferred-width + 12px;
+
+                                                            mention-pill := Text {
+                                                                text: "@" + channel.mention-count;
+                                                                color: VxTheme.warning;
+                                                                font-size: 8px;
+                                                                font-weight: 700;
+                                                                horizontal-alignment: center;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+
+                                                        if channel.unread-count > 0 : Rectangle {
+                                                            height: 18px;
+                                                            border-radius: 9px;
+                                                            background: channel.id == root.chat-channel-id ? VxTheme.accent-subtle : VxTheme.bg-soft;
+                                                            width: unread-pill.preferred-width + 12px;
+
+                                                            unread-pill := Text {
+                                                                text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
+                                                                color: channel.id == root.chat-channel-id ? VxTheme.accent : VxTheme.text-secondary;
+                                                                font-size: 8px;
+                                                                font-weight: 700;
+                                                                horizontal-alignment: center;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    height: 1px;
+                                                    background: VxTheme.border-subtle;
+                                                }
+
+                                                Text {
+                                                    text: "VOICE CHANNELS";
+                                                    color: VxTheme.text-muted;
+                                                    font-size: 9px;
+                                                    font-weight: 700;
+                                                }
+
+                                                for channel in root.channels : Rectangle {
+                                                    visible: !channel.is-category-header && channel.is-voice;
+                                                    height: self.visible ? 38px : 0px;
+                                                    border-radius: 10px;
+                                                    background: channel.is-active
+                                                        ? VxTheme.tab-active-bg
+                                                        : voice-channel-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                                    border-color: channel.is-active ? VxTheme.accent-border : transparent;
+                                                    border-width: channel.is-active ? 1px : 0px;
+
+                                                    voice-channel-touch := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.join-channel(channel.id); }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        padding-left: 12px;
+                                                        padding-right: 10px;
+                                                        spacing: 8px;
+                                                        alignment: center;
+
+                                                        Text {
+                                                            text: "\u{1F50A}";
+                                                            color: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
+                                                            font-size: 12px;
+                                                            vertical-alignment: center;
+                                                        }
+
+                                                        Text {
+                                                            text: channel.name;
+                                                            color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
+                                                            font-size: 11px;
+                                                            font-weight: channel.is-active ? 700 : 600;
+                                                            horizontal-stretch: 1;
+                                                            overflow: elide;
+                                                            vertical-alignment: center;
+                                                        }
+
+                                                        if channel.peer-count > 0 : Rectangle {
+                                                            height: 18px;
+                                                            border-radius: 9px;
+                                                            background: channel.is-active ? VxTheme.success-dim : VxTheme.bg-soft;
+                                                            width: peer-pill.preferred-width + 12px;
+
+                                                            peer-pill := Text {
+                                                                text: channel.peer-count + "";
+                                                                color: channel.is-active ? VxTheme.success : VxTheme.text-secondary;
+                                                                font-size: 8px;
+                                                                font-weight: 700;
+                                                                horizontal-alignment: center;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                chat-workspace-content := Rectangle {
+                                    x: chat-workspace-sidebar.width;
+                                    y: 0px;
+                                    width: parent.width - chat-workspace-sidebar.width;
+                                    height: parent.height;
+                                    background: transparent;
+
+                                    ChatView {
+                                        x: 0px;
+                                        y: 0px;
+                                        width: parent.width;
+                                        height: parent.height;
+                                        wide: true;
+                                        compact-mode: root.compact-chat;
+                                        current-space-name: root.current-space-name;
+                                        chat-channel-name: root.chat-channel-name;
+                                        chat-is-direct-message: root.chat-is-direct-message;
+                                        chat-context-subtitle: root.chat-context-subtitle;
+                                        chat-back-view: root.chat-back-view;
+                                        chat-messages: root.chat-messages;
+                                        chat-pinned-messages: root.chat-pinned-messages;
+                                        chat-input <=> root.chat-input;
+                                        chat-typing-text: root.chat-typing-text;
+                                        editing-message-id <=> root.editing-message-id;
+                                        editing-original-content <=> root.editing-original-content;
+                                        reply-target-message-id <=> root.reply-target-message-id;
+                                        reply-target-sender-name <=> root.reply-target-sender-name;
+                                        reply-target-preview <=> root.reply-target-preview;
+                                        navigate(view-index) => { root.navigate(view-index); }
+                                        chat-typing-activity(is-typing) => { root.chat-typing-activity(is-typing); }
+                                        send-text-message => { root.send-text-message(); }
+                                        edit-text-message(message-id, content) => { root.edit-text-message(message-id, content); }
+                                        delete-text-message(message-id) => { root.delete-text-message(message-id); }
+                                        react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
+                                        toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
+                                        forward-message(message-id) => { root.forward-message(message-id); }
+                                        copy-message-text(content) => { root.copy-message-text(content); }
+                                        show-profile(user-id) => { root.show-profile(user-id); }
+                                        chat-search-results: root.chat-search-results;
+                                        chat-search-query <=> root.chat-search-query;
+                                        search-messages(query) => { root.search-messages(query); }
+                                        typing-dot-phase: root.typing-dot-phase;
+                                        slow-mode-secs: root.slow-mode-secs;
+                                        slow-mode-remaining <=> root.slow-mode-remaining;
+                                        thread-messages: root.thread-messages;
+                                        thread-panel-visible: root.thread-panel-visible;
+                                        thread-parent-sender: root.thread-parent-sender;
+                                        thread-parent-content: root.thread-parent-content;
+                                        thread-parent-timestamp: root.thread-parent-timestamp;
+                                        open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
+                                        close-thread => { root.close-thread(); }
+                                        mention-popup-visible: root.mention-popup-visible;
+                                        mention-suggestions: root.mention-suggestions;
+                                        mention-selected-index <=> root.mention-selected-index;
+                                        mention-input-changed(text) => { root.mention-input-changed(text); }
+                                        mention-selected(idx) => { root.mention-selected(idx); }
+                                    }
+                                }
+                            }
+
+                            if root.chat-is-direct-message || !root.desktop-layout : ChatView {
+                                wide: root.desktop-layout && !root.shell-compact;
+                                compact-mode: root.compact-chat || root.shell-compact;
+                                current-space-name: root.current-space-name;
+                                chat-channel-name: root.chat-channel-name;
+                                chat-is-direct-message: root.chat-is-direct-message;
+                                chat-context-subtitle: root.chat-context-subtitle;
+                                chat-back-view: root.chat-back-view;
+                                chat-messages: root.chat-messages;
+                                chat-pinned-messages: root.chat-pinned-messages;
+                                chat-input <=> root.chat-input;
+                                chat-typing-text: root.chat-typing-text;
+                                editing-message-id <=> root.editing-message-id;
+                                editing-original-content <=> root.editing-original-content;
+                                reply-target-message-id <=> root.reply-target-message-id;
+                                reply-target-sender-name <=> root.reply-target-sender-name;
+                                reply-target-preview <=> root.reply-target-preview;
+                                navigate(view-index) => { root.navigate(view-index); }
+                                chat-typing-activity(is-typing) => { root.chat-typing-activity(is-typing); }
+                                send-text-message => { root.send-text-message(); }
+                                edit-text-message(message-id, content) => { root.edit-text-message(message-id, content); }
+                                delete-text-message(message-id) => { root.delete-text-message(message-id); }
+                                react-to-message(message-id, emoji) => { root.react-to-message(message-id, emoji); }
+                                toggle-pin-message(message-id, pinned) => { root.toggle-pin-message(message-id, pinned); }
+                                forward-message(message-id) => { root.forward-message(message-id); }
+                                copy-message-text(content) => { root.copy-message-text(content); }
+                                show-profile(user-id) => { root.show-profile(user-id); }
+                                chat-search-results: root.chat-search-results;
+                                chat-search-query <=> root.chat-search-query;
+                                search-messages(query) => { root.search-messages(query); }
+                                typing-dot-phase: root.typing-dot-phase;
+                                slow-mode-secs: root.slow-mode-secs;
+                                slow-mode-remaining <=> root.slow-mode-remaining;
+                                thread-messages: root.thread-messages;
+                                thread-panel-visible: root.thread-panel-visible;
+                                thread-parent-sender: root.thread-parent-sender;
+                                thread-parent-content: root.thread-parent-content;
+                                thread-parent-timestamp: root.thread-parent-timestamp;
+                                open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
+                                close-thread => { root.close-thread(); }
+                                mention-popup-visible: root.mention-popup-visible;
+                                mention-suggestions: root.mention-suggestions;
+                                mention-selected-index <=> root.mention-selected-index;
+                                mention-input-changed(text) => { root.mention-input-changed(text); }
+                                mention-selected(idx) => { root.mention-selected(idx); }
+                            }
                         }
 
                         if root.current-view == 3 : SystemView {

@@ -22,6 +22,7 @@ export struct ParticipantData {
 export struct PerfData {
     cpu-percent: float,
     memory-mb: float,
+    peak-memory-mb: float,
     uptime-secs: int,
     audio-active: bool,
     network-connected: bool,
@@ -523,10 +524,10 @@ export global VxTheme {
     in-out property <bool> compact-chat: false;
 
     // ── Responsive scaling ──
-    // Set this from the window's width; everything else derives from it.
+    // Kept at 1.0 — responsive layout is handled by desktop-layout / shell-compact flags,
+    // not by shrinking every dimension. The `s` multiplier remains for future use.
     in-out property <float> ui-scale: 1.0;
-    // Scaled helper — multiply any base length by this
-    out property <float> s: ui-scale;
+    out property <float> s: 1.0;
 
     // ── Theme-specific layout tokens ──
     // ── Spacing scale (4px grid) ──

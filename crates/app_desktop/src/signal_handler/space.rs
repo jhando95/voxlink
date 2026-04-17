@@ -97,6 +97,80 @@ pub fn handle_space_joined(
 ) {
     log::info!("Joined space: {} ({})", space.name, space.id);
 
+    let (
+        previous_space_id,
+        previous_view,
+        previous_active_channel_id,
+        previous_selected_text_channel_id,
+        previous_unread_text_channels,
+        previous_typing_users,
+        previous_typing_ticks,
+    ) = {
+        let s = state.borrow();
+        let (
+            active_channel_id,
+            selected_text_channel_id,
+            unread_text_channels,
+            typing_users,
+            typing_ticks,
+        ) = s
+            .space
+            .as_ref()
+            .filter(|current_space| current_space.id == space.id)
+            .map(|current_space| {
+                (
+                    current_space.active_channel_id.clone(),
+                    current_space.selected_text_channel_id.clone(),
+                    current_space.unread_text_channels.clone(),
+                    current_space.typing_users.clone(),
+                    current_space.typing_ticks.clone(),
+                )
+            })
+            .unwrap_or_default();
+        (
+            w.get_current_space_id().to_string(),
+            s.current_view,
+            active_channel_id,
+            selected_text_channel_id,
+            unread_text_channels,
+            typing_users,
+            typing_ticks,
+        )
+    };
+
+    let same_space_refresh = previous_space_id == space.id;
+    let preserved_active_channel_id = previous_active_channel_id.filter(|channel_id| {
+        channels.iter().any(|channel| {
+            channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Voice
+        })
+    });
+    let preserved_selected_text_channel_id =
+        previous_selected_text_channel_id.filter(|channel_id| {
+            channels.iter().any(|channel| {
+                channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
+            })
+        });
+    let selected_text_channel_id = preserved_selected_text_channel_id
+        .clone()
+        .or_else(|| remembered_text_channel(space, channels));
+    let restored_text_channel = selected_text_channel_id.as_ref().and_then(|channel_id| {
+        channels.iter().find(|channel| {
+            channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
+        })
+    });
+    let preserve_context = same_space_refresh
+        && (preserved_active_channel_id.is_some() || preserved_selected_text_channel_id.is_some());
+    let restore_text_chat = !preserve_context
+        && preserved_active_channel_id.is_none()
+        && restored_text_channel.is_some();
+    let next_view = if preserve_context {
+        previous_view
+    } else if restore_text_chat {
+        AppView::TextChat
+    } else {
+        AppView::Space
+    };
+
     let space_state = SpaceState {
         id: space.id.clone(),
         name: space.name.clone(),
@@ -105,12 +179,24 @@ pub fn handle_space_joined(
         channels: channels.to_vec(),
         members: members.to_vec(),
         audit_log: Vec::new(),
-        active_channel_id: None,
-        selected_text_channel_id: remembered_text_channel(space, channels),
+        active_channel_id: preserved_active_channel_id.clone(),
+        selected_text_channel_id: selected_text_channel_id.clone(),
         self_role: space.self_role,
-        unread_text_channels: Default::default(),
-        typing_users: Default::default(),
-        typing_ticks: Default::default(),
+        unread_text_channels: if same_space_refresh {
+            previous_unread_text_channels
+        } else {
+            Default::default()
+        },
+        typing_users: if same_space_refresh {
+            previous_typing_users
+        } else {
+            Default::default()
+        },
+        typing_ticks: if same_space_refresh {
+            previous_typing_ticks
+        } else {
+            Default::default()
+        },
     };
 
     {
@@ -118,7 +204,7 @@ pub fn handle_space_joined(
         s.space = Some(space_state);
         s.active_direct_message_user_id = None;
         s.direct_typing_users.clear();
-        s.current_view = AppView::Space;
+        s.current_view = next_view;
     }
 
     w.set_current_space_id(space.id.clone().into());
@@ -127,21 +213,58 @@ pub fn handle_space_joined(
     w.set_space_description(space.description.clone().into());
     w.set_space_search_query(slint::SharedString::default());
     w.set_confirm_delete_channel_id(slint::SharedString::default());
-    w.set_chat_channel_id(slint::SharedString::default());
-    w.set_chat_channel_name(slint::SharedString::default());
-    w.set_chat_is_direct_message(false);
-    w.set_chat_context_subtitle(slint::SharedString::default());
-    w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
-    w.set_chat_input(slint::SharedString::default());
-    w.set_chat_pinned_messages(
-        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
-    );
-    w.set_chat_typing_text(slint::SharedString::default());
-    w.set_editing_message_id(slint::SharedString::default());
-    w.set_editing_original_content(slint::SharedString::default());
-    w.set_reply_target_message_id(slint::SharedString::default());
-    w.set_reply_target_sender_name(slint::SharedString::default());
-    w.set_reply_target_preview(slint::SharedString::default());
+    if restore_text_chat {
+        let channel = restored_text_channel.expect("checked is_some above");
+        let subtitle = if channel.topic.is_empty() {
+            space.name.clone()
+        } else {
+            format!("{} — {}", space.name, channel.topic)
+        };
+        w.set_chat_channel_id(channel.id.clone().into());
+        w.set_chat_channel_name(channel.name.clone().into());
+        w.set_chat_is_direct_message(false);
+        w.set_chat_context_subtitle(subtitle.into());
+        w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
+        w.set_slow_mode_secs(channel.slow_mode_secs as i32);
+        w.set_slow_mode_remaining(0);
+        w.set_chat_input(slint::SharedString::default());
+        w.set_chat_pinned_messages(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+        w.set_chat_typing_text(slint::SharedString::default());
+        w.set_editing_message_id(slint::SharedString::default());
+        w.set_editing_original_content(slint::SharedString::default());
+        w.set_reply_target_message_id(slint::SharedString::default());
+        w.set_reply_target_sender_name(slint::SharedString::default());
+        w.set_reply_target_preview(slint::SharedString::default());
+        w.set_thread_panel_visible(false);
+        w.set_thread_parent_sender(slint::SharedString::default());
+        w.set_thread_parent_content(slint::SharedString::default());
+        w.set_thread_parent_timestamp(slint::SharedString::default());
+        w.set_thread_messages(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+        w.set_chat_search_query(slint::SharedString::default());
+        w.set_chat_search_results(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+    } else if !preserve_context {
+        w.set_chat_channel_id(slint::SharedString::default());
+        w.set_chat_channel_name(slint::SharedString::default());
+        w.set_chat_is_direct_message(false);
+        w.set_chat_context_subtitle(slint::SharedString::default());
+        w.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
+        w.set_chat_input(slint::SharedString::default());
+        w.set_chat_pinned_messages(
+            std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+        );
+        w.set_chat_typing_text(slint::SharedString::default());
+        w.set_editing_message_id(slint::SharedString::default());
+        w.set_editing_original_content(slint::SharedString::default());
+        w.set_reply_target_message_id(slint::SharedString::default());
+        w.set_reply_target_sender_name(slint::SharedString::default());
+        w.set_reply_target_preview(slint::SharedString::default());
+    }
     w.set_is_space_owner(space.is_owner);
     w.set_is_space_public(space.is_public);
     apply_space_permissions(w, space.self_role);
@@ -156,9 +279,15 @@ pub fn handle_space_joined(
             crate::friends::persist(state);
         }
     }
-    w.set_current_view(ui_shell::view_to_index(AppView::Space));
+    w.set_current_view(ui_shell::view_to_index(next_view));
     w.set_space_invite_code(slint::SharedString::default());
-    w.set_status_text("Joined space".into());
+    w.set_status_text(if preserve_context {
+        "Space refreshed".into()
+    } else if restore_text_chat {
+        "Restoring channel...".into()
+    } else {
+        "Joined space".into()
+    });
 
     // Show welcome overlay if the space has a welcome message
     if let Some(msg) = welcome_message {
@@ -274,12 +403,22 @@ fn remembered_text_channel(
 ) -> Option<String> {
     let cfg = config_store::load_config();
     if cfg.last_space_id.as_deref() != Some(space.id.as_str()) {
-        return None;
+        return channels
+            .iter()
+            .find(|channel| channel.channel_type == shared_types::ChannelType::Text)
+            .map(|channel| channel.id.clone());
     }
 
-    cfg.last_channel_id.filter(|channel_id| {
-        channels.iter().any(|channel| {
-            channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
+    cfg.last_channel_id
+        .filter(|channel_id| {
+            channels.iter().any(|channel| {
+                channel.id == *channel_id && channel.channel_type == shared_types::ChannelType::Text
+            })
         })
-    })
+        .or_else(|| {
+            channels
+                .iter()
+                .find(|channel| channel.channel_type == shared_types::ChannelType::Text)
+                .map(|channel| channel.id.clone())
+        })
 }

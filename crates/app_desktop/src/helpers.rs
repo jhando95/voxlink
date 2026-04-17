@@ -101,6 +101,8 @@ pub fn auto_save_settings(
             member_widget_visible: existing.member_widget_visible,
             member_widget_x: existing.member_widget_x,
             member_widget_y: existing.member_widget_y,
+            screen_share_widget_x: existing.screen_share_widget_x,
+            screen_share_widget_y: existing.screen_share_widget_y,
             favorite_friends: existing.favorite_friends,
             recent_direct_messages: existing.recent_direct_messages,
             peer_volumes: existing.peer_volumes,
@@ -398,6 +400,18 @@ pub fn save_member_widget_state_async(visible: bool, position: Option<(i32, i32)
         if let Some((x, y)) = position {
             cfg.member_widget_x = Some(x);
             cfg.member_widget_y = Some(y);
+        }
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+pub fn save_screen_share_widget_position_async(position: Option<(i32, i32)>) {
+    crate::helpers::spawn_config_save(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        if let Some((x, y)) = position {
+            cfg.screen_share_widget_x = Some(x);
+            cfg.screen_share_widget_y = Some(y);
         }
         let _ = config_store::save_config(&cfg);
     });

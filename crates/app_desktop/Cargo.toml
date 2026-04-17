@@ -30,3 +30,4 @@ serde_json = { workspace = true }
 xcap = { version = "0.9.1", default-features = false, features = ["image"] }
 rand = { workspace = true }
 tray-icon = "0.21"
+i-slint-backend-winit = "1.15.1"

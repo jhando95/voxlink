@@ -1,0 +1,246 @@
+import { VxButton, VxCard, VxStatusPill } from "components.slint";
+import { VxTheme } from "theme.slint";
+
+import "../../../assets/fonts/Inter-Regular.ttf";
+import "../../../assets/fonts/Inter-SemiBold.ttf";
+import "../../../assets/fonts/Inter-Bold.ttf";
+
+export component ScreenShareWidgetWindow inherits Window {
+    in-out property <string> owner-name: "";
+    in-out property <string> room-code: "";
+    in-out property <string> space-name: "";
+    in-out property <bool> in-space-channel: false;
+    in-out property <bool> has-screen-share: false;
+    in-out property <bool> is-sharing-screen: false;
+    in-out property <image> screen-image;
+    in-out property <bool> has-screen-image: false;
+    in-out property <bool> dark-mode: true;
+    in-out property <int> theme-preset: 0;
+    changed dark-mode => { VxTheme.dark-mode = self.dark-mode; }
+    changed theme-preset => { VxTheme.theme-preset = self.theme-preset; }
+    callback focus-room();
+    callback dismiss();
+    callback drag-begin();
+    callback drag-move(float, float);
+    callback drag-end();
+    in-out property <bool> drag-active: false;
+
+    title: root.is-sharing-screen
+        ? "Voxlink Share Preview"
+        : (root.owner-name != "" ? root.owner-name + " · Voxlink Share" : "Voxlink Share");
+    icon: @image-url("../../../assets/icon.png");
+    default-font-family: "Inter";
+    default-font-size: 13px;
+    min-width: 280px;
+    min-height: 210px;
+    preferred-width: 360px;
+    preferred-height: 248px;
+    no-frame: false;
+    background: VxTheme.bg-canvas;
+    always-on-top: true;
+
+    property <string> context-label: root.room-code == ""
+        ? ""
+        : (root.in-space-channel
+            ? (root.space-name != "" ? "# " + root.room-code + " · " + root.space-name : "# " + root.room-code)
+            : root.room-code);
+
+    Rectangle {
+        background: VxTheme.bg-canvas;
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 22%);
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+
+            VxCard {
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 10px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 24px;
+                        height: 28px;
+                        border-radius: 10px;
+                        background: drag-touch.has-hover || root.drag-active
+                            ? VxTheme.card-hover-bg
+                            : transparent;
+                        border-color: root.drag-active ? VxTheme.accent-border : transparent;
+                        border-width: root.drag-active ? 1px : 0px;
+
+                        VerticalLayout {
+                            x: 10px;
+                            y: 7px;
+                            spacing: 4px;
+                            Rectangle {
+                                width: 4px;
+                                height: 4px;
+                                border-radius: 2px;
+                                background: root.drag-active ? VxTheme.accent : VxTheme.text-muted;
+                            }
+                            Rectangle {
+                                width: 4px;
+                                height: 4px;
+                                border-radius: 2px;
+                                background: root.drag-active ? VxTheme.accent : VxTheme.text-muted;
+                            }
+                            Rectangle {
+                                width: 4px;
+                                height: 4px;
+                                border-radius: 2px;
+                                background: root.drag-active ? VxTheme.accent : VxTheme.text-muted;
+                            }
+                        }
+
+                        drag-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            pointer-event(event) => {
+                                if (event.button != PointerEventButton.left) {
+                                    return;
+                                }
+                                if (event.kind == PointerEventKind.up) {
+                                    if (root.drag-active) {
+                                        root.drag-active = false;
+                                        root.drag-end();
+                                    }
+                                    return;
+                                }
+                                if (event.kind == PointerEventKind.down) {
+                                    root.drag-active = true;
+                                    root.drag-begin();
+                                    return;
+                                }
+                            }
+                            moved => {
+                                if (root.drag-active) {
+                                    root.drag-move(
+                                        (self.mouse-x - self.pressed-x) / 1px,
+                                        (self.mouse-y - self.pressed-y) / 1px
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    VxStatusPill {
+                        label: root.is-sharing-screen ? "Live" : "Watching";
+                        tone: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
+                        fill: root.is-sharing-screen ? VxTheme.success-dim : VxTheme.accent-subtle;
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+
+                        Text {
+                            text: root.is-sharing-screen
+                                ? "Your screen is live"
+                                : (root.owner-name != "" ? root.owner-name + " is sharing" : "Screen share active");
+                            color: VxTheme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: root.context-label != "" ? root.context-label : "Return to the call at any time";
+                            color: VxTheme.text-muted;
+                            font-size: 10px;
+                            overflow: elide;
+                        }
+                    }
+
+                    VxButton {
+                        label: "Return";
+                        small: true;
+                        accent: true;
+                        clicked => { root.focus-room(); }
+                    }
+
+                    VxButton {
+                        label: "Hide";
+                        small: true;
+                        ghost: true;
+                        clicked => { root.dismiss(); }
+                    }
+                }
+            }
+
+            VxCard {
+                vertical-stretch: 1;
+                clip: true;
+                border-color: root.is-sharing-screen
+                    ? VxTheme.success.transparentize(0.35)
+                    : VxTheme.accent-border;
+                border-width: 1px;
+
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: VxTheme.bg-stage;
+                }
+
+                if root.has-screen-image : Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.screen-image;
+                    image-fit: contain;
+                }
+
+                if !root.has-screen-image : Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: VxTheme.bg-stage;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: root.is-sharing-screen
+                            ? "Preparing live preview…"
+                            : "Waiting for screen frames…";
+                        color: VxTheme.text-muted;
+                        font-size: 12px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    x: 10px;
+                    y: parent.height - self.height - 10px;
+                    width: preview-note.preferred-width + 20px;
+                    height: 26px;
+                    border-radius: 13px;
+                    background: VxTheme.bg-panel.transparentize(0.16);
+
+                    preview-note := Text {
+                        text: root.is-sharing-screen
+                            ? "Share stays live while you browse"
+                            : "Preview stays here outside the main window";
+                        color: VxTheme.text-secondary;
+                        font-size: 9px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.focus-room(); }
+                }
+            }
+        }
+    }
+}

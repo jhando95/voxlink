@@ -32,6 +32,7 @@ export component RoomView inherits Rectangle {
     in property <bool> is-sharing-screen: false;
     in property <string> screen-share-owner-name: "";
     in property <image> screen-share-image;
+    in property <bool> screen-share-image-ready: false;
     in property <[ShareSourceData]> screen-share-sources: [];
     in property <int> selected-screen-share-source: -1;
     in property <int> selected-screen-share-profile: 0;
@@ -49,6 +50,16 @@ export component RoomView inherits Rectangle {
     // Pan slider value: 0.0 = full left, 0.5 = center, 1.0 = full right
     in-out property <float> selected-peer-pan: 0.5;
     in-out property <bool> show-share-config: false;
+    changed is-sharing-screen => {
+        if root.is-sharing-screen {
+            root.show-share-config = false;
+        }
+    }
+    changed has-screen-share => {
+        if root.has-screen-share && !root.is-sharing-screen {
+            root.show-share-config = false;
+        }
+    }
     callback copy-room-code();
     callback leave-room();
     callback leave-channel();
@@ -284,11 +295,28 @@ export component RoomView inherits Rectangle {
                     border-width: 1px;
                     clip: true;
 
-                    Image {
+                    if root.screen-share-image-ready : Image {
                         width: parent.width;
                         height: parent.height;
                         source: root.screen-share-image;
                         image-fit: contain;
+                    }
+
+                    if !root.screen-share-image-ready : Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        background: VxTheme.bg-stage;
+
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "Preparing screen share…";
+                            color: VxTheme.text-muted;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
 
                     // Sharer badge overlaid top-left
@@ -652,8 +680,8 @@ export component RoomView inherits Rectangle {
                     if root.is-sharing-screen : Rectangle {
                         x: parent.width - self.width - 18px;
                         y: 18px;
-                        width: root.share-preview-card-width;
-                        height: root.share-preview-card-height;
+                        width: clamp(root.width * 0.24, 228px, 296px);
+                        height: 132px;
                         border-radius: VxTheme.radius-card;
                         background: VxTheme.bg-card.transparentize(VxTheme.dark-mode ? 0.04 : 0.01);
                         border-color: VxTheme.success.transparentize(0.45);
@@ -690,38 +718,24 @@ export component RoomView inherits Rectangle {
                             }
 
                             Rectangle {
-                                height: root.share-preview-frame-height;
+                                height: 48px;
                                 border-radius: VxTheme.radius-control;
-                                background: VxTheme.bg-stage;
-                                border-color: VxTheme.border-subtle;
+                                background: @linear-gradient(135deg,
+                                    VxTheme.success-dim 0%,
+                                    VxTheme.accent-subtle 100%);
+                                border-color: VxTheme.success.transparentize(0.48);
                                 border-width: 1px;
-                                clip: true;
-
-                                Image {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    source: root.screen-share-image;
-                                    image-fit: contain;
-                                }
-
-                                Rectangle {
-                                    x: 0px;
-                                    y: 0px;
-                                    width: parent.width;
-                                    height: 30px;
-                                    background: @linear-gradient(180deg, #00000052 0%, transparent 100%);
-                                }
 
                                 Rectangle {
                                     x: 10px;
-                                    y: 10px;
+                                    y: 14px;
                                     height: 20px;
                                     width: preview-badge.preferred-width + 16px;
                                     border-radius: 10px;
                                     background: VxTheme.bg-panel.transparentize(0.18);
 
                                     preview-badge := Text {
-                                        text: "LIVE PREVIEW";
+                                        text: "POP-OUT PREVIEW";
                                         color: VxTheme.text-primary;
                                         font-size: 8px;
                                         font-weight: 800;
@@ -730,13 +744,26 @@ export component RoomView inherits Rectangle {
                                         vertical-alignment: center;
                                     }
                                 }
+
+                                Text {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text: "Separate window active";
+                                    color: VxTheme.success;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
                             }
 
                             VerticalLayout {
                                 spacing: 3px;
 
                                 Text {
-                                    text: root.screen-share-source-label != "" ? root.screen-share-source-label : "Preparing local preview";
+                                    text: root.screen-share-source-label != "" ? root.screen-share-source-label : "Preparing pop-out preview";
                                     color: VxTheme.text-primary;
                                     font-size: 11px;
                                     font-weight: 700;
@@ -752,7 +779,7 @@ export component RoomView inherits Rectangle {
                                 }
 
                                 Text {
-                                    text: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Your stage stays visible while the preview mirrors what others see.";
+                                    text: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Your live self-view now stays in its own movable window outside the room.";
                                     color: VxTheme.text-muted;
                                     font-size: 9px;
                                     wrap: word-wrap;
@@ -1006,6 +1033,14 @@ export component RoomView inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: 8px;
+                                VxButton {
+                                    label: "Start";
+                                    glyph: "SC";
+                                    small: true;
+                                    accent: true;
+                                    enabled: root.selected-screen-share-source >= 0 && !root.has-screen-share && !root.is-sharing-screen;
+                                    clicked => { root.toggle-screen-share(); }
+                                }
                                 VxButton {
                                     label: "Refresh";
                                     small: true;
@@ -1358,15 +1393,21 @@ export component RoomView inherits Rectangle {
 
                     VxButton {
                         label: root.is-sharing-screen ? "Stop" :
-                               root.has-screen-share ? "Viewing" : "Share";
-                        accent: root.is-sharing-screen;
-                        soft: !root.is-sharing-screen;
+                               root.has-screen-share ? "Viewing" :
+                               root.show-share-config ? "Close Share" : "Share";
+                        accent: root.is-sharing-screen || root.show-share-config;
+                        soft: !root.is-sharing-screen && !root.show-share-config;
+                        enabled: root.is-sharing-screen || !root.has-screen-share;
                         horizontal-stretch: 1;
                         clicked => {
-                            if !root.has-screen-share && !root.is-sharing-screen {
+                            if root.is-sharing-screen {
+                                root.toggle-screen-share();
+                            } else if !root.has-screen-share {
                                 root.show-share-config = !root.show-share-config;
+                                if root.show-share-config {
+                                    root.refresh-screen-share-sources();
+                                }
                             }
-                            root.toggle-screen-share();
                         }
                     }
                     if root.soundboard-clips.length > 0 : VxButton {

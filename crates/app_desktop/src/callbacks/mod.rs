@@ -173,7 +173,7 @@ pub fn setup(
     // Chat
     chat::setup_open_direct_message(window, network, rt_handle);
     chat::setup_close_direct_message(window, state);
-    chat::setup_select_text_channel(window, network, rt_handle);
+    chat::setup_select_text_channel(window, state, network, rt_handle);
     chat::setup_chat_typing_activity(window, network, rt_handle);
     chat::setup_send_text_message(window, network, rt_handle);
     chat::setup_edit_text_message(window, network, rt_handle);

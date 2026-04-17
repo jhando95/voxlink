@@ -168,9 +168,7 @@ pub fn setup_leave_room(
         w.set_is_sharing_screen(false);
         w.set_screen_share_owner_name(slint::SharedString::default());
         w.set_screen_share_owner_id(slint::SharedString::default());
-        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-            slint::Rgba8Pixel,
-        >::new(1, 1)));
+        crate::signal_handler::connection::reset_remote_screen_share_surface(&w);
         w.set_screen_share_sources(
             std::rc::Rc::new(slint::VecModel::<ui_shell::ShareSourceData>::from(
                 Vec::new(),
@@ -215,13 +213,33 @@ pub fn setup_toggle_screen_share(
             return;
         };
         let is_sharing = w.get_is_sharing_screen();
+        let in_voice_context = if w.get_in_space_channel() {
+            !w.get_active_channel_id().is_empty()
+        } else {
+            !w.get_room_code().to_string().trim().is_empty()
+        };
         if w.get_has_screen_share() && !is_sharing {
             w.set_room_status("Another share is already live".into());
             return;
         }
         if !is_sharing {
+            if !w.get_is_connected() || w.get_reconnect_attempts() > 0 {
+                w.set_room_status("Wait for the call to reconnect before sharing".into());
+                crate::helpers::show_toast(&w, "Call is reconnecting", 2);
+                return;
+            }
+            if !in_voice_context {
+                w.set_room_status("Join a call before sharing your screen".into());
+                crate::helpers::show_toast(&w, "Join a call before sharing", 2);
+                return;
+            }
             if let Err(message) = refresh_share_sources_ui(&w, &screen_share) {
                 w.set_room_status(message.into());
+                return;
+            }
+            if w.get_selected_screen_share_source() < 0 {
+                w.set_room_status("Choose a screen or window to share first".into());
+                crate::helpers::show_toast(&w, "Choose a screen or window first", 2);
                 return;
             }
         }

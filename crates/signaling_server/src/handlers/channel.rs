@@ -419,6 +419,15 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         }
     }
 
+    if ch_type == ChannelType::Voice {
+        s.rooms.entry(room_key.clone()).or_insert_with(|| Room {
+            peer_ids: Vec::new(),
+            password: None,
+            active_screen_share_peer_id: None,
+            created_at: Instant::now(),
+        });
+    }
+
     // Check user limit
     if ch_type == ChannelType::Voice {
         let user_limit = s

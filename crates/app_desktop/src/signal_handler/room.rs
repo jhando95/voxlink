@@ -92,9 +92,7 @@ pub fn handle_room_entered(
     w.set_is_sharing_screen(false);
     w.set_screen_share_owner_name(slint::SharedString::default());
     w.set_screen_share_owner_id(slint::SharedString::default());
-    w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-        slint::Rgba8Pixel,
-    >::new(1, 1)));
+    super::connection::reset_remote_screen_share_surface(w);
     if let Err(message) = ctx.screen_share.refresh_sources() {
         log::warn!("Failed to refresh screen share sources: {message}");
     }
@@ -241,6 +239,9 @@ pub fn handle_screen_share_started(
         s.room.is_sharing_screen = is_self;
     }
 
+    w.set_screen_share_image(ui_shell::safe_blank_image());
+    w.set_screen_share_image_ready(false);
+    ui_shell::clear_screen_share_widget_image();
     w.set_has_screen_share(true);
     w.set_is_sharing_screen(is_self);
     w.set_screen_share_owner_id(sharer_id.into());
@@ -278,13 +279,12 @@ pub fn handle_screen_share_started(
             w.set_is_sharing_screen(false);
             w.set_screen_share_owner_id(slint::SharedString::default());
             w.set_screen_share_owner_name(slint::SharedString::default());
-            w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-                slint::Rgba8Pixel,
-            >::new(1, 1)));
+            super::connection::reset_remote_screen_share_surface(w);
             w.set_room_status("Screen share could not start".into());
         }
     }
     ctx.screen_share.apply_to_window(w);
+    ui_shell::sync_screen_share_widget(w);
 }
 
 pub fn handle_screen_share_stopped(
@@ -311,9 +311,8 @@ pub fn handle_screen_share_stopped(
     w.set_is_sharing_screen(false);
     w.set_screen_share_owner_id(slint::SharedString::default());
     w.set_screen_share_owner_name(slint::SharedString::default());
-    w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-        slint::Rgba8Pixel,
-    >::new(1, 1)));
+    w.set_screen_share_image_ready(false);
+    super::connection::reset_remote_screen_share_surface(w);
     if w.get_room_status().as_str().contains("Screen share") {
         w.set_room_status(slint::SharedString::default());
     }

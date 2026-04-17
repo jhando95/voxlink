@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, TextEdit } from "std-widgets.slint";
 import { ChatMessage, VxTheme } from "../theme.slint";
 import { Divider, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogoBig, VxStatusPill } from "../components.slint";
 
@@ -58,6 +58,23 @@ export component ChatView inherits Rectangle {
     property <length> emoji-picker-width: clamp(root.width * 0.34, 300px, 360px);
     property <length> emoji-picker-height: clamp(root.height * 0.52, 320px, 400px);
     property <bool> show-chat-meta: root.wide && !root.compact-mode;
+    property <bool> stacked-composer: root.compact-mode || root.width < 760px;
+    property <string> composer-placeholder:
+        root.slow-mode-remaining > 0
+            ? "Slowmode: " + root.slow-mode-remaining + "s"
+            : root.editing-message-id != "" ? "Edit message" :
+              root.reply-target-message-id != "" ? (root.chat-is-direct-message ? "Reply to " + root.chat-channel-name : "Reply in #" + root.chat-channel-name) :
+              (root.chat-is-direct-message ? "Message " + root.chat-channel-name : "Message #" + root.chat-channel-name);
+    property <string> composer-send-label: root.editing-message-id != "" ? "Save" :
+        root.reply-target-message-id != "" ? "Reply" : "Send";
+    property <string> composer-send-glyph: root.editing-message-id != "" ? "SV" :
+        root.reply-target-message-id != "" ? "RP" : "SD";
+    property <bool> composer-can-send: root.chat-input != "" && (root.slow-mode-remaining <= 0 || root.editing-message-id != "");
+    property <length> composer-input-height: (root.stacked-composer ? 82px : 68px) * VxTheme.s;
+    property <string> composer-secondary-hint: root.editing-message-id != ""
+        ? "Editing message"
+        : root.reply-target-message-id != "" ? "Reply ready"
+        : "Enter sends · Shift+Enter adds a new line";
     changed chat-input => {
         let next = root.chat-input != "";
         if next != root.typing-active {
@@ -78,11 +95,60 @@ export component ChatView inherits Rectangle {
     callback copy-message-text(string); // message content
     callback show-profile(string); // user_id
 
+    function submit-composer() {
+        if !root.composer-can-send {
+            return;
+        }
+
+        if root.editing-message-id != "" {
+            root.edit-text-message(root.editing-message-id, root.chat-input);
+            root.editing-message-id = "";
+            root.editing-original-content = "";
+            root.chat-input = "";
+            return;
+        }
+
+        if root.slow-mode-remaining > 0 {
+            return;
+        }
+
+        root.send-text-message();
+        root.reply-target-message-id = "";
+        root.reply-target-sender-name = "";
+        root.reply-target-preview = "";
+        if root.slow-mode-secs > 0 {
+            root.slow-mode-remaining = root.slow-mode-secs;
+        }
+    }
+
+    function composer-key-handler(event: KeyEvent) -> EventResult {
+        if (event.text == "\n" && !event.modifiers.shift) {
+            root.submit-composer();
+            return accept;
+        }
+        return reject;
+    }
+
     background: transparent;
 
-    HorizontalLayout {
+    Rectangle {
+    x: 0px;
+    y: 0px;
+    width: parent.width;
+    height: parent.height;
+    background: transparent;
+    main-column := Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.thread-panel-visible ? parent.width - root.side-panel-width - 8px : parent.width;
+        height: parent.height;
+        background: transparent;
     VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        min-width: 0px;
         horizontal-stretch: 1;
+        vertical-stretch: 1;
         spacing: 4px;
         padding: root.wide ? 10px : 8px;
         padding-bottom: root.wide ? 8px : 6px;
@@ -184,11 +250,17 @@ export component ChatView inherits Rectangle {
         }
 
         VxCard {
-            vertical-stretch: 1;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            height: clamp(parent.height - 74px, 260px, parent.height);
 
             VerticalLayout {
+                width: parent.width;
+                height: parent.height;
                 spacing: 0px;
+                horizontal-stretch: 1;
                 vertical-stretch: 1;
+                min-height: 0px;
 
                 if root.editing-message-id != "" : Rectangle {
                     background: VxTheme.accent-subtle;
@@ -367,9 +439,14 @@ export component ChatView inherits Rectangle {
                 Divider {}
 
                 ScrollView {
+                    width: parent.width;
+                    horizontal-stretch: 1;
                     vertical-stretch: 1;
+                    min-height: 0px;
 
                     VerticalLayout {
+                        width: parent.width;
+                        min-height: parent.height;
                         padding: root.wide ? 12px : (root.compact-mode ? 6px : 8px);
                         spacing: root.compact-mode ? 1px : 0px;
 
@@ -398,7 +475,9 @@ export component ChatView inherits Rectangle {
                                         Text {
                                             text: root.chat-is-direct-message
                                                 ? "Start the conversation"
-                                                : "This channel is ready";
+                                                : (root.chat-channel-name != ""
+                                                    ? "Welcome to # " + root.chat-channel-name
+                                                    : "Welcome to this channel");
                                             color: VxTheme.text-primary;
                                             font-size: 15px;
                                             font-weight: 700;
@@ -407,7 +486,9 @@ export component ChatView inherits Rectangle {
                                         Text {
                                             text: root.chat-is-direct-message
                                                 ? "Drop the first message and this thread becomes a real conversation."
-                                                : "Say hello, drop context, or pin the first thing people should see.";
+                                                : (root.chat-channel-name != ""
+                                                    ? "This is the start of # " + root.chat-channel-name + ". Post context, updates, or the first pinned message people should see."
+                                                    : "This is the start of the channel. Post context, updates, or the first pinned message people should see.");
                                             color: VxTheme.text-muted;
                                             font-size: 10px;
                                             wrap: word-wrap;
@@ -471,7 +552,7 @@ export component ChatView inherits Rectangle {
                             if msg.date-separator == "" : Rectangle {
                             border-radius: 0px;
                             clip: true;
-                            background: msg-hover.has-hover
+                            background: show-message-actions
                                 ? VxTheme.card-hover-bg
                                 : (msg.mentions-self && !msg.is-self
                                     ? VxTheme.warning-soft.transparentize(VxTheme.dark-mode ? 0.10 : 0.00)
@@ -482,6 +563,16 @@ export component ChatView inherits Rectangle {
                             msg-hover := TouchArea {
                                 mouse-cursor: default;
                             }
+
+                            msg-actions-zone := TouchArea {
+                                x: parent.width > self.width + 10px ? parent.width - self.width - 10px : 8px;
+                                y: msg.show-header ? 6px : 2px;
+                                width: root.compact-mode ? 304px : 420px;
+                                height: 36px;
+                                mouse-cursor: default;
+                            }
+
+                            property <bool> show-message-actions: msg-hover.has-hover || msg-actions-zone.has-hover;
 
                             if msg.mentions-self && !msg.is-self : Rectangle {
                                 x: 0px;
@@ -513,7 +604,7 @@ export component ChatView inherits Rectangle {
                                         font-size: 8px;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
-                                        visible: msg-hover.has-hover;
+                                        visible: show-message-actions;
                                     }
                                 }
 
@@ -565,140 +656,6 @@ export component ChatView inherits Rectangle {
                                             font-italic: true;
                                         }
                                     }
-                                    // Hover actions row
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        Rectangle { horizontal-stretch: 1; }
-
-                                        // Compact hover toolbar (Discord-style)
-                                        if msg-hover.has-hover : Rectangle {
-                                            height: 30px;
-                                            border-radius: 10px;
-                                            background: VxTheme.bg-panel;
-                                            border-color: VxTheme.border-subtle;
-                                            border-width: 1px;
-
-                                            HorizontalLayout {
-                                                padding-left: 3px;
-                                                padding-right: 3px;
-                                                spacing: 3px;
-                                                alignment: center;
-
-                                                // Quick reactions
-                                                for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F602}"] : Rectangle {
-                                                    width: 26px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: react-touch.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    react-touch := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => { root.react-to-message(msg.message-id, emoji); }
-                                                    }
-                                                    Text {
-                                                        text: emoji;
-                                                        font-size: 12px;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
-                                                }
-                                                Rectangle {
-                                                    width: 26px;
-                                                    height: 22px;
-                                                    border-radius: VxTheme.radius-pill;
-                                                    background: more-emoji-touch.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    more-emoji-touch := TouchArea {
-                                                        mouse-cursor: pointer;
-                                                        clicked => {
-                                                            root.emoji-picker-target-message-id = msg.message-id;
-                                                            root.show-emoji-picker = true;
-                                                        }
-                                                    }
-                                                    Text {
-                                                        text: "+";
-                                                        font-size: 12px;
-                                                        color: VxTheme.text-muted;
-                                                        horizontal-alignment: center;
-                                                        vertical-alignment: center;
-                                                    }
-                                                }
-
-                                                // Separator
-                                                Rectangle { width: 1px; height: 16px; background: VxTheme.border-subtle; }
-
-                                                VxButton {
-                                                    label: "Reply";
-                                                    glyph: "RP";
-                                                    small: true;
-                                                    ghost: true;
-                                                    clicked => {
-                                                        root.editing-message-id = "";
-                                                        root.editing-original-content = "";
-                                                        root.reply-target-message-id = msg.message-id;
-                                                        root.reply-target-sender-name = msg.sender-name;
-                                                        root.reply-target-preview = msg.content;
-                                                    }
-                                                }
-
-                                                VxButton {
-                                                    label: "Copy";
-                                                    glyph: "CP";
-                                                    small: true;
-                                                    ghost: true;
-                                                    clicked => { root.copy-message-text(msg.content); }
-                                                }
-
-                                                if msg.reply-count > 0 : VxButton {
-                                                    label: msg.reply-count + " replies";
-                                                    glyph: "TH";
-                                                    small: true;
-                                                    soft: true;
-                                                    clicked => { root.open-thread(msg.message-id, msg.channel-name); }
-                                                }
-
-                                                if !root.chat-is-direct-message : VxButton {
-                                                    label: "Forward";
-                                                    glyph: "FW";
-                                                    small: true;
-                                                    ghost: true;
-                                                    clicked => { root.forward-message(msg.message-id); }
-                                                }
-
-                                                if !root.chat-is-direct-message : VxButton {
-                                                    label: msg.is-pinned ? "Unpin" : "Pin";
-                                                    glyph: msg.is-pinned ? "UP" : "PN";
-                                                    small: true;
-                                                    soft: msg.is-pinned;
-                                                    ghost: !msg.is-pinned;
-                                                    clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
-                                                }
-
-                                                if msg.is-self : Rectangle {
-                                                    width: 1px; height: 16px; background: VxTheme.border-subtle;
-                                                }
-
-                                                if msg.is-self : VxButton {
-                                                    label: "Edit";
-                                                    glyph: "ED";
-                                                    small: true;
-                                                    ghost: true;
-                                                    clicked => {
-                                                        root.editing-message-id = msg.message-id;
-                                                        root.editing-original-content = msg.content;
-                                                        root.chat-input = msg.content;
-                                                    }
-                                                }
-
-                                                if msg.is-self : VxButton {
-                                                    label: "Delete";
-                                                    glyph: "DL";
-                                                    small: true;
-                                                    soft: true;
-                                                    clicked => { root.delete-text-message(msg.message-id); }
-                                                }
-                                            }
-                                        }
-                                    }
-
                                     if msg.forwarded-from != "" : Rectangle {
                                         background: VxTheme.bg-soft;
                                         border-radius: VxTheme.radius-control;
@@ -928,6 +885,136 @@ export component ChatView inherits Rectangle {
                                     }
                                 }
                             }
+
+                            if show-message-actions : Rectangle {
+                                width: toolbar-actions.preferred-width + 10px;
+                                height: 34px;
+                                x: parent.width > self.width + 10px ? parent.width - self.width - 10px : 8px;
+                                y: msg.show-header ? 6px : 2px;
+                                border-radius: 10px;
+                                background: VxTheme.bg-panel;
+                                border-color: VxTheme.border-subtle;
+                                border-width: 1px;
+
+                                toolbar-actions := HorizontalLayout {
+                                    padding-left: 3px;
+                                    padding-right: 3px;
+                                    spacing: 3px;
+                                    alignment: center;
+
+                                    for emoji in ["\u{1F44D}", "\u{2764}", "\u{1F602}"] : Rectangle {
+                                        width: 26px;
+                                        height: 22px;
+                                        border-radius: VxTheme.radius-pill;
+                                        background: react-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                        react-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.react-to-message(msg.message-id, emoji); }
+                                        }
+                                        Text {
+                                            text: emoji;
+                                            font-size: 12px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    Rectangle {
+                                        width: 26px;
+                                        height: 22px;
+                                        border-radius: VxTheme.radius-pill;
+                                        background: more-emoji-touch.has-hover ? VxTheme.card-hover-bg : transparent;
+                                        more-emoji-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.emoji-picker-target-message-id = msg.message-id;
+                                                root.show-emoji-picker = true;
+                                            }
+                                        }
+                                        Text {
+                                            text: "+";
+                                            font-size: 12px;
+                                            color: VxTheme.text-muted;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Rectangle { width: 1px; height: 16px; background: VxTheme.border-subtle; }
+
+                                    VxButton {
+                                        label: "Reply";
+                                        glyph: "RP";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => {
+                                            root.editing-message-id = "";
+                                            root.editing-original-content = "";
+                                            root.reply-target-message-id = msg.message-id;
+                                            root.reply-target-sender-name = msg.sender-name;
+                                            root.reply-target-preview = msg.content;
+                                        }
+                                    }
+
+                                    VxButton {
+                                        label: "Copy";
+                                        glyph: "CP";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => { root.copy-message-text(msg.content); }
+                                    }
+
+                                    if msg.reply-count > 0 : VxButton {
+                                        label: msg.reply-count + " replies";
+                                        glyph: "TH";
+                                        small: true;
+                                        soft: true;
+                                        clicked => { root.open-thread(msg.message-id, msg.channel-name); }
+                                    }
+
+                                    if !root.chat-is-direct-message : VxButton {
+                                        label: "Forward";
+                                        glyph: "FW";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => { root.forward-message(msg.message-id); }
+                                    }
+
+                                    if !root.chat-is-direct-message : VxButton {
+                                        label: msg.is-pinned ? "Unpin" : "Pin";
+                                        glyph: msg.is-pinned ? "UP" : "PN";
+                                        small: true;
+                                        soft: msg.is-pinned;
+                                        ghost: !msg.is-pinned;
+                                        clicked => { root.toggle-pin-message(msg.message-id, !msg.is-pinned); }
+                                    }
+
+                                    if msg.is-self : Rectangle {
+                                        width: 1px;
+                                        height: 16px;
+                                        background: VxTheme.border-subtle;
+                                    }
+
+                                    if msg.is-self : VxButton {
+                                        label: "Edit";
+                                        glyph: "ED";
+                                        small: true;
+                                        ghost: true;
+                                        clicked => {
+                                            root.editing-message-id = msg.message-id;
+                                            root.editing-original-content = msg.content;
+                                            root.chat-input = msg.content;
+                                        }
+                                    }
+
+                                    if msg.is-self : VxButton {
+                                        label: "Delete";
+                                        glyph: "DL";
+                                        small: true;
+                                        soft: true;
+                                        clicked => { root.delete-text-message(msg.message-id); }
+                                    }
+                                }
+                            }
                         } // end if msg.date-separator == "" Rectangle
                         } // end for msg VerticalLayout
                     }
@@ -989,44 +1076,45 @@ export component ChatView inherits Rectangle {
                     }
                 }
 
-                Rectangle {
-                    background: VxTheme.bg-panel;
+                composer-shell := Rectangle {
+                    height: root.reply-target-message-id != "" ? (root.stacked-composer ? 146px : 136px) : (root.stacked-composer ? 128px : 120px);
+                    border-radius: VxTheme.radius-card;
+                    background: @linear-gradient(180deg,
+                        VxTheme.bg-panel.brighter(VxTheme.dark-mode ? 0.02 : 0.01) 0%,
+                        VxTheme.bg-panel 100%);
+                    border-color: VxTheme.border-subtle;
+                    border-width: 1px;
+                    clip: true;
+
                     VerticalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        padding-top: 8px;
-                        padding-bottom: 8px;
-                        spacing: 6px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 8px;
 
                         if root.reply-target-message-id != "" : Rectangle {
+                            height: 30px;
                             border-radius: VxTheme.radius-control;
                             background: VxTheme.accent-subtle;
                             border-color: VxTheme.accent-border;
                             border-width: 1px;
 
                             HorizontalLayout {
-                                padding-left: 12px;
-                                padding-right: 12px;
-                                padding-top: 10px;
-                                padding-bottom: 10px;
-                                spacing: 10px;
-                                VerticalLayout {
+                                padding-left: 10px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                alignment: center;
+
+                                Text {
+                                    text: "Replying to " + root.reply-target-sender-name;
+                                    color: VxTheme.accent;
+                                    font-size: 10px;
+                                    font-weight: 700;
                                     horizontal-stretch: 1;
-                                    spacing: 2px;
-                                    Text {
-                                        text: "Replying to " + root.reply-target-sender-name;
-                                        color: VxTheme.accent;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                    }
-                                    Text {
-                                        text: root.reply-target-preview;
-                                        color: VxTheme.text-secondary;
-                                        font-size: 9px;
-                                        wrap: word-wrap;
-                                        max-height: 24px;
-                                    }
+                                    overflow: elide;
                                 }
+
                                 VxButton {
                                     label: "Cancel";
                                     glyph: "CN";
@@ -1041,9 +1129,6 @@ export component ChatView inherits Rectangle {
                             }
                         }
 
-                        // Slash command hints
-                        if root.chat-input == "/" || (root.chat-input != "" && root.chat-input.character-count > 0 && root.chat-input.to-float() != root.chat-input.to-float()) : Rectangle {
-                        }
                         if root.chat-input == "/" : Rectangle {
                             border-radius: VxTheme.radius-card;
                             background: VxTheme.bg-raised;
@@ -1093,7 +1178,6 @@ export component ChatView inherits Rectangle {
                             }
                         }
 
-                        // Mention autocomplete popup
                         if root.mention-popup-visible && root.mention-suggestions.length > 0 : Rectangle {
                             border-radius: VxTheme.radius-card;
                             background: VxTheme.bg-raised;
@@ -1148,69 +1232,107 @@ export component ChatView inherits Rectangle {
                             }
                         }
 
-                        HorizontalLayout {
-                            spacing: 10px;
-                            min-height: 58px * VxTheme.s;
+                        if root.stacked-composer : VerticalLayout {
+                            spacing: 8px;
 
-                            Rectangle {
-                                horizontal-stretch: 1;
-                                VxInput {
-                                    prominent: true;
-                                    width: parent.width;
-                                    height: parent.height;
-                                    text <=> root.chat-input;
-                                    placeholder: root.slow-mode-remaining > 0
-                                        ? "Slowmode: " + root.slow-mode-remaining + "s"
-                                        : root.editing-message-id != "" ? "Edit message" :
-                                                 root.reply-target-message-id != "" ? (root.chat-is-direct-message ? "Reply to " + root.chat-channel-name : "Reply in #" + root.chat-channel-name) :
-                                                 (root.chat-is-direct-message ? "Message " + root.chat-channel-name : "Message #" + root.chat-channel-name);
-                                    accepted => {
-                                        if root.chat-input != "" {
-                                            if root.editing-message-id != "" {
-                                                root.edit-text-message(root.editing-message-id, root.chat-input);
-                                                root.editing-message-id = "";
-                                                root.editing-original-content = "";
-                                                root.chat-input = "";
-                                            } else if root.slow-mode-remaining <= 0 {
-                                                root.send-text-message();
-                                                root.reply-target-message-id = "";
-                                                root.reply-target-sender-name = "";
-                                                root.reply-target-preview = "";
-                                                if root.slow-mode-secs > 0 {
-                                                    root.slow-mode-remaining = root.slow-mode-secs;
-                                                }
-                                            }
-                                        }
-                                    }
+                            composer-surface-stacked := Rectangle {
+                                height: 68px;
+                                border-radius: VxTheme.radius-control;
+                                background: @linear-gradient(180deg,
+                                    VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.04 : 0.02) 0%,
+                                    VxTheme.bg-input 100%);
+                                border-color: composer-edit-stacked-main.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
+                                border-width: composer-edit-stacked-main.has-focus ? 2px : 1px;
+                                clip: true;
+
+                                Text {
+                                    x: 12px;
+                                    y: 7px;
+                                    text: root.editing-message-id != ""
+                                        ? "Editing message"
+                                        : root.reply-target-message-id != "" ? "Reply in " + (root.chat-is-direct-message ? root.chat-channel-name : "# " + root.chat-channel-name)
+                                        : (root.chat-is-direct-message ? "Direct message" : (root.chat-channel-name != "" ? "# " + root.chat-channel-name : "Text channel"));
+                                    color: root.editing-message-id != "" || root.reply-target-message-id != "" ? VxTheme.accent : VxTheme.text-muted;
+                                    font-size: 9px;
+                                    font-weight: 700;
                                 }
-                                // Character counter — visible when approaching the 2000 char limit
-                                if root.chat-input.character-count > 1800 : Rectangle {
-                                    x: parent.width - self.width - 6px;
-                                    y: parent.height - self.height - 4px;
-                                    width: char-counter-text.preferred-width + 10px;
-                                    height: 18px;
-                                    border-radius: VxTheme.radius-pill;
-                                    background: VxTheme.bg-panel.transparentize(0.15);
-                                    char-counter-text := Text {
-                                        text: root.chat-input.character-count + "/2000";
-                                        color: root.chat-input.character-count > 1950 ? VxTheme.danger :
-                                               root.chat-input.character-count > 1800 ? VxTheme.warning : VxTheme.text-muted;
-                                        font-size: 9px;
-                                        font-weight: 700;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
+
+                                composer-edit-stacked-main := TextEdit {
+                                    x: 12px;
+                                    y: 22px;
+                                    width: parent.width - 24px;
+                                    height: parent.height - 30px;
+                                    text <=> root.chat-input;
+                                    placeholder-text: root.composer-placeholder;
+                                    wrap: word-wrap;
+                                    font-size: 15px * VxTheme.s;
+                                    key-pressed(event) => { return root.composer-key-handler(event); }
                                 }
                             }
 
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 42px;
+                                    height: 42px;
+                                    border-radius: 10px;
+                                    background: emoji-toggle-touch-stacked.has-hover ? VxTheme.card-hover-bg : transparent;
+                                    border-color: root.show-emoji-picker ? VxTheme.accent-border : VxTheme.border-subtle.transparentize(0.6);
+                                    border-width: 1px;
+                                    emoji-toggle-touch-stacked := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.emoji-picker-target-message-id = "";
+                                            root.show-emoji-picker = !root.show-emoji-picker;
+                                        }
+                                    }
+                                    VxGlyphTile {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        tile-size: 20px;
+                                        glyph: "EM";
+                                        tone: root.show-emoji-picker ? VxTheme.accent : VxTheme.text-secondary;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.slow-mode-remaining > 0
+                                        ? "Slowmode active — " + root.slow-mode-remaining + "s remaining"
+                                        : root.composer-secondary-hint;
+                                    color: root.slow-mode-remaining > 0 ? VxTheme.warning : VxTheme.text-muted;
+                                    font-size: 9px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                VxButton {
+                                    label: root.composer-send-label;
+                                    glyph: root.composer-send-glyph;
+                                    accent: true;
+                                    enabled: root.composer-can-send;
+                                    clicked => { root.submit-composer(); }
+                                }
+                            }
+                        }
+
+                        if !root.stacked-composer : Rectangle {
+                            height: 84px;
+                            background: transparent;
+
                             Rectangle {
-                                width: 56px * VxTheme.s;
-                                height: 56px * VxTheme.s;
-                                border-radius: VxTheme.radius-control;
-                                background: emoji-toggle-touch.has-hover ? VxTheme.card-hover-bg : transparent;
-                                border-color: root.show-emoji-picker ? VxTheme.accent-border : transparent;
-                                border-width: root.show-emoji-picker ? 1px : 0px;
-                                emoji-toggle-touch := TouchArea {
+                                x: 0px;
+                                y: 12px;
+                                width: 42px;
+                                height: 42px;
+                                border-radius: 10px;
+                                background: emoji-toggle-touch-wide.has-hover ? VxTheme.card-hover-bg : transparent;
+                                border-color: root.show-emoji-picker ? VxTheme.accent-border : VxTheme.border-subtle.transparentize(0.6);
+                                border-width: 1px;
+                                emoji-toggle-touch-wide := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
                                         root.emoji-picker-target-message-id = "";
@@ -1220,58 +1342,111 @@ export component ChatView inherits Rectangle {
                                 VxGlyphTile {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
-                                    tile-size: 32px * VxTheme.s;
+                                    tile-size: 20px;
                                     glyph: "EM";
                                     tone: root.show-emoji-picker ? VxTheme.accent : VxTheme.text-secondary;
                                 }
                             }
-                            if root.slow-mode-remaining > 0 : VxStatusPill {
-                                label: root.slow-mode-remaining + "s";
-                                tone: VxTheme.warning;
-                                fill: VxTheme.warning-soft;
-                            }
-                            VxButton {
-                                label: root.editing-message-id != "" ? "Save" :
-                                       root.reply-target-message-id != "" ? "Reply" : "Send";
-                                glyph: root.editing-message-id != "" ? "SV" :
-                                       root.reply-target-message-id != "" ? "RP" : "SD";
-                                accent: true;
-                                enabled: root.chat-input != "" && (root.slow-mode-remaining <= 0 || root.editing-message-id != "");
-                                clicked => {
-                                    if root.editing-message-id != "" {
-                                        root.edit-text-message(root.editing-message-id, root.chat-input);
-                                        root.editing-message-id = "";
-                                        root.editing-original-content = "";
-                                        root.chat-input = "";
-                                    } else if root.slow-mode-remaining <= 0 {
-                                        root.send-text-message();
-                                        root.reply-target-message-id = "";
-                                        root.reply-target-sender-name = "";
-                                        root.reply-target-preview = "";
-                                        if root.slow-mode-secs > 0 {
-                                            root.slow-mode-remaining = root.slow-mode-secs;
-                                        }
-                                    }
+
+                            send-slot := Rectangle {
+                                x: parent.width - self.width;
+                                y: 10px;
+                                width: 112px;
+                                height: 46px;
+                                background: transparent;
+
+                                VxButton {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: parent.width;
+                                    height: parent.height;
+                                    label: root.composer-send-label;
+                                    glyph: root.composer-send-glyph;
+                                    accent: true;
+                                    enabled: root.composer-can-send;
+                                    clicked => { root.submit-composer(); }
                                 }
                             }
-                        }
 
-                        if !root.chat-is-direct-message : Text {
-                            text: root.slow-mode-remaining > 0
-                                ? "Slowmode active — " + root.slow-mode-remaining + "s remaining"
-                                : "Enter sends · @name mentions · **bold** · *italic*";
-                            color: root.slow-mode-remaining > 0 ? VxTheme.warning : VxTheme.text-muted;
-                            font-size: 9px;
+                            composer-surface-wide := Rectangle {
+                                x: 54px;
+                                y: 6px;
+                                width: send-slot.x - 64px;
+                                height: 64px;
+                                border-radius: VxTheme.radius-control;
+                                background: @linear-gradient(180deg,
+                                    VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.04 : 0.02) 0%,
+                                    VxTheme.bg-input 100%);
+                                border-color: composer-edit-wide-main.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
+                                border-width: composer-edit-wide-main.has-focus ? 2px : 1px;
+                                clip: true;
+
+                                Text {
+                                    x: 12px;
+                                    y: 7px;
+                                    text: root.editing-message-id != ""
+                                        ? "Editing message"
+                                        : root.reply-target-message-id != "" ? "Reply in " + (root.chat-is-direct-message ? root.chat-channel-name : "# " + root.chat-channel-name)
+                                        : (root.chat-is-direct-message ? "Direct message" : (root.chat-channel-name != "" ? "# " + root.chat-channel-name : "Text channel"));
+                                    color: root.editing-message-id != "" || root.reply-target-message-id != "" ? VxTheme.accent : VxTheme.text-muted;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                }
+
+                                composer-edit-wide-main := TextEdit {
+                                    x: 12px;
+                                    y: 24px;
+                                    width: parent.width - 24px;
+                                    height: parent.height - 32px;
+                                    text <=> root.chat-input;
+                                    placeholder-text: root.composer-placeholder;
+                                    wrap: word-wrap;
+                                    font-size: 15px * VxTheme.s;
+                                    key-pressed(event) => { return root.composer-key-handler(event); }
+                                }
+                            }
+
+                            Text {
+                                x: 54px;
+                                y: 72px;
+                                width: send-slot.x - 64px;
+                                text: root.slow-mode-remaining > 0
+                                    ? "Slowmode active — " + root.slow-mode-remaining + "s remaining"
+                                    : root.composer-secondary-hint;
+                                color: root.slow-mode-remaining > 0 ? VxTheme.warning : VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+
+                            if root.chat-input.character-count > 1800 : Text {
+                                x: send-slot.x - self.preferred-width - 10px;
+                                y: 72px;
+                                text: root.chat-input.character-count + "/2000";
+                                color: root.chat-input.character-count > 1950 ? VxTheme.danger :
+                                       root.chat-input.character-count > 1800 ? VxTheme.warning : VxTheme.text-muted;
+                                font-size: 9px;
+                                font-weight: 700;
+                            }
                         }
                     }
+                }
+
+                Rectangle {
+                    height: root.wide ? 16px : 18px;
+                    background: transparent;
                 }
             }
         }
     } // end main VerticalLayout
+    }
 
         // Thread side panel
         if root.thread-panel-visible : Rectangle {
+            x: main-column.width + 8px;
+            y: 0px;
             width: root.side-panel-width;
+            height: parent.height;
             background: VxTheme.bg-surface;
             border-color: VxTheme.border-subtle;
             border-width: 1px;

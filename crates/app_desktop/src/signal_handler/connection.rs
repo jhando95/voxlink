@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,6 +11,126 @@ use shared_types::{AppView, SignalMessage};
 use slint::ComponentHandle;
 use tokio::sync::Mutex as TokioMutex;
 use ui_shell::MainWindow;
+
+const REMOTE_SCREEN_RENDER_MAX_WIDTH: u32 = 960;
+const REMOTE_SCREEN_RENDER_MAX_HEIGHT: u32 = 540;
+const REMOTE_SCREEN_RENDER_MIN_WIDTH: u32 = 480;
+const REMOTE_SCREEN_RENDER_MIN_HEIGHT: u32 = 270;
+
+thread_local! {
+    static LAST_REMOTE_SCREEN_FRAME: RefCell<Option<RemoteScreenFrameKey>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RemoteScreenFrameKey {
+    sender_id: String,
+    frame_fingerprint: u64,
+    budget_width: u32,
+    budget_height: u32,
+}
+
+fn blank_screen_share_image() -> slint::Image {
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(1, 1))
+}
+
+struct DecodedScreenImage {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+fn rgba_image(width: u32, height: u32, pixels: &[u8]) -> slint::Image {
+    let buffer =
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(pixels, width, height);
+    slint::Image::from_rgba8(buffer)
+}
+
+fn remote_screen_render_budget_for_window(window_width: u32, window_height: u32) -> (u32, u32) {
+    let width_budget = ((window_width.max(640) as f32) * 0.72).round() as u32;
+    let height_budget = ((window_height.max(540) as f32) * 0.50).round() as u32;
+    (
+        width_budget.clamp(
+            REMOTE_SCREEN_RENDER_MIN_WIDTH,
+            REMOTE_SCREEN_RENDER_MAX_WIDTH,
+        ),
+        height_budget.clamp(
+            REMOTE_SCREEN_RENDER_MIN_HEIGHT,
+            REMOTE_SCREEN_RENDER_MAX_HEIGHT,
+        ),
+    )
+}
+
+fn remote_screen_render_budget(window: &MainWindow) -> (u32, u32) {
+    let size = window.window().size();
+    remote_screen_render_budget_for_window(size.width as u32, size.height as u32)
+}
+
+fn remote_screen_frame_fingerprint(frame_data: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    frame_data.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn should_render_remote_screen_frame(
+    sender_id: &str,
+    frame_fingerprint: u64,
+    budget_width: u32,
+    budget_height: u32,
+) -> bool {
+    let next = RemoteScreenFrameKey {
+        sender_id: sender_id.to_string(),
+        frame_fingerprint,
+        budget_width,
+        budget_height,
+    };
+    LAST_REMOTE_SCREEN_FRAME.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.as_ref() == Some(&next) {
+            false
+        } else {
+            *slot = Some(next);
+            true
+        }
+    })
+}
+
+pub fn reset_remote_screen_frame_cache() {
+    LAST_REMOTE_SCREEN_FRAME.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+}
+
+pub fn reset_remote_screen_share_surface(w: &MainWindow) {
+    reset_remote_screen_frame_cache();
+    w.set_screen_share_image(blank_screen_share_image());
+    w.set_screen_share_image_ready(false);
+    ui_shell::clear_screen_share_widget_image();
+    ui_shell::sync_screen_share_widget(w);
+}
+
+fn decode_screen_share_image(
+    frame_data: &[u8],
+    max_width: u32,
+    max_height: u32,
+) -> Result<DecodedScreenImage, xcap::image::ImageError> {
+    let image = xcap::image::load_from_memory(frame_data)?;
+    let image = if image.width() > max_width || image.height() > max_height {
+        image.resize(
+            max_width,
+            max_height,
+            xcap::image::imageops::FilterType::Triangle,
+        )
+    } else {
+        image
+    };
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(DecodedScreenImage {
+        width,
+        height,
+        pixels: rgba.into_raw(),
+    })
+}
 
 /// Drain incoming audio, decode, queue, and update speaking indicators.
 pub fn drain_audio_and_update_speaking(
@@ -85,20 +206,24 @@ pub fn drain_screen_share_frame(
         return;
     }
 
-    match xcap::image::load_from_memory(frame_data) {
-        Ok(image) => {
-            let rgba = image.to_rgba8();
-            let (width, height) = rgba.dimensions();
-            let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                rgba.as_raw(),
-                width,
-                height,
-            );
-            w.set_screen_share_image(slint::Image::from_rgba8(buffer));
+    let (budget_width, budget_height) = remote_screen_render_budget(w);
+    let frame_fingerprint = remote_screen_frame_fingerprint(frame_data);
+    if !should_render_remote_screen_frame(sender_id, frame_fingerprint, budget_width, budget_height)
+    {
+        return;
+    }
+
+    match decode_screen_share_image(frame_data, budget_width, budget_height) {
+        Ok(decoded) => {
+            w.set_screen_share_image(rgba_image(decoded.width, decoded.height, &decoded.pixels));
+            w.set_screen_share_image_ready(true);
+            ui_shell::set_screen_share_widget_rgba(decoded.width, decoded.height, &decoded.pixels);
+            ui_shell::sync_screen_share_widget(w);
         }
         Err(e) => {
             log::warn!("Failed to decode screen share frame: {e}");
             w.set_screen_share_owner_name("Decode error - stream may be corrupted".into());
+            ui_shell::sync_screen_share_widget(w);
         }
     }
 }
@@ -167,9 +292,7 @@ pub fn check_connection(
         w.set_is_sharing_screen(false);
         w.set_screen_share_owner_name(slint::SharedString::default());
         w.set_screen_share_owner_id(slint::SharedString::default());
-        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-            slint::Rgba8Pixel,
-        >::new(1, 1)));
+        reset_remote_screen_share_surface(w);
         *reconnect_interval.borrow_mut() = 3;
         *reconnect_cooldown.borrow_mut() = 3; // first attempt after 3 ticks (~3s)
     }
@@ -350,5 +473,72 @@ pub fn check_connection(
     if w.get_current_view() == ui_shell::view_to_index(AppView::Performance) {
         let snap = perf.borrow_mut().snapshot();
         ui_shell::update_perf_display(w, &snap);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        remote_screen_frame_fingerprint, remote_screen_render_budget_for_window,
+        reset_remote_screen_frame_cache, should_render_remote_screen_frame,
+        REMOTE_SCREEN_RENDER_MAX_HEIGHT, REMOTE_SCREEN_RENDER_MAX_WIDTH,
+    };
+
+    #[test]
+    fn remote_screen_render_budget_scales_with_window_bounds() {
+        assert_eq!(
+            remote_screen_render_budget_for_window(1920, 1080),
+            (
+                REMOTE_SCREEN_RENDER_MAX_WIDTH,
+                REMOTE_SCREEN_RENDER_MAX_HEIGHT
+            )
+        );
+        assert_eq!(remote_screen_render_budget_for_window(800, 600), (576, 300));
+        assert_eq!(remote_screen_render_budget_for_window(320, 240), (480, 270));
+    }
+
+    #[test]
+    fn remote_screen_frame_fingerprint_changes_with_payload() {
+        assert_ne!(
+            remote_screen_frame_fingerprint(b"frame-a"),
+            remote_screen_frame_fingerprint(b"frame-b")
+        );
+    }
+
+    #[test]
+    fn duplicate_remote_screen_frames_are_skipped_until_key_changes() {
+        reset_remote_screen_frame_cache();
+        let fingerprint = remote_screen_frame_fingerprint(b"frame-a");
+        assert!(should_render_remote_screen_frame(
+            "alice",
+            fingerprint,
+            640,
+            360
+        ));
+        assert!(!should_render_remote_screen_frame(
+            "alice",
+            fingerprint,
+            640,
+            360
+        ));
+        assert!(should_render_remote_screen_frame(
+            "alice",
+            fingerprint,
+            800,
+            450
+        ));
+        assert!(should_render_remote_screen_frame(
+            "bob",
+            fingerprint,
+            800,
+            450
+        ));
+        reset_remote_screen_frame_cache();
+        assert!(should_render_remote_screen_frame(
+            "alice",
+            fingerprint,
+            640,
+            360
+        ));
     }
 }

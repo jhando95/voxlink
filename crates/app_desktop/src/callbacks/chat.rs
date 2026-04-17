@@ -9,12 +9,96 @@ use ui_shell::MainWindow;
 
 use crate::helpers::CONFIG_LOCK;
 
+fn clear_chat_models(window: &MainWindow) {
+    window.set_chat_messages(Rc::new(VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into());
+    window.set_chat_pinned_messages(
+        Rc::new(VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    window.set_thread_messages(Rc::new(VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into());
+    window.set_chat_search_results(
+        Rc::new(VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+}
+
+fn prepare_text_channel_open(
+    window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
+    channel_id: &str,
+) {
+    let current_view = window.get_current_view();
+    if current_view != ui_shell::view_to_index(AppView::TextChat) {
+        window.set_previous_view(current_view);
+    }
+
+    let (channel_name, subtitle, slow_mode_secs) = {
+        let state = state.borrow();
+        let current_space_name = window.get_current_space_name().to_string();
+        let channel = state.space.as_ref().and_then(|space| {
+            space
+                .channels
+                .iter()
+                .find(|channel| channel.id == channel_id)
+        });
+        let channel_name = channel
+            .map(|channel| channel.name.clone())
+            .unwrap_or_else(|| "Text channel".to_string());
+        let subtitle = channel
+            .and_then(|channel| {
+                if channel.topic.is_empty() {
+                    None
+                } else {
+                    Some(format!("{current_space_name} - {}", channel.topic))
+                }
+            })
+            .unwrap_or(current_space_name);
+        let slow_mode_secs = channel.map(|channel| channel.slow_mode_secs).unwrap_or(0);
+        (channel_name, subtitle, slow_mode_secs)
+    };
+
+    window.set_chat_channel_id(channel_id.into());
+    window.set_chat_channel_name(channel_name.into());
+    window.set_chat_is_direct_message(false);
+    window.set_chat_context_subtitle(subtitle.into());
+    window.set_chat_back_view(ui_shell::view_to_index(AppView::Space));
+    window.set_slow_mode_secs(slow_mode_secs as i32);
+    window.set_slow_mode_remaining(0);
+    window.set_chat_input(SharedString::default());
+    window.set_chat_typing_text(SharedString::default());
+    window.set_editing_message_id(SharedString::default());
+    window.set_editing_original_content(SharedString::default());
+    window.set_reply_target_message_id(SharedString::default());
+    window.set_reply_target_sender_name(SharedString::default());
+    window.set_reply_target_preview(SharedString::default());
+    window.set_thread_panel_visible(false);
+    window.set_thread_parent_sender(SharedString::default());
+    window.set_thread_parent_content(SharedString::default());
+    window.set_thread_parent_timestamp(SharedString::default());
+    window.set_chat_search_query(SharedString::default());
+    clear_chat_models(window);
+
+    {
+        let mut state = state.borrow_mut();
+        if let Some(space) = state.space.as_mut() {
+            space.selected_text_channel_id = Some(channel_id.to_string());
+            space.unread_text_channels.remove(channel_id);
+        }
+        state.active_direct_message_user_id = None;
+        state.current_view = AppView::TextChat;
+    }
+
+    crate::friends::sync_ui(window, state);
+    window.set_current_view(ui_shell::view_to_index(AppView::TextChat));
+    window.set_status_text("Loading channel history...".into());
+}
+
 pub fn setup_select_text_channel(
     window: &MainWindow,
+    state: &Rc<RefCell<shared_types::AppState>>,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
     let window_weak = window.as_weak();
+    let state = state.clone();
     let network = network.clone();
     let rt_handle = rt_handle.clone();
     window.on_select_text_channel(move |channel_id| {
@@ -22,7 +106,7 @@ pub fn setup_select_text_channel(
         let Some(w) = window_weak.upgrade() else {
             return;
         };
-        w.set_status_text("Opening channel...".into());
+        prepare_text_channel_open(&w, &state, &channel_id_str);
         let network = network.clone();
         let window_weak = window_weak.clone();
         rt_handle.spawn(async move {
@@ -413,24 +497,44 @@ pub fn setup_delete_text_message(
         let message_id = message_id.to_string();
         let is_direct_message = w.get_chat_is_direct_message();
         if target_id.is_empty() {
+            crate::helpers::show_toast(&w, "Open a conversation before deleting", 2);
             return;
         }
         let network = network.clone();
+        let window_weak2 = window_weak.clone();
         rt_handle.spawn(async move {
-            let net = network.lock().await;
-            let _ = if is_direct_message {
-                net.send_signal(&SignalMessage::DeleteDirectMessage {
-                    user_id: target_id,
-                    message_id,
-                })
+            let ok = match tokio::time::timeout(std::time::Duration::from_secs(5), network.lock())
                 .await
-            } else {
-                net.send_signal(&SignalMessage::DeleteTextMessage {
-                    channel_id: target_id,
-                    message_id,
-                })
-                .await
+            {
+                Ok(net) => {
+                    let res = if is_direct_message {
+                        net.send_signal(&SignalMessage::DeleteDirectMessage {
+                            user_id: target_id,
+                            message_id,
+                        })
+                        .await
+                    } else {
+                        net.send_signal(&SignalMessage::DeleteTextMessage {
+                            channel_id: target_id,
+                            message_id,
+                        })
+                        .await
+                    };
+                    if let Err(e) = &res {
+                        log::error!("Failed to delete message: {e}");
+                    }
+                    res.is_ok()
+                }
+                Err(_) => {
+                    log::error!("Network lock timed out deleting message");
+                    false
+                }
             };
+            if !ok {
+                if let Some(w) = window_weak2.upgrade() {
+                    crate::helpers::show_toast(&w, "Failed to delete message", 3);
+                }
+            }
         });
     });
 }

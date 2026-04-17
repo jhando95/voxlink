@@ -5,7 +5,8 @@ use shared_types::AppView;
 use slint::Model;
 use ui_shell::MainWindow;
 
-const MAX_CHAT_MESSAGES_IN_VIEW: usize = 250;
+const MAX_CHAT_MESSAGES_IN_VIEW: usize = 180;
+const MAX_THREAD_MESSAGES_IN_VIEW: usize = 120;
 
 pub fn handle_text_channel_selected(
     w: &MainWindow,
@@ -52,10 +53,21 @@ pub fn handle_text_channel_selected(
     w.set_reply_target_message_id(slint::SharedString::default());
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
+    w.set_thread_panel_visible(false);
+    w.set_thread_parent_sender(slint::SharedString::default());
+    w.set_thread_parent_content(slint::SharedString::default());
+    w.set_thread_parent_timestamp(slint::SharedString::default());
+    w.set_thread_messages(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    w.set_chat_search_query(slint::SharedString::default());
+    w.set_chat_search_results(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
 
-    // Use user_name for self-detection (server uses peer IDs, not "self")
     let my_name = w.get_user_name().to_string();
-    ui_shell::set_chat_messages(w, history, &my_name);
+    let self_user_id = state.borrow().self_user_id.clone();
+    ui_shell::set_chat_messages_for_identity(w, history, self_user_id.as_deref(), &my_name);
     sync_pinned_messages(w);
 
     {
@@ -73,6 +85,7 @@ pub fn handle_text_channel_selected(
 
     sync_typing_text(w, state, channel_id);
     w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
+    w.set_status_text("Channel ready".into());
 }
 
 pub fn handle_direct_message_selected(
@@ -98,9 +111,21 @@ pub fn handle_direct_message_selected(
     w.set_reply_target_message_id(slint::SharedString::default());
     w.set_reply_target_sender_name(slint::SharedString::default());
     w.set_reply_target_preview(slint::SharedString::default());
+    w.set_thread_panel_visible(false);
+    w.set_thread_parent_sender(slint::SharedString::default());
+    w.set_thread_parent_content(slint::SharedString::default());
+    w.set_thread_parent_timestamp(slint::SharedString::default());
+    w.set_thread_messages(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
+    w.set_chat_search_query(slint::SharedString::default());
+    w.set_chat_search_results(
+        std::rc::Rc::new(slint::VecModel::<ui_shell::ChatMessage>::from(Vec::new())).into(),
+    );
 
     let my_name = w.get_user_name().to_string();
-    ui_shell::set_chat_messages(w, history, &my_name);
+    let self_user_id = state.borrow().self_user_id.clone();
+    ui_shell::set_chat_messages_for_identity(w, history, self_user_id.as_deref(), &my_name);
 
     let changed = {
         let mut s = state.borrow_mut();
@@ -188,7 +213,9 @@ pub fn handle_text_message(
         return;
     }
 
-    let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
+    let self_user_id = state.borrow().self_user_id.clone();
+    let chat_msg =
+        ui_shell::text_msg_to_chat_msg_for_identity(message, self_user_id.as_deref(), &my_name);
     push_chat_message(w, chat_msg);
     sync_typing_text(w, state, channel_id);
 }
@@ -233,7 +260,9 @@ pub fn handle_direct_message(
         return;
     }
 
-    let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
+    let self_user_id = state.borrow().self_user_id.clone();
+    let chat_msg =
+        ui_shell::text_msg_to_chat_msg_for_identity(message, self_user_id.as_deref(), &my_name);
     push_chat_message(w, chat_msg);
     sync_direct_typing_text(w, state, user_id);
 }
@@ -740,6 +769,17 @@ fn push_chat_message(w: &MainWindow, chat_msg: ui_shell::ChatMessage) {
     }
 }
 
+pub fn thread_reply_start_index(messages: &[shared_types::TextMessageData]) -> usize {
+    if messages.len() <= 1 {
+        1
+    } else {
+        messages
+            .len()
+            .saturating_sub(MAX_THREAD_MESSAGES_IN_VIEW)
+            .max(1)
+    }
+}
+
 fn update_message_content(w: &MainWindow, message_id: &str, new_content: &str) {
     let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
     if let Some(model) = messages
@@ -816,10 +856,12 @@ pub fn handle_search_results(
     }
 
     let user_name = w.get_user_name().to_string();
-    let _ = state; // reserved for future use
+    let self_user_id = state.borrow().self_user_id.clone();
     let items: Vec<ui_shell::ChatMessage> = messages
         .iter()
-        .map(|m| ui_shell::text_msg_to_chat_msg(m, &user_name))
+        .map(|m| {
+            ui_shell::text_msg_to_chat_msg_for_identity(m, self_user_id.as_deref(), &user_name)
+        })
         .collect();
 
     let model = std::rc::Rc::new(slint::VecModel::from(items));
@@ -836,4 +878,46 @@ fn is_self_message(
         .as_deref()
         .map(|user_id| user_id == message.sender_id)
         .unwrap_or_else(|| w.get_user_name() == message.sender_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_message(id: usize) -> shared_types::TextMessageData {
+        shared_types::TextMessageData {
+            message_id: format!("m{id}"),
+            sender_id: "u1".into(),
+            sender_name: "Jordan".into(),
+            content: format!("message-{id}"),
+            timestamp: id as u64,
+            edited: false,
+            reactions: Vec::new(),
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+            forwarded_from: None,
+            attachment_name: None,
+            attachment_size: None,
+            link_url: None,
+        }
+    }
+
+    #[test]
+    fn thread_trim_keeps_root_and_latest_replies() {
+        let messages: Vec<_> = (0..220).map(make_message).collect();
+        let reply_start = thread_reply_start_index(&messages);
+        assert_eq!(reply_start, 100);
+        assert_eq!(messages.first().map(|m| m.message_id.as_str()), Some("m0"));
+        assert_eq!(
+            messages
+                .iter()
+                .skip(reply_start)
+                .next()
+                .map(|m| m.message_id.as_str()),
+            Some("m100")
+        );
+        assert_eq!(messages.last().map(|m| m.message_id.as_str()), Some("m219"));
+    }
 }

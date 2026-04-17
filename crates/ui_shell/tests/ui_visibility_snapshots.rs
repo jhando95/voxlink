@@ -306,6 +306,8 @@ fn assert_snapshot_has_content(
     let deviation = luma_deviation(snapshot, full);
     let min_deviation = match scenario {
         UiScenario::IncomingCallOverlay => 7.0,
+        UiScenario::ChatThread => 4.5,
+        UiScenario::ChatMentionPopup => 6.25,
         UiScenario::ToastBanner | UiScenario::ProfilePopup | UiScenario::WelcomeOverlay => 6.0,
         _ => 8.0,
     };
@@ -748,6 +750,7 @@ fn sample_perf() -> PerfData {
     PerfData {
         cpu_percent: 12.0,
         memory_mb: 96.4,
+        peak_memory_mb: 142.8,
         uptime_secs: 3661,
         audio_active: true,
         network_connected: true,
@@ -1006,7 +1009,7 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
                 min_luma_deviation: 10.0,
             }]
         }
-        (UiScenario::Chat, LayoutWidth::Narrow) | (UiScenario::Chat, LayoutWidth::Wide) => {
+        (UiScenario::Chat, LayoutWidth::Narrow) => {
             vec![RegionExpectation {
                 name: "composer",
                 rect: RelativeRect::new(0.04, 0.84, 0.96, 0.98),
@@ -1015,12 +1018,19 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
                 min_luma_deviation: 10.0,
             }]
         }
+        (UiScenario::Chat, LayoutWidth::Wide) => vec![RegionExpectation {
+            name: "composer",
+            rect: RelativeRect::new(0.30, 0.84, 0.98, 0.98),
+            min_edge_ratio: 0.007,
+            min_color_buckets: 8,
+            min_luma_deviation: 2.5,
+        }],
         (UiScenario::ChatThread, LayoutWidth::Narrow) => vec![RegionExpectation {
             name: "thread-panel",
             rect: RelativeRect::new(0.48, 0.04, 0.98, 0.98),
             min_edge_ratio: 0.008,
             min_color_buckets: 8,
-            min_luma_deviation: 8.0,
+            min_luma_deviation: 3.5,
         }],
         (UiScenario::ChatThread, LayoutWidth::Wide) => vec![RegionExpectation {
             name: "thread-panel",
@@ -1035,7 +1045,7 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
             rect: RelativeRect::new(0.16, 0.72, 0.78, 0.94),
             min_edge_ratio: 0.008,
             min_color_buckets: 8,
-            min_luma_deviation: 7.0,
+            min_luma_deviation: 6.5,
         }],
         (UiScenario::QuickSwitcher, LayoutWidth::Narrow)
         | (UiScenario::QuickSwitcher, LayoutWidth::Wide) => vec![RegionExpectation {

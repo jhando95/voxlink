@@ -10,6 +10,11 @@ thread_local! {
     static MEMBER_WIDGET: RefCell<Option<slint::Weak<MemberWidgetWindow>>> = const { RefCell::new(None) };
     static MEMBER_WIDGET_VISIBLE: RefCell<bool> = const { RefCell::new(false) };
     static MEMBER_WIDGET_INITIALIZER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    static SCREEN_SHARE_WIDGET: RefCell<Option<slint::Weak<ScreenShareWidgetWindow>>> = const { RefCell::new(None) };
+    static SCREEN_SHARE_WIDGET_VISIBLE: RefCell<bool> = const { RefCell::new(false) };
+    static SCREEN_SHARE_WIDGET_SUPPRESSED: RefCell<bool> = const { RefCell::new(false) };
+    static SCREEN_SHARE_WIDGET_INITIALIZER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    static SCREEN_SHARE_WIDGET_DESTROYER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
 pub fn view_to_index(view: AppView) -> i32 {
@@ -35,10 +40,36 @@ pub fn index_to_view(index: i32) -> AppView {
     }
 }
 
+pub fn safe_blank_image() -> slint::Image {
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(1, 1))
+}
+
+pub fn clear_screen_share_widget_image() {
+    with_screen_share_widget(|widget| {
+        widget.set_has_screen_image(false);
+        widget.set_screen_image(safe_blank_image());
+    });
+}
+
+pub fn set_screen_share_widget_rgba(width: u32, height: u32, pixels: &[u8]) {
+    if width == 0 || height == 0 || pixels.is_empty() {
+        clear_screen_share_widget_image();
+        return;
+    }
+
+    with_screen_share_widget(|widget| {
+        let buffer =
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(pixels, width, height);
+        widget.set_has_screen_image(true);
+        widget.set_screen_image(slint::Image::from_rgba8(buffer));
+    });
+}
+
 pub fn update_perf_display(window: &MainWindow, snap: &PerfSnapshot) {
     let perf = PerfData {
         cpu_percent: snap.cpu_percent,
         memory_mb: snap.memory_mb,
+        peak_memory_mb: snap.peak_memory_mb,
         uptime_secs: snap.uptime_secs as i32,
         audio_active: snap.audio_active,
         network_connected: snap.network_connected,
@@ -73,8 +104,26 @@ pub fn register_member_widget(widget: &MemberWidgetWindow) {
     });
 }
 
+pub fn register_screen_share_widget(widget: &ScreenShareWidgetWindow) {
+    SCREEN_SHARE_WIDGET.with(|slot| {
+        *slot.borrow_mut() = Some(widget.as_weak());
+    });
+}
+
 pub fn register_member_widget_initializer(f: impl Fn() + 'static) {
     MEMBER_WIDGET_INITIALIZER.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(f));
+    });
+}
+
+pub fn register_screen_share_widget_initializer(f: impl Fn() + 'static) {
+    SCREEN_SHARE_WIDGET_INITIALIZER.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(f));
+    });
+}
+
+pub fn register_screen_share_widget_destroyer(f: impl Fn() + 'static) {
+    SCREEN_SHARE_WIDGET_DESTROYER.with(|slot| {
         *slot.borrow_mut() = Some(Box::new(f));
     });
 }
@@ -89,6 +138,18 @@ pub fn ensure_member_widget() -> bool {
         }
     });
     with_member_widget(|_| ()).is_some()
+}
+
+pub fn ensure_screen_share_widget() -> bool {
+    if with_screen_share_widget(|_| ()).is_some() {
+        return true;
+    }
+    SCREEN_SHARE_WIDGET_INITIALIZER.with(|slot| {
+        if let Some(initializer) = slot.borrow().as_ref() {
+            initializer();
+        }
+    });
+    with_screen_share_widget(|_| ()).is_some()
 }
 
 pub fn set_member_widget_visible(visible: bool) -> bool {
@@ -122,8 +183,46 @@ pub fn set_member_widget_visible(visible: bool) -> bool {
     })
 }
 
+pub fn set_screen_share_widget_visible(visible: bool) -> bool {
+    if visible && !ensure_screen_share_widget() {
+        SCREEN_SHARE_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = false;
+        });
+        return false;
+    }
+
+    with_screen_share_widget(|widget| {
+        let result = if visible {
+            widget.show()
+        } else {
+            widget.hide()
+        };
+        if let Err(err) = result {
+            log::warn!("Failed to change screen share widget visibility: {err}");
+            return false;
+        }
+        SCREEN_SHARE_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = visible;
+        });
+        true
+    })
+    .unwrap_or_else(|| {
+        SCREEN_SHARE_WIDGET_VISIBLE.with(|slot| {
+            *slot.borrow_mut() = false;
+        });
+        false
+    })
+}
+
 pub fn sync_member_widget_theme(dark_mode: bool, theme_preset: i32) {
     with_member_widget(|widget| {
+        widget.set_dark_mode(dark_mode);
+        widget.set_theme_preset(theme_preset);
+    });
+}
+
+pub fn sync_screen_share_widget_theme(dark_mode: bool, theme_preset: i32) {
+    with_screen_share_widget(|widget| {
         widget.set_dark_mode(dark_mode);
         widget.set_theme_preset(theme_preset);
     });
@@ -208,6 +307,77 @@ pub fn sync_member_widget(
             );
         }
     });
+}
+
+pub fn dismiss_screen_share_widget() {
+    SCREEN_SHARE_WIDGET_SUPPRESSED.with(|slot| {
+        *slot.borrow_mut() = true;
+    });
+    clear_screen_share_widget_image();
+    let _ = set_screen_share_widget_visible(false);
+}
+
+pub fn destroy_screen_share_widget() {
+    let _ = set_screen_share_widget_visible(false);
+    SCREEN_SHARE_WIDGET_DESTROYER.with(|slot| {
+        if let Some(destroyer) = slot.borrow().as_ref() {
+            destroyer();
+        }
+    });
+    SCREEN_SHARE_WIDGET.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+    SCREEN_SHARE_WIDGET_VISIBLE.with(|slot| {
+        *slot.borrow_mut() = false;
+    });
+}
+
+pub fn sync_screen_share_widget(window: &MainWindow) {
+    let should_show = window.get_is_sharing_screen()
+        && window.get_is_connected()
+        && !window.get_room_code().to_string().trim().is_empty()
+        && window.get_screen_share_image_ready();
+
+    if !should_show {
+        SCREEN_SHARE_WIDGET_SUPPRESSED.with(|slot| {
+            *slot.borrow_mut() = false;
+        });
+        with_screen_share_widget(|widget| {
+            widget.set_has_screen_share(false);
+            widget.set_has_screen_image(false);
+            widget.set_is_sharing_screen(false);
+            widget.set_owner_name(slint::SharedString::default());
+            widget.set_room_code(slint::SharedString::default());
+            widget.set_space_name(slint::SharedString::default());
+            widget.set_in_space_channel(false);
+        });
+        clear_screen_share_widget_image();
+        destroy_screen_share_widget();
+        return;
+    }
+
+    if SCREEN_SHARE_WIDGET_SUPPRESSED.with(|slot| *slot.borrow()) {
+        return;
+    }
+
+    if !ensure_screen_share_widget() {
+        return;
+    }
+
+    with_screen_share_widget(|widget| {
+        widget.set_dark_mode(window.get_dark_mode());
+        widget.set_theme_preset(window.get_theme_preset());
+        widget.set_has_screen_share(true);
+        widget.set_is_sharing_screen(window.get_is_sharing_screen());
+        widget.set_owner_name(window.get_screen_share_owner_name());
+        widget.set_room_code(window.get_room_code());
+        widget.set_space_name(window.get_current_space_name());
+        widget.set_in_space_channel(window.get_in_space_channel());
+    });
+    let is_visible = SCREEN_SHARE_WIDGET_VISIBLE.with(|slot| *slot.borrow());
+    if !is_visible {
+        let _ = set_screen_share_widget_visible(true);
+    }
 }
 
 pub fn set_friend_counts(window: &MainWindow, friends: &[shared_types::FavoriteFriend]) {
@@ -618,7 +788,16 @@ pub fn set_chat_messages(
     messages: &[shared_types::TextMessageData],
     self_name: &str,
 ) {
-    set_chat_messages_with_last_read(window, messages, self_name, None);
+    set_chat_messages_for_identity(window, messages, None, self_name);
+}
+
+pub fn set_chat_messages_for_identity(
+    window: &MainWindow,
+    messages: &[shared_types::TextMessageData],
+    self_user_id: Option<&str>,
+    self_name: &str,
+) {
+    set_chat_messages_with_last_read(window, messages, self_user_id, self_name, None);
 }
 
 /// Set chat messages with an optional last-read message ID.
@@ -626,12 +805,15 @@ pub fn set_chat_messages(
 pub fn set_chat_messages_with_last_read(
     window: &MainWindow,
     messages: &[shared_types::TextMessageData],
+    self_user_id: Option<&str>,
     self_name: &str,
     last_read_message_id: Option<&str>,
 ) {
+    let (visible_start, visible_messages) = visible_chat_window(messages);
+
     // Count replies per parent message
     let mut reply_counts: HashMap<&str, i32> = HashMap::new();
-    for m in messages {
+    for m in visible_messages {
         if let Some(ref parent_id) = m.reply_to_message_id {
             *reply_counts.entry(parent_id.as_str()).or_default() += 1;
         }
@@ -639,26 +821,27 @@ pub fn set_chat_messages_with_last_read(
 
     // Find the index of the first unread message (the one right after last_read_message_id)
     let new_separator_idx: Option<usize> = last_read_message_id.and_then(|last_read| {
-        messages
+        visible_messages
             .iter()
             .position(|m| m.message_id == last_read)
             .and_then(|pos| {
                 // The separator goes on the next message (first unread)
                 let next = pos + 1;
-                if next < messages.len() {
+                if next < visible_messages.len() {
                     Some(next)
                 } else {
                     None // all messages are read
                 }
             })
+            .or_else(|| (visible_start > 0).then_some(0))
     });
 
-    let mut model: Vec<ChatMessage> = Vec::with_capacity(messages.len());
+    let mut model: Vec<ChatMessage> = Vec::with_capacity(visible_messages.len());
     let mut prev_sender: Option<&str> = None;
     let mut prev_timestamp: u64 = 0;
     let mut prev_day: u64 = 0;
 
-    for (idx, m) in messages.iter().enumerate() {
+    for (idx, m) in visible_messages.iter().enumerate() {
         let day = m.timestamp / 86400;
         // Insert date separator at day boundaries
         if day != prev_day && m.timestamp > 0 {
@@ -671,7 +854,7 @@ pub fn set_chat_messages_with_last_read(
             prev_day = day;
         }
 
-        let mut msg = text_msg_to_chat_msg(m, self_name);
+        let mut msg = text_msg_to_chat_msg_for_identity(m, self_user_id, self_name);
         msg.reply_count = reply_counts
             .get(m.message_id.as_str())
             .copied()
@@ -694,6 +877,14 @@ pub fn set_chat_messages_with_last_read(
 
     let rc = std::rc::Rc::new(slint::VecModel::from(model));
     window.set_chat_messages(rc.into());
+}
+
+fn visible_chat_window(
+    messages: &[shared_types::TextMessageData],
+) -> (usize, &[shared_types::TextMessageData]) {
+    const MAX_RENDERED_CHAT_MESSAGES: usize = 180;
+    let visible_start = messages.len().saturating_sub(MAX_RENDERED_CHAT_MESSAGES);
+    (visible_start, &messages[visible_start..])
 }
 
 fn format_day_separator(timestamp: u64) -> String {
@@ -736,6 +927,15 @@ fn format_day_separator(timestamp: u64) -> String {
 
 fn with_member_widget<T>(f: impl FnOnce(MemberWidgetWindow) -> T) -> Option<T> {
     MEMBER_WIDGET.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|widget| widget.upgrade())
+            .map(f)
+    })
+}
+
+fn with_screen_share_widget<T>(f: impl FnOnce(ScreenShareWidgetWindow) -> T) -> Option<T> {
+    SCREEN_SHARE_WIDGET.with(|slot| {
         slot.borrow()
             .as_ref()
             .and_then(|widget| widget.upgrade())
@@ -1079,6 +1279,14 @@ fn format_file_size(bytes: u32) -> String {
 }
 
 pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) -> ChatMessage {
+    text_msg_to_chat_msg_for_identity(m, None, self_name)
+}
+
+pub fn text_msg_to_chat_msg_for_identity(
+    m: &shared_types::TextMessageData,
+    self_user_id: Option<&str>,
+    self_name: &str,
+) -> ChatMessage {
     let color_index = m
         .sender_name
         .bytes()
@@ -1099,7 +1307,9 @@ pub fn text_msg_to_chat_msg(m: &shared_types::TextMessageData, self_name: &str) 
         sender_id: m.sender_id.clone().into(),
         content: content.into(),
         timestamp: format_timestamp(m.timestamp).into(),
-        is_self: m.sender_name == self_name,
+        is_self: self_user_id
+            .map(|user_id| m.sender_id == user_id)
+            .unwrap_or_else(|| m.sender_name == self_name),
         mentions_self: message_mentions_user(&m.content, self_name),
         reply_sender_name: m.reply_to_sender_name.clone().unwrap_or_default().into(),
         reply_preview: m.reply_preview.clone().unwrap_or_default().into(),
@@ -1524,4 +1734,64 @@ pub fn resolve_emoji_shortcodes(text: &str) -> String {
     }
     result.push_str(rest);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_message(id: usize) -> shared_types::TextMessageData {
+        shared_types::TextMessageData {
+            message_id: format!("m{id}"),
+            sender_id: "u1".into(),
+            sender_name: "Jordan".into(),
+            content: format!("message-{id}"),
+            timestamp: id as u64,
+            edited: false,
+            reactions: Vec::new(),
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+            forwarded_from: None,
+            attachment_name: None,
+            attachment_size: None,
+            link_url: None,
+        }
+    }
+
+    #[test]
+    fn resolves_known_emoji_shortcodes() {
+        assert_eq!(
+            resolve_emoji_shortcodes("Ship it :rocket:"),
+            "Ship it \u{1F680}"
+        );
+    }
+
+    #[test]
+    fn leaves_unknown_emoji_shortcodes_unchanged() {
+        assert_eq!(
+            resolve_emoji_shortcodes("Hello :unknown:"),
+            "Hello :unknown:"
+        );
+    }
+
+    #[test]
+    fn chat_render_window_keeps_only_the_latest_messages() {
+        let messages: Vec<_> = (0..300).map(make_message).collect();
+        let (visible_start, visible) = visible_chat_window(&messages);
+        assert_eq!(visible.len(), 180);
+        assert_eq!(visible_start, 120);
+        assert_eq!(visible.first().map(|m| m.message_id.as_str()), Some("m120"));
+        assert_eq!(visible.last().map(|m| m.message_id.as_str()), Some("m299"));
+    }
+
+    #[test]
+    fn chat_message_self_state_prefers_stable_user_id() {
+        let mut message = make_message(1);
+        message.sender_id = "u-self".into();
+        message.sender_name = "Old Name".into();
+        let chat = text_msg_to_chat_msg_for_identity(&message, Some("u-self"), "New Name");
+        assert!(chat.is_self);
+    }
 }

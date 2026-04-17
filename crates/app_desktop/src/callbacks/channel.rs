@@ -192,9 +192,7 @@ pub fn setup_leave_channel(
         w.set_is_sharing_screen(false);
         w.set_screen_share_owner_name(slint::SharedString::default());
         w.set_screen_share_owner_id(slint::SharedString::default());
-        w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-            slint::Rgba8Pixel,
-        >::new(1, 1)));
+        crate::signal_handler::connection::reset_remote_screen_share_surface(&w);
 
         let network = network.clone();
         let audio = audio.clone();

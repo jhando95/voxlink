@@ -130,6 +130,23 @@ pub fn process_signals(
                     }
                     continue;
                 }
+                if message == "Room not found"
+                    && w.get_current_view() == ui_shell::view_to_index(AppView::Room)
+                    && w.get_in_space_channel()
+                    && !w.get_active_channel_id().is_empty()
+                {
+                    let channel_id = w.get_active_channel_id().to_string();
+                    w.set_room_status("Voice channel expired. Rejoining...".into());
+                    crate::helpers::show_toast(w, "Rejoining voice channel...", 2);
+                    let network = ctx.network.clone();
+                    ctx.rt_handle.spawn(async move {
+                        let net = network.lock().await;
+                        let _ = net
+                            .send_signal(&shared_types::SignalMessage::JoinChannel { channel_id })
+                            .await;
+                    });
+                    continue;
+                }
                 log::error!("Server error: {message}");
                 crate::helpers::show_toast(w, &format!("Error: {message}"), 3);
             }
@@ -143,6 +160,27 @@ pub fn process_signals(
                 welcome_message,
             } => {
                 space::handle_space_joined(w, state, space, channels, members, welcome_message);
+                let remembered_text_channel_id = {
+                    let s = state.borrow();
+                    s.space.as_ref().and_then(|space_state| {
+                        if space_state.active_channel_id.is_some() {
+                            None
+                        } else {
+                            space_state.selected_text_channel_id.clone()
+                        }
+                    })
+                };
+                if let Some(channel_id) = remembered_text_channel_id {
+                    let network = ctx.network.clone();
+                    ctx.rt_handle.spawn(async move {
+                        let net = network.lock().await;
+                        let _ = net
+                            .send_signal(&shared_types::SignalMessage::SelectTextChannel {
+                                channel_id,
+                            })
+                            .await;
+                    });
+                }
             }
             SignalMessage::ChannelCreated { channel } => {
                 channel::handle_channel_created(w, state, channel);
@@ -395,9 +433,7 @@ pub fn process_signals(
                 w.set_is_sharing_screen(false);
                 w.set_screen_share_owner_name(slint::SharedString::default());
                 w.set_screen_share_owner_id(slint::SharedString::default());
-                w.set_screen_share_image(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
-                    slint::Rgba8Pixel,
-                >::new(1, 1)));
+                connection::reset_remote_screen_share_surface(w);
                 w.set_recording_active(false);
                 w.set_recording_user(slint::SharedString::default());
                 ui_shell::set_channels(w, &[]);
@@ -574,10 +610,16 @@ pub fn process_signals(
                 history,
             } => {
                 let my_name = w.get_user_name().to_string();
+                let self_user_id = state.borrow().self_user_id.clone();
                 w.set_chat_channel_name(name.into());
                 w.set_chat_is_direct_message(true);
                 w.set_chat_context_subtitle("Group message".into());
-                ui_shell::set_chat_messages(w, history, &my_name);
+                ui_shell::set_chat_messages_for_identity(
+                    w,
+                    history,
+                    self_user_id.as_deref(),
+                    &my_name,
+                );
                 w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
             }
             SignalMessage::GroupMessage {
@@ -585,7 +627,12 @@ pub fn process_signals(
                 message,
             } => {
                 let my_name = w.get_user_name().to_string();
-                let chat_msg = ui_shell::text_msg_to_chat_msg(message, &my_name);
+                let self_user_id = state.borrow().self_user_id.clone();
+                let chat_msg = ui_shell::text_msg_to_chat_msg_for_identity(
+                    message,
+                    self_user_id.as_deref(),
+                    &my_name,
+                );
                 let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
                 if let Some(model) = messages
                     .as_any()
@@ -610,6 +657,8 @@ pub fn process_signals(
             } => {
                 log::info!("Thread messages received ({} replies)", messages.len());
                 let self_name = w.get_user_name().to_string();
+                let self_user_id = state.borrow().self_user_id.clone();
+                let reply_start = chat::thread_reply_start_index(messages);
                 if let Some(parent) = messages.first() {
                     w.set_thread_parent_sender(parent.sender_name.clone().into());
                     w.set_thread_parent_content(
@@ -621,8 +670,14 @@ pub fn process_signals(
                 }
                 let replies: Vec<ui_shell::ChatMessage> = messages
                     .iter()
-                    .skip(1)
-                    .map(|m| ui_shell::text_msg_to_chat_msg(m, &self_name))
+                    .skip(reply_start)
+                    .map(|m| {
+                        ui_shell::text_msg_to_chat_msg_for_identity(
+                            m,
+                            self_user_id.as_deref(),
+                            &self_name,
+                        )
+                    })
                     .collect();
                 let model = std::rc::Rc::new(slint::VecModel::from(replies));
                 w.set_thread_messages(model.into());
@@ -1003,10 +1058,15 @@ pub fn process_signals(
             SignalMessage::SpaceSearchResults { results } => {
                 log::info!("Space search results: {} matches", results.len());
                 let user_name = w.get_user_name().to_string();
+                let self_user_id = state.borrow().self_user_id.clone();
                 let items: Vec<ui_shell::ChatMessage> = results
                     .iter()
                     .map(|r| {
-                        let mut msg = ui_shell::text_msg_to_chat_msg(&r.message, &user_name);
+                        let mut msg = ui_shell::text_msg_to_chat_msg_for_identity(
+                            &r.message,
+                            self_user_id.as_deref(),
+                            &user_name,
+                        );
                         // Prefix channel name so the user knows where the result came from
                         let prefix = format!("#{} \u{2014} ", r.channel_name);
                         msg.content =

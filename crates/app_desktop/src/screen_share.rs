@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,7 @@ use xcap::{Monitor, Window};
 const SCREEN_PRESSURE_THRESHOLD: u8 = 3;
 const SCREEN_SHARE_PREVIEW_MAX_WIDTH: u32 = 420;
 const SCREEN_SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(90);
+const SCREEN_STATIC_FRAME_REFRESH_INTERVAL: Duration = Duration::from_millis(650);
 const SCREEN_TRANSPORT_FEEDBACK_WINDOW: Duration = Duration::from_secs(4);
 const SCREEN_TRANSPORT_DROP_RATE_THRESHOLD: f32 = 0.12;
 const SCREEN_TRANSPORT_PACING_RECOVERY_WINDOWS: u8 = 2;
@@ -171,10 +173,6 @@ enum CaptureTarget {
     Display(Monitor),
     Window(Window),
 }
-
-// SAFETY: Monitor/Window contain OS handles (HMONITOR, HWND) that are valid process-wide.
-// We only use them for read-only frame capture, which is safe across threads.
-unsafe impl Send for CaptureTarget {}
 
 #[derive(Clone, Debug)]
 struct CaptureSource {
@@ -481,6 +479,9 @@ impl ScreenShareController {
             preview.height,
         );
         window.set_screen_share_image(slint::Image::from_rgba8(buffer));
+        window.set_screen_share_image_ready(true);
+        ui_shell::sync_screen_share_widget(window);
+        ui_shell::set_screen_share_widget_rgba(preview.width, preview.height, &preview.pixels);
     }
 
     pub fn record_transport_feedback(
@@ -582,8 +583,9 @@ impl ScreenShareController {
                 .map_err(|_| "Screen share selection is unavailable".to_string())?;
             *current = Some(source.id.clone());
         }
+        let selected_source_id = source.id.clone();
         let profile = self.selected_profile();
-        probe_source(&source.target)?;
+        probe_source_id(&selected_source_id)?;
         if let Ok(mut preview) = self.preview_frame.lock() {
             *preview = None;
         }
@@ -618,6 +620,7 @@ impl ScreenShareController {
         }
 
         let status_for_thread = status.clone();
+        let selected_source_id_for_thread = selected_source_id.clone();
         if let Ok(mut feedback) = transport_feedback.lock() {
             feedback.clear();
         }
@@ -642,11 +645,20 @@ impl ScreenShareController {
         });
 
         std::thread::spawn(move || {
+            let mut source = match resolve_capture_source(&selected_source_id_for_thread) {
+                Ok(source) => source,
+                Err(e) => {
+                    log::error!("Failed to resolve selected screen share source: {e}");
+                    return;
+                }
+            };
             let mut adaptive = AdaptiveQuality::new(profile);
             let mut pacer = TransportPacer::default();
             let mut last_preview_at = Instant::now() - SCREEN_SHARE_PREVIEW_INTERVAL;
+            let mut last_sent_at = Instant::now() - SCREEN_STATIC_FRAME_REFRESH_INTERVAL;
             let mut last_transport_version = 0u64;
             let mut transport_warning_active = false;
+            let mut last_frame_signature = None;
             while !stop_for_thread.load(Ordering::Relaxed) {
                 let preset = adaptive.current();
                 if let Ok(mut state) = status_for_thread.lock() {
@@ -688,6 +700,7 @@ impl ScreenShareController {
 
                 match capture_frame(&source.target) {
                     Ok(image) => {
+                        let frame_signature = screen_frame_signature(&image);
                         if last_preview_at.elapsed() >= SCREEN_SHARE_PREVIEW_INTERVAL {
                             let preview =
                                 build_preview_frame(&image, SCREEN_SHARE_PREVIEW_MAX_WIDTH);
@@ -696,31 +709,45 @@ impl ScreenShareController {
                             }
                             last_preview_at = Instant::now();
                         }
-                        match encode_frame(image, preset) {
-                            Ok(encoded) => {
-                                if encoded.len()
-                                    > shared_types::MAX_SCREEN_FRAME_SIZE.saturating_mul(3) / 4
-                                {
-                                    pressure = true;
-                                }
-                                if let Ok(mut slot) = pending_frame.lock() {
-                                    if slot.replace(encoded).is_some() {
+                        if should_send_screen_frame(
+                            last_frame_signature,
+                            frame_signature,
+                            last_sent_at,
+                            frame_start,
+                        ) {
+                            match encode_frame(image, preset) {
+                                Ok(encoded) => {
+                                    if encoded.len()
+                                        > shared_types::MAX_SCREEN_FRAME_SIZE.saturating_mul(3) / 4
+                                    {
                                         pressure = true;
                                     }
-                                    frame_ready_for_thread.notify_one();
-                                } else {
-                                    pressure = true;
+                                    if let Ok(mut slot) = pending_frame.lock() {
+                                        if slot.replace(encoded).is_some() {
+                                            pressure = true;
+                                        }
+                                        last_frame_signature = Some(frame_signature);
+                                        last_sent_at = Instant::now();
+                                        frame_ready_for_thread.notify_one();
+                                    } else {
+                                        pressure = true;
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                pressure = true;
-                                log::warn!("Failed to encode screen frame: {e}");
+                                Err(e) => {
+                                    pressure = true;
+                                    log::warn!("Failed to encode screen frame: {e}");
+                                }
                             }
                         }
                     }
                     Err(e) => {
                         pressure = true;
                         log::warn!("Failed to capture screen frame: {e}");
+                        if let Ok(refreshed_source) =
+                            resolve_capture_source(&selected_source_id_for_thread)
+                        {
+                            source = refreshed_source;
+                        }
                     }
                 }
 
@@ -994,6 +1021,21 @@ fn default_source_index(sources: &[CaptureSource], preferred_id: Option<&str>) -
         .or(if sources.is_empty() { None } else { Some(0) })
 }
 
+fn resolve_capture_source(source_id: &str) -> Result<CaptureSource, String> {
+    // Resolve fresh xcap handles on the worker thread instead of sending them
+    // across threads. The OS objects behind window/display capture are not
+    // guaranteed to stay valid when moved after creation.
+    enumerate_sources()?
+        .into_iter()
+        .find(|source| source.id == source_id)
+        .ok_or_else(|| "Screen share source is no longer available".to_string())
+}
+
+fn probe_source_id(source_id: &str) -> Result<(), String> {
+    let source = resolve_capture_source(source_id)?;
+    probe_source(&source.target)
+}
+
 fn probe_source(source: &CaptureTarget) -> Result<(), String> {
     match source {
         CaptureTarget::Display(monitor) => monitor
@@ -1034,6 +1076,24 @@ fn build_preview_frame(image: &xcap::image::RgbaImage, max_width: u32) -> Previe
     }
 }
 
+fn should_send_screen_frame(
+    last_signature: Option<u64>,
+    next_signature: u64,
+    last_sent_at: Instant,
+    now: Instant,
+) -> bool {
+    last_signature != Some(next_signature)
+        || now.duration_since(last_sent_at) >= SCREEN_STATIC_FRAME_REFRESH_INTERVAL
+}
+
+fn screen_frame_signature(image: &xcap::image::RgbaImage) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    image.width().hash(&mut hasher);
+    image.height().hash(&mut hasher);
+    image.as_raw().hash(&mut hasher);
+    hasher.finish()
+}
+
 fn encode_frame(image: xcap::image::RgbaImage, preset: QualityPreset) -> Result<Vec<u8>, String> {
     let (width, height) = image.dimensions();
     let target = if width > preset.max_width {
@@ -1061,8 +1121,9 @@ fn encode_frame(image: xcap::image::RgbaImage, preset: QualityPreset) -> Result<
 #[cfg(test)]
 mod tests {
     use super::{
-        build_preview_frame, screen_share_detail, AdaptiveQuality, QualityPreset,
-        TransportFeedbackSample, TransportFeedbackState, TransportFeedbackSummary, TransportPacer,
+        build_preview_frame, screen_frame_signature, screen_share_detail, should_send_screen_frame,
+        AdaptiveQuality, QualityPreset, TransportFeedbackSample, TransportFeedbackState,
+        TransportFeedbackSummary, TransportPacer, SCREEN_STATIC_FRAME_REFRESH_INTERVAL,
         SHARE_PROFILES,
     };
     use std::time::{Duration, Instant};
@@ -1102,6 +1163,41 @@ mod tests {
             preview.pixels.len(),
             (preview.width * preview.height * 4) as usize
         );
+    }
+
+    #[test]
+    fn screen_frame_signature_changes_with_pixels() {
+        let image_a = RgbaImage::from_pixel(320, 180, Rgba([4, 8, 12, 255]));
+        let mut image_b = image_a.clone();
+        image_b.put_pixel(12, 8, Rgba([200, 8, 12, 255]));
+        assert_ne!(
+            screen_frame_signature(&image_a),
+            screen_frame_signature(&image_b)
+        );
+    }
+
+    #[test]
+    fn static_frames_are_skipped_until_refresh_deadline() {
+        let now = Instant::now();
+        let signature = 42;
+        assert!(!should_send_screen_frame(
+            Some(signature),
+            signature,
+            now,
+            now + Duration::from_millis(200),
+        ));
+        assert!(should_send_screen_frame(
+            Some(signature),
+            signature,
+            now,
+            now + SCREEN_STATIC_FRAME_REFRESH_INTERVAL,
+        ));
+        assert!(should_send_screen_frame(
+            Some(signature),
+            signature + 1,
+            now,
+            now + Duration::from_millis(50),
+        ));
     }
 
     #[test]

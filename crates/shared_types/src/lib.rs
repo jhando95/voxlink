@@ -357,6 +357,7 @@ pub struct AppState {
 pub struct PerfSnapshot {
     pub cpu_percent: f32,
     pub memory_mb: f32,
+    pub peak_memory_mb: f32,
     pub uptime_secs: u64,
     pub audio_active: bool,
     pub network_connected: bool,
@@ -1393,8 +1394,7 @@ pub fn extract_first_url(content: &str) -> Option<String> {
     for word in content.split_whitespace() {
         if word.starts_with("http://") || word.starts_with("https://") {
             // Strip trailing punctuation that's likely not part of the URL
-            let trimmed =
-                word.trim_end_matches(|c: char| matches!(c, ',' | '.' | ')' | ']' | '>' | ';'));
+            let trimmed = word.trim_end_matches([',', '.', ')', ']', '>', ';']);
             return Some(trimmed.to_string());
         }
     }

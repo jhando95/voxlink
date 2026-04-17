@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { SpaceData, MemberData, VxTheme } from "theme.slint";
-import { AccentBar, Divider, SectionLabel, StatusDot, VxAvatar, VxButton, VxGlyphTile, VxLogo, VxStatusPill } from "components.slint";
+import { AccentBar, Divider, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxGlyphTile, VxLogo, VxStatusPill } from "components.slint";
 
 export component TopBar inherits Rectangle {
     in property <string> title: "";
@@ -1217,6 +1217,116 @@ export component VoiceCallBar inherits Rectangle {
                 }
             }
         }
+    }
+}
+
+export component ScreenSharePip inherits Rectangle {
+    in property <string> owner-name: "";
+    in property <bool> is-sharing-screen: false;
+    in property <image> screen-image;
+    callback navigate(int);
+
+    background: transparent;
+
+    accessible-role: button;
+    accessible-label: root.is-sharing-screen ? "Open live screen share preview" : "Open active screen share";
+
+    VxCard {
+        width: parent.width;
+        height: parent.height;
+        border-color: root.is-sharing-screen
+            ? VxTheme.success.transparentize(0.35)
+            : VxTheme.accent-border;
+        border-width: 1px;
+        clip: true;
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: VxTheme.bg-stage;
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                height: 40px;
+                background: VxTheme.bg-panel.transparentize(0.08);
+                border-color: VxTheme.border-subtle;
+                border-width: 0px;
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    alignment: center;
+
+                    VxStatusPill {
+                        label: root.is-sharing-screen ? "Sharing" : "Watching";
+                        tone: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
+                        fill: root.is-sharing-screen ? VxTheme.success-dim : VxTheme.accent-subtle;
+                    }
+
+                    Text {
+                        text: root.is-sharing-screen
+                            ? "Your screen is live"
+                            : (root.owner-name != "" ? root.owner-name + " is sharing" : "Screen share active");
+                        color: VxTheme.text-primary;
+                        font-size: 11px;
+                        font-weight: 700;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Return";
+                        color: root.is-sharing-screen ? VxTheme.success : VxTheme.accent;
+                        font-size: 10px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                background: VxTheme.bg-stage;
+
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.screen-image;
+                    image-fit: contain;
+                }
+
+                Rectangle {
+                    x: 10px;
+                    y: parent.height - self.height - 10px;
+                    width: pip-note.preferred-width + 18px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: VxTheme.bg-panel.transparentize(0.18);
+                    pip-note := Text {
+                        text: root.is-sharing-screen
+                            ? "Share stays live while you browse"
+                            : "Click to jump back into the call";
+                        color: VxTheme.text-secondary;
+                        font-size: 9px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    pip-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.navigate(1); }
     }
 }
 

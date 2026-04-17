@@ -422,6 +422,7 @@ pub fn setup_toggle_dark_mode(window: &MainWindow) {
         let new_mode = !w.get_dark_mode();
         w.set_dark_mode(new_mode);
         ui_shell::sync_member_widget_theme(new_mode, w.get_theme_preset());
+        ui_shell::sync_screen_share_widget_theme(new_mode, w.get_theme_preset());
 
         crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();
@@ -443,6 +444,7 @@ pub fn setup_select_theme_preset(window: &MainWindow) {
         }
         w.set_theme_preset(preset);
         ui_shell::sync_member_widget_theme(w.get_dark_mode(), preset);
+        ui_shell::sync_screen_share_widget_theme(w.get_dark_mode(), preset);
 
         crate::helpers::spawn_config_save(move || {
             let mut cfg = config_store::load_config();

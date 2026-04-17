@@ -19,6 +19,7 @@ use keys::{combo_held, combo_to_config, combo_to_display, keycode_sort_order};
 const TICK_MS_ACTIVE: u64 = 25; // 40Hz — smooth for audio during voice calls
 const TICK_MS_IDLE: u64 = 100; // 10Hz — low overhead when not in a voice call
 const TICKS_PER_IDLE_FIRE: u64 = TICK_MS_IDLE / TICK_MS_ACTIVE; // tick increment per idle fire
+const SCREEN_SHARE_RENDER_INTERVAL_MS: u64 = 33; // 30fps keeps preview smooth without 60fps texture churn
 
 // ─── Event Loop ───
 
@@ -139,17 +140,14 @@ pub fn start(
             // Switch to 40Hz when in a voice call (or previewing mic), 10Hz otherwise.
             // Tick increments proportionally so all tick-based timeouts keep correct
             // wall-clock timing regardless of the current rate.
-            let needs_active_rate =
-                in_call || (current_view == 2 && w.get_mic_preview_active());
+            let needs_active_rate = in_call || (current_view == 2 && w.get_mic_preview_active());
             {
                 let mut is_active = timer_is_active_rate.borrow_mut();
                 if needs_active_rate && !*is_active {
-                    timer_handle
-                        .set_interval(std::time::Duration::from_millis(TICK_MS_ACTIVE));
+                    timer_handle.set_interval(std::time::Duration::from_millis(TICK_MS_ACTIVE));
                     *is_active = true;
                 } else if !needs_active_rate && *is_active {
-                    timer_handle
-                        .set_interval(std::time::Duration::from_millis(TICK_MS_IDLE));
+                    timer_handle.set_interval(std::time::Duration::from_millis(TICK_MS_IDLE));
                     *is_active = false;
                 }
             }
@@ -259,9 +257,17 @@ pub fn start(
                         if max_visible > 0 {
                             let cur = w.get_quick_switcher_index();
                             let next = if up {
-                                if cur <= 0 { max_visible - 1 } else { cur - 1 }
+                                if cur <= 0 {
+                                    max_visible - 1
+                                } else {
+                                    cur - 1
+                                }
                             } else {
-                                if cur + 1 >= max_visible { 0 } else { cur + 1 }
+                                if cur + 1 >= max_visible {
+                                    0
+                                } else {
+                                    cur + 1
+                                }
                             };
                             w.set_quick_switcher_index(next);
                         }
@@ -279,9 +285,12 @@ pub fn start(
                     let arrow_held = (up || down) && !alt;
                     let was_arrow = *prev_ch_arrow_held.borrow();
                     if arrow_held && !was_arrow {
-                        let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                        let channels: Vec<ui_shell::ChannelData> =
+                            w.get_channels().iter().collect();
                         // Build list of navigable channel indices (non-header, non-collapsed)
-                        let nav_indices: Vec<usize> = channels.iter().enumerate()
+                        let nav_indices: Vec<usize> = channels
+                            .iter()
+                            .enumerate()
                             .filter(|(_, c)| !c.is_category_header && !c.category_collapsed)
                             .map(|(i, _)| i)
                             .collect();
@@ -310,7 +319,8 @@ pub fn start(
                     if enter_held && !was_enter {
                         let idx = w.get_focused_channel_index();
                         if idx >= 0 {
-                            let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                            let channels: Vec<ui_shell::ChannelData> =
+                                w.get_channels().iter().collect();
                             if let Some(ch) = channels.get(idx as usize) {
                                 if !ch.is_category_header {
                                     if ch.is_voice {
@@ -335,11 +345,12 @@ pub fn start(
                 }
 
                 // Ctrl+/ keyboard shortcuts overlay
-                if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::Slash) ||
-                   keys.contains(&Keycode::RControl) && keys.contains(&Keycode::Slash))
-                    && !w.get_shortcuts_visible() {
-                        w.set_shortcuts_visible(true);
-                    }
+                if (keys.contains(&Keycode::LControl) && keys.contains(&Keycode::Slash)
+                    || keys.contains(&Keycode::RControl) && keys.contains(&Keycode::Slash))
+                    && !w.get_shortcuts_visible()
+                {
+                    w.set_shortcuts_visible(true);
+                }
 
                 // Alt+Up/Down channel switching (Space or TextChat view)
                 {
@@ -348,12 +359,17 @@ pub fn start(
                     let down = keys.contains(&Keycode::Down);
                     let was_held = prev_alt_arrow_held.borrow().0;
                     let now_held = alt && (up || down);
-                    if alt && (up || down) && !was_held && (current_view == 4 || current_view == 5) {
-                        let channels: Vec<ui_shell::ChannelData> = w.get_channels().iter().collect();
+                    if alt && (up || down) && !was_held && (current_view == 4 || current_view == 5)
+                    {
+                        let channels: Vec<ui_shell::ChannelData> =
+                            w.get_channels().iter().collect();
                         let current_ch = w.get_chat_channel_id().to_string();
                         // Find text channels (non-header, non-voice)
-                        let text_ids: Vec<String> = channels.iter()
-                            .filter(|c| !c.is_category_header && !c.is_voice && !c.category_collapsed)
+                        let text_ids: Vec<String> = channels
+                            .iter()
+                            .filter(|c| {
+                                !c.is_category_header && !c.is_voice && !c.category_collapsed
+                            })
                             .map(|c| c.id.to_string())
                             .collect();
                         if !text_ids.is_empty() {
@@ -429,46 +445,54 @@ pub fn start(
                         &w,
                     );
 
-                    // Screen share only processes frames when viewing the room
-                    if viewing_room {
-                        if w.get_has_screen_share() {
-                            if !screen_frame_timer_tick.running() {
-                                screen_frame_timer_tick.start(
-                                    slint::TimerMode::Repeated,
-                                    std::time::Duration::from_millis(16),
-                                    {
-                                        let screen_timer_window = window_weak.clone();
-                                        let screen_timer_network = network.clone();
-                                        let screen_timer_share = screen_share.clone();
-                                        move || {
-                                            let Some(w) = screen_timer_window.upgrade() else {
-                                                return;
-                                            };
-                                            if !w.get_has_screen_share() {
-                                                return;
-                                            }
-                                            if w.get_is_sharing_screen() {
-                                                screen_timer_share.apply_latest_preview(&w);
-                                            } else {
-                                                signal_handler::connection::drain_screen_share_frame(
-                                                    &screen_timer_network,
-                                                    &w,
-                                                );
-                                            }
+                    let screen_share_active = in_call && w.get_has_screen_share();
+                    if screen_share_active {
+                        if !screen_frame_timer_tick.running() {
+                            screen_frame_timer_tick.start(
+                                slint::TimerMode::Repeated,
+                                std::time::Duration::from_millis(SCREEN_SHARE_RENDER_INTERVAL_MS),
+                                {
+                                    let screen_timer_window = window_weak.clone();
+                                    let screen_timer_network = network.clone();
+                                    let screen_timer_share = screen_share.clone();
+                                    move || {
+                                        let Some(w) = screen_timer_window.upgrade() else {
+                                            return;
+                                        };
+                                        if !w.get_has_screen_share() {
+                                            return;
                                         }
-                                    },
-                                );
-                            }
-                        } else if screen_frame_timer_tick.running() {
-                            screen_frame_timer_tick.stop();
+                                        if w.get_is_sharing_screen() {
+                                            screen_timer_share.apply_latest_preview(&w);
+                                        } else {
+                                            signal_handler::connection::drain_screen_share_frame(
+                                                &screen_timer_network,
+                                                &w,
+                                            );
+                                        }
+                                    }
+                                },
+                            );
                         }
-
-                        if tick.is_multiple_of(40) {
-                            screen_share.apply_to_window(&w);
-                        }
+                    } else if screen_frame_timer_tick.running() {
+                        screen_frame_timer_tick.stop();
                     }
 
-                    update_mic_level(tick, &audio, &state, &w, &smoothed_levels, &peer_level_cache);
+                    if in_call
+                        && (viewing_room || w.get_is_sharing_screen())
+                        && tick.is_multiple_of(40)
+                    {
+                        screen_share.apply_to_window(&w);
+                    }
+
+                    update_mic_level(
+                        tick,
+                        &audio,
+                        &state,
+                        &w,
+                        &smoothed_levels,
+                        &peer_level_cache,
+                    );
                 } else {
                     // Not in a call — stop screen share timer if it's still running (cleanup)
                     if screen_frame_timer_tick.running() {
@@ -499,7 +523,10 @@ pub fn start(
                 if toast_at_tick.borrow().is_none() {
                     *toast_at_tick.borrow_mut() = Some(Instant::now());
                 }
-                if toast_at_tick.borrow().is_some_and(|t| t.elapsed() >= Duration::from_secs(3)) {
+                if toast_at_tick
+                    .borrow()
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(3))
+                {
                     w.set_toast_visible(false);
                     *toast_at_tick.borrow_mut() = None;
                 }
@@ -519,13 +546,15 @@ pub fn start(
                         let rt = rt_handle.clone();
                         rt.spawn(async move {
                             let n = net.lock().await;
-                            let _ = n.send_signal(&SignalMessage::SetStatusPreset {
-                                preset: shared_types::UserStatus::Online,
-                            }).await;
+                            let _ = n
+                                .send_signal(&SignalMessage::SetStatusPreset {
+                                    preset: shared_types::UserStatus::Online,
+                                })
+                                .await;
                         });
                     }
                 }
-                let idle_mins = config_store::load_config().idle_timeout_mins.max(1) as u64;
+                let idle_mins = w.get_idle_timeout_mins().max(1) as u64;
                 let idle_dur = Duration::from_secs(idle_mins * 60);
                 if !*is_idle.borrow() && last_input_time.borrow().elapsed() >= idle_dur {
                     *is_idle.borrow_mut() = true;
@@ -533,9 +562,11 @@ pub fn start(
                     let rt = rt_handle.clone();
                     rt.spawn(async move {
                         let n = net.lock().await;
-                        let _ = n.send_signal(&SignalMessage::SetStatusPreset {
-                            preset: shared_types::UserStatus::Idle,
-                        }).await;
+                        let _ = n
+                            .send_signal(&SignalMessage::SetStatusPreset {
+                                preset: shared_types::UserStatus::Idle,
+                            })
+                            .await;
                     });
                 }
             }
@@ -621,8 +652,13 @@ pub fn start(
                                 *prev_est_mb_hr.borrow_mut() = mb_hr;
                                 *prev_est_peer_count.borrow_mut() = peer_count;
                                 w.set_est_data_per_hour(
-                                    format!("Est. {} MB/hr with {} user{}", mb_hr, peers_hearing + 1,
-                                            if peers_hearing + 1 > 1 { "s" } else { "" }).into(),
+                                    format!(
+                                        "Est. {} MB/hr with {} user{}",
+                                        mb_hr,
+                                        peers_hearing + 1,
+                                        if peers_hearing + 1 > 1 { "s" } else { "" }
+                                    )
+                                    .into(),
                                 );
                             }
                         }
