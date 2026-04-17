@@ -20,7 +20,7 @@ pub(crate) const BOUNDS_SECS: [f64; 11] = [
 pub(crate) const BUCKET_COUNT: usize = BOUNDS_SECS.len() + 1;
 
 /// Lock-free histogram.
-pub(crate) struct Histogram {
+pub struct Histogram {
     name: &'static str,
     help: &'static str,
     /// Per-bucket observation counts. `buckets[i]` counts observations
@@ -32,7 +32,7 @@ pub(crate) struct Histogram {
 }
 
 impl Histogram {
-    pub(crate) const fn new(name: &'static str, help: &'static str) -> Self {
+    pub const fn new(name: &'static str, help: &'static str) -> Self {
         // std::array::from_fn isn't `const`, so spell out 12 entries.
         // Keep length in sync with BUCKET_COUNT — unit test catches drift.
         Self {
@@ -50,7 +50,7 @@ impl Histogram {
     }
 
     /// Record one observation.
-    pub(crate) fn observe(&self, value_secs: f64) {
+    pub fn observe(&self, value_secs: f64) {
         // Pick the first bucket whose upper bound >= value.
         let idx = BOUNDS_SECS
             .iter()
@@ -64,7 +64,7 @@ impl Histogram {
     }
 
     /// Append Prometheus text for this histogram to `out`.
-    pub(crate) fn render(&self, out: &mut String) {
+    pub fn render(&self, out: &mut String) {
         use std::fmt::Write as _;
         let _ = writeln!(out, "# HELP {} {}", self.name, self.help);
         let _ = writeln!(out, "# TYPE {} histogram", self.name);

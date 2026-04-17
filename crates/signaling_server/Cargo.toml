@@ -3,6 +3,14 @@ name = "signaling_server"
 version = "0.10.4"
 edition = "2021"
 
+[lib]
+name = "signaling_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "signaling_server"
+path = "src/main.rs"
+
 [dependencies]
 shared_types = { path = "../shared_types" }
 tokio = { workspace = true }
@@ -22,3 +30,8 @@ x509-parser = "0.18"
 [dev-dependencies]
 tempfile = "3"
 rcgen = "0.13"
+criterion = "0.5"
+
+[[bench]]
+name = "hot_path"
+harness = false
