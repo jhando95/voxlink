@@ -599,10 +599,10 @@ pub(crate) async fn handle_signal(
         }
         // Voice Recording
         SignalMessage::StartRecording { channel_id } => {
-            crate::handle_start_recording(state, peer_id, channel_id).await;
+            handlers::recording::handle_start_recording(state, peer_id, channel_id).await;
         }
         SignalMessage::StopRecording { channel_id } => {
-            crate::handle_stop_recording(state, peer_id, channel_id).await;
+            handlers::recording::handle_stop_recording(state, peer_id, channel_id).await;
         }
         // Account management
         SignalMessage::SetDisplayName { name } => {
@@ -626,7 +626,7 @@ pub(crate) async fn handle_signal(
             duration_secs,
             data,
         } => {
-            crate::handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
+            handlers::recording::handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
         }
         other => {
             log::debug!(
