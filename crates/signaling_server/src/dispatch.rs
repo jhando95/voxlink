@@ -556,13 +556,13 @@ pub(crate) async fn handle_signal(
         }
         // DM Voice Calls
         SignalMessage::CallUser { target_user_id } => {
-            crate::handle_call_user(state, peer_id, target_user_id).await;
+            handlers::calls::handle_call_user(state, peer_id, target_user_id).await;
         }
         SignalMessage::AcceptCall { room_key } => {
-            crate::handle_accept_call(state, peer_id, room_key).await;
+            handlers::calls::handle_accept_call(state, peer_id, room_key).await;
         }
         SignalMessage::DeclineCall { room_key } => {
-            crate::handle_decline_call(state, peer_id, room_key).await;
+            handlers::calls::handle_decline_call(state, peer_id, room_key).await;
         }
         // Scheduled Events
         SignalMessage::CreateScheduledEvent {

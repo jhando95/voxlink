@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod calls;
 pub mod channel;
 pub mod chat;
 pub mod friends;
