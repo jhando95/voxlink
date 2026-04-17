@@ -1230,3 +1230,42 @@ fn signal_message_round_trip_forward_message() {
         _ => panic!("Wrong variant"),
     }
 }
+
+#[test]
+#[allow(clippy::assertions_on_constants)]
+fn signal_message_variant_names_match_count() {
+    use super::{SignalMessage, SIGNAL_MESSAGE_VARIANT_COUNT};
+    assert_eq!(
+        SignalMessage::VARIANT_NAMES.len(),
+        SIGNAL_MESSAGE_VARIANT_COUNT,
+        "VARIANT_NAMES and SIGNAL_MESSAGE_VARIANT_COUNT must agree"
+    );
+    assert!(
+        SIGNAL_MESSAGE_VARIANT_COUNT > 0,
+        "expected at least one variant"
+    );
+}
+
+#[test]
+fn signal_message_variant_index_in_bounds() {
+    use super::SignalMessage;
+    // Construct a small sample of variants (one unit, one struct) and
+    // confirm variant_index returns an in-bounds value. The compiler
+    // already guarantees variant_index is total over all variants via
+    // the exhaustive match, so we don't need to instantiate every one.
+    let samples: Vec<SignalMessage> = vec![
+        SignalMessage::LeaveRoom,
+        SignalMessage::CreateRoom {
+            user_name: "test".into(),
+            password: None,
+        },
+    ];
+    for msg in samples {
+        let idx = msg.variant_index();
+        assert!(
+            idx < SignalMessage::VARIANT_NAMES.len(),
+            "variant_index {idx} out of range"
+        );
+        assert!(!SignalMessage::VARIANT_NAMES[idx].is_empty());
+    }
+}
