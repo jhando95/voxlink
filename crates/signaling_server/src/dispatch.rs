@@ -588,14 +588,14 @@ pub(crate) async fn handle_signal(
             content,
             send_at,
         } => {
-            crate::handle_schedule_message(state, peer_id, channel_id, content, send_at, db).await;
+            handlers::scheduling::handle_schedule_message(state, peer_id, channel_id, content, send_at, db).await;
         }
         SignalMessage::CancelScheduledMessage { schedule_id } => {
-            crate::handle_cancel_scheduled_message(state, peer_id, schedule_id, db).await;
+            handlers::scheduling::handle_cancel_scheduled_message(state, peer_id, schedule_id, db).await;
         }
         // Welcome Message
         SignalMessage::SetWelcomeMessage { message } => {
-            crate::handle_set_welcome_message(state, peer_id, message, db).await;
+            handlers::scheduling::handle_set_welcome_message(state, peer_id, message, db).await;
         }
         // Voice Recording
         SignalMessage::StartRecording { channel_id } => {
