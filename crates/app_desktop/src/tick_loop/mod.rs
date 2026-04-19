@@ -590,7 +590,10 @@ pub fn start(
 
                 // --- Bandwidth tracking (every ~1s) ---
                 if let Ok(net) = network.try_lock() {
-                    let _ = net.expire_stale_screen_chunks();
+                    // Only expire screen chunks if screen sharing is active (incoming or outgoing).
+                    if viewing_remote_screen_share || w.get_is_sharing_screen() {
+                        let _ = net.expire_stale_screen_chunks();
+                    }
                     let chunk_counters = net.swap_screen_chunk_counters();
                     let observed_chunk_frames = chunk_counters
                         .frames_completed
