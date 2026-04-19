@@ -93,7 +93,7 @@ Ranked by estimated idle-CPU impact:
 
 2. ~~**`tick_loop/mod.rs:513` — unread pulse toggle** — THROTTLE — calls `w.set_unread_pulse()` every 3 s and forces a Slint property diff even when there are no unread items; adding a `has_unread` guard eliminates the diff at idle.~~ ✓ d87db8f
 
-3. **`main.rs:380` (server) — state cleanup sweep** — REPLACE — holds a write-lock on the entire `ServerState` every 60 s; auth/join-failure/IP counters that are empty 99% of the time should be pruned on insert/read, reducing write-lock contention under load.
+3. ~~**`main.rs:380` (server) — state cleanup sweep** — REPLACE — holds a write-lock on the entire `ServerState` every 60 s; auth/join-failure/IP counters that are empty 99% of the time should be pruned on insert/read, reducing write-lock contention under load.~~ ✓ 58bc6d5 (`auth_attempts` and `join_failures` pruned at insert time in `handlers/auth.rs` and `handlers/space.rs`; `connections_per_ip` zero-removal confirmed redundant and deleted; sweep retained only for rooms, member_ids, slow_mode_timestamps, and udp_sessions)
 
 4. ~~**`tick_loop/mod.rs:508` — typing dot animation** — THROTTLE — fires `set_typing_dot_phase()` unconditionally every 16 ticks; gating on `typing_visible` eliminates a Slint property write and animation cycle when nobody is typing.~~ ✓ d87db8f
 

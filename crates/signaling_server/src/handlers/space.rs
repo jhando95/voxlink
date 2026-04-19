@@ -527,6 +527,9 @@ pub async fn handle_join_space(
                     drop(s);
                     {
                         let mut sw = state.write().await;
+                        // Opportunistic cleanup: prune expired entries before inserting.
+                        sw.join_failures
+                            .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
                         let entry = sw.join_failures.entry(ip).or_insert((0, Instant::now()));
                         if entry.1.elapsed().as_secs() >= 60 {
                             *entry = (1, Instant::now());

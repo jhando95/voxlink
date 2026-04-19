@@ -294,6 +294,9 @@ async fn check_auth_rate_limit(state: &State, peer_id: &str) -> bool {
 
     let mut s = state.write().await;
     let now = std::time::Instant::now();
+    // Opportunistic cleanup: prune expired entries before inserting a new one.
+    s.auth_attempts
+        .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
     let entry = s.auth_attempts.entry(ip).or_insert((0, now));
 
     if now.duration_since(entry.1).as_secs() >= AUTH_RATE_WINDOW_SECS {

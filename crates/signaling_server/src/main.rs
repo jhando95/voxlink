@@ -415,23 +415,8 @@ async fn main() {
                     }
                 }
 
-                // Expire stale auth rate-limit entries (older than 10 minutes)
-                let auth_before = s.auth_attempts.len();
-                s.auth_attempts
-                    .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
-                let auth_removed = auth_before - s.auth_attempts.len();
-                if auth_removed > 0 {
-                    log::debug!("Cleaned up {auth_removed} stale auth rate-limit entries");
-                }
-
-                // Expire stale join-failure rate-limit entries (older than 10 minutes)
-                let join_before = s.join_failures.len();
-                s.join_failures
-                    .retain(|_, (_, window_start)| window_start.elapsed().as_secs() < 600);
-                let join_removed = join_before - s.join_failures.len();
-                if join_removed > 0 {
-                    log::debug!("Cleaned up {join_removed} stale join-failure entries");
-                }
+                // NOTE: auth_attempts and join_failures are pruned at insert time
+                // (in handlers/auth.rs and handlers/space.rs) — no sweep needed here.
 
                 // Expire stale slow-mode timestamps (older than 5 minutes)
                 let now_epoch = std::time::SystemTime::now()
@@ -454,13 +439,8 @@ async fn main() {
                     log::debug!("Cleaned up {udp_removed} orphaned UDP session tokens");
                 }
 
-                // Remove stale connections_per_ip entries where count has reached 0
-                let ip_before = s.connections_per_ip.len();
-                s.connections_per_ip.retain(|_, count| *count > 0);
-                let ip_removed = ip_before - s.connections_per_ip.len();
-                if ip_removed > 0 {
-                    log::debug!("Cleaned up {ip_removed} stale connections_per_ip entries");
-                }
+                // NOTE: connections_per_ip entries are removed to zero on disconnect
+                // (in connection.rs decrement_ip) — no sweep needed here.
             }
         });
     }
