@@ -1,4 +1,4 @@
-import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, VxTheme } from "theme.slint";
+import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, StartupPhaseData, VxTheme } from "theme.slint";
 import { VxButton, VxCard, VxInput } from "components.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
@@ -465,6 +465,10 @@ export component MainWindow inherits Window {
     // Audio processing transparency
     in-out property <string> audio-noise-gate-threshold: "-42 dB";
     in-out property <string> audio-opus-bitrate: "64 kbps";
+
+    // Startup instrumentation
+    in property <int> startup-total-ms: 0;
+    in property <[StartupPhaseData]> startup-phases: [];
 
     Rectangle {
         background: VxTheme.bg-canvas;
@@ -1218,6 +1222,8 @@ export component MainWindow inherits Window {
                             outgoing-friend-requests: root.outgoing-friend-requests;
                             direct-message-threads: root.direct-message-threads;
                             unread-direct-messages-count: root.unread-direct-messages-count;
+                            startup-total-ms: root.startup-total-ms;
+                            startup-phases: root.startup-phases;
                             navigate(view-index) => { root.navigate(view-index); }
                             toggle-member-widget => { root.toggle-member-widget(); }
                             send-friend-request-by-name(name) => { root.send-friend-request-by-name(name); }
