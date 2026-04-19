@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, VxTheme } from "../theme.slint";
+import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, StartupPhaseData, VxTheme } from "../theme.slint";
 import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatusPill } from "../components.slint";
 
 export component SystemView inherits Rectangle {
@@ -21,6 +21,8 @@ export component SystemView inherits Rectangle {
     in property <[FriendRequestData]> outgoing-friend-requests: [];
     in property <[DirectMessageThreadData]> direct-message-threads: [];
     in property <int> unread-direct-messages-count: 0;
+    in property <int> startup-total-ms: 0;
+    in property <[StartupPhaseData]> startup-phases: [];
     callback navigate(int);
     callback toggle-member-widget();
     callback send-friend-request-by-name(string);
@@ -1331,6 +1333,42 @@ export component SystemView inherits Rectangle {
                             soft: root.member-widget-visible;
                             horizontal-stretch: 1;
                             clicked => { root.toggle-member-widget(); }
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Startup  ·  total " + root.startup-total-ms + " ms";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: VxTheme.text-primary;
+                        }
+
+                        if root.startup-phases.length == 0 : Text {
+                            text: "(no startup data)";
+                            font-size: 12px;
+                            color: VxTheme.text-muted;
+                        }
+
+                        for phase in root.startup-phases : HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: phase.name;
+                                font-size: 12px;
+                                color: VxTheme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: phase.ms + " ms";
+                                font-size: 12px;
+                                color: VxTheme.text-muted;
+                                horizontal-alignment: right;
+                            }
                         }
                     }
                 }
