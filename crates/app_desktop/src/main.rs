@@ -10,6 +10,7 @@ mod friends;
 mod helpers;
 mod screen_share;
 mod signal_handler;
+mod startup_timer;
 mod tick_loop;
 mod tray;
 
