@@ -29,11 +29,11 @@ use ui_shell::{MainWindow, MemberWidgetWindow, ScreenShareWidgetWindow};
 fn main() {
     // #18: Set up logging — stderr + log file
     let log_path = setup_logging();
+    let mut timer = startup_timer::StartupTimer::new();
     if let Some(crash_dir) = crash_report::install(log_path.clone()) {
         log::info!("Crash reports will be written to {}", crash_dir.display());
     }
-
-    let startup_t0 = std::time::Instant::now();
+    timer.phase("logging");
     log::info!("Voxlink starting");
 
     if let Some(exit_code) = automation::maybe_run_from_env() {
@@ -43,7 +43,7 @@ fn main() {
     config_store::migrate_legacy_auth_token();
     let config = config_store::load_config();
     let has_saved_auth = config_store::has_auth_token();
-    log::info!("Config loaded ({}ms)", startup_t0.elapsed().as_millis());
+    timer.phase("config load");
     let is_dark = config.dark_mode.unwrap_or(true);
     let theme_preset = helpers::theme_preset_index(&config.theme_preset);
 
@@ -60,6 +60,7 @@ fn main() {
         }
     };
     let rt_handle = rt.handle().clone();
+    timer.phase("tokio runtime");
 
     // Core systems
     let perf = Rc::new(RefCell::new(perf_metrics::PerfCollector::new()));
@@ -68,6 +69,7 @@ fn main() {
     let voice = Rc::new(RefCell::new(voice_engine::VoiceSession::new()));
     let state = Rc::new(RefCell::new(shared_types::AppState::default()));
     let network = Arc::new(TokioMutex::new(net_control::NetworkClient::new()));
+    timer.phase("core state");
 
     // Audio engine
     let audio = Arc::new(TokioMutex::new(match audio_core::AudioEngine::new() {
@@ -81,6 +83,7 @@ fn main() {
             return;
         }
     }));
+    timer.phase("audio engine");
 
     // #6: Wire noise gate sensitivity + volume from config
     // noise_suppression: 0=off, 1=max; sensitivity: inverted (1-suppression)
@@ -108,6 +111,7 @@ fn main() {
             }
         }
     });
+    timer.phase("audio config");
 
     let media = Arc::new(TokioMutex::new(media_transport::MediaSession::new(
         audio.clone(),
@@ -115,6 +119,7 @@ fn main() {
         perf.borrow().dropped_frames.clone(),
     )));
     let screen_share = Arc::new(screen_share::ScreenShareController::new());
+    timer.phase("media + screen share");
 
     let window = match MainWindow::new() {
         Ok(window) => window,
@@ -124,6 +129,7 @@ fn main() {
             return;
         }
     };
+    timer.phase("main window");
     window.set_screen_share_image(ui_shell::safe_blank_image());
     window.set_screen_share_image_ready(false);
     window.set_theme_preset(theme_preset);
@@ -173,9 +179,11 @@ fn main() {
 
     // Populate device lists & find saved device indices
     let (saved_input_idx, saved_output_idx) = populate_devices(&window, &audio, &rt, &config);
+    timer.phase("device populate");
 
     // Apply saved config to UI
     apply_config(&window, &config, saved_input_idx, saved_output_idx, &voice);
+    timer.phase("config applied");
 
     // Saved device names for audio startup
     let saved_input_device: Rc<RefCell<Option<String>>> =
@@ -349,10 +357,25 @@ fn main() {
         log::warn!("System tray icon could not be created");
     }
 
+    timer.phase("callbacks wired");
+
+    let total = timer.total_ms();
+    let phases = timer.into_phases();
     log::info!(
-        "Voxlink ready (startup: {}ms)",
-        startup_t0.elapsed().as_millis()
+        "startup: complete — {total}ms across {} phases",
+        phases.len()
     );
+
+    let phase_models: Vec<ui_shell::StartupPhaseData> = phases
+        .into_iter()
+        .map(|(name, ms)| ui_shell::StartupPhaseData {
+            name: name.into(),
+            ms: ms as i32,
+        })
+        .collect();
+    window.set_startup_total_ms(total as i32);
+    window.set_startup_phases(slint::ModelRc::new(slint::VecModel::<ui_shell::StartupPhaseData>::from(phase_models)));
+
     if let Err(err) = window.run() {
         log::error!("Voxlink UI loop failed: {err}");
     }

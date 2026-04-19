@@ -10,14 +10,11 @@
 
 use std::time::Instant;
 
-// Task 4 wires this into main.rs and removes the allow.
-#[allow(dead_code)]
 pub struct StartupTimer {
     start: Instant,
     phases: Vec<(String, u32)>,
 }
 
-#[allow(dead_code)]
 impl StartupTimer {
     pub fn new() -> Self {
         Self {
