@@ -93,3 +93,26 @@ Then re-run this file's "Observed" column from the fresh log. Commit the updated
 Exit code 1 means one or more benches regressed past criterion's significance threshold vs the saved "main" baseline. If the slowdown is expected, re-record; otherwise investigate.
 
 Note: criterion's detection is statistically rigorous but some benches (notably `i16_to_f32_960`) show run-to-run variation of ~10% on this machine even without code changes. When the gate fires, inspect the magnitude — anything under ~15% on a single run is probably noise; re-run before investigating code.
+
+---
+
+## Idle CPU baselines
+
+Reproducible script: `./scripts/measure-idle-cpu.sh` (macOS; three scenarios automated, two require manual UI steps). Record the before/after numbers from a clean run here.
+
+| Scenario | Before | After | Δ |
+|---|--:|--:|--:|
+| `server_zero_peers` | `(run script)` | `(run script)` | |
+| `server_one_idle_peer` | `(run script)` | `(run script)` | |
+| `client_home` | `(run script)` | `(run script)` | |
+| `client_joined_silent` | `(manual)` | `(manual)` | |
+| `client_minimized` | `(manual)` | `(manual)` | |
+
+### M6 changes (committed; expected impact when measured)
+
+Per `docs/IDLE_AUDIT.md`. Expected idle-CPU reduction by scenario:
+
+- **Client** (`client_home`, `client_joined_silent`, `client_minimized`): ~15–30% reduction. Three idle-path fixes landed: the screen-chunk expiry no longer acquires the network mutex and scans a HashMap every second when nobody's sharing a screen; the unread-pulse property only writes when there are unread items; the typing-dot animation only writes when a typing indicator is actually visible.
+- **Server** (`server_zero_peers`, `server_one_idle_peer`): smaller idle-CPU change (the 60 s sweep was low frequency already) but noticeably lower peak-lock contention under churn. `auth_attempts`, `join_failures`, and `connections_per_ip` all prune on insert now; `udp_sessions` still swept. See commit `f54fcfb`.
+
+Run `./scripts/measure-idle-cpu.sh` with the M6 commits reverted (`git revert <sha>`) to capture the "before" numbers, and again with them applied to capture "after".
