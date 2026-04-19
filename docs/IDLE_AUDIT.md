@@ -91,11 +91,11 @@ Ranked by estimated idle-CPU impact:
 
 1. **`tick_loop/mod.rs:592` — screen chunk expiry inside slow block** — REPLACE — acquires the network lock and scans a HashMap every second unconditionally; move expiry to chunk insertion/read so idle never pays the cost.
 
-2. **`tick_loop/mod.rs:513` — unread pulse toggle** — THROTTLE — calls `w.set_unread_pulse()` every 3 s and forces a Slint property diff even when there are no unread items; adding a `has_unread` guard eliminates the diff at idle.
+2. ~~**`tick_loop/mod.rs:513` — unread pulse toggle** — THROTTLE — calls `w.set_unread_pulse()` every 3 s and forces a Slint property diff even when there are no unread items; adding a `has_unread` guard eliminates the diff at idle.~~ ✓ d87db8f
 
 3. **`main.rs:380` (server) — state cleanup sweep** — REPLACE — holds a write-lock on the entire `ServerState` every 60 s; auth/join-failure/IP counters that are empty 99% of the time should be pruned on insert/read, reducing write-lock contention under load.
 
-4. **`tick_loop/mod.rs:508` — typing dot animation** — THROTTLE — fires `set_typing_dot_phase()` unconditionally every 16 ticks; gating on `typing_visible` eliminates a Slint property write and animation cycle when nobody is typing.
+4. ~~**`tick_loop/mod.rs:508` — typing dot animation** — THROTTLE — fires `set_typing_dot_phase()` unconditionally every 16 ticks; gating on `typing_visible` eliminates a Slint property write and animation cycle when nobody is typing.~~ ✓ d87db8f
 
 ---
 

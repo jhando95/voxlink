@@ -505,12 +505,12 @@ pub fn start(
             }
 
             // Typing dot animation phase (0->1->2->0, every 400ms = 16 ticks)
-            if tick % 16 == 0 {
+            if tick % 16 == 0 && !w.get_chat_typing_text().is_empty() {
                 let phase = w.get_typing_dot_phase();
                 w.set_typing_dot_phase((phase + 1) % 3);
             }
             // Unread pulse toggle (every 30 ticks = ~750ms)
-            if tick % 30 == 0 {
+            if tick % 30 == 0 && w.get_unread_direct_messages_count() > 0 {
                 w.set_unread_pulse(!w.get_unread_pulse());
             }
 
