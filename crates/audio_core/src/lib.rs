@@ -4,6 +4,9 @@ mod codec;
 mod eq;
 mod feedback;
 
+pub mod histogram;
+pub use histogram::Histogram;
+
 // Re-export hot-path DSP functions for benchmarks and external use
 pub use codec::{frame_energy, soft_clip};
 
