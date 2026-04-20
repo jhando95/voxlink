@@ -102,6 +102,9 @@ fn main() {
         p.current_jitter_ms = aud.metrics.current_jitter_ms.clone();
         p.active_peers = aud.metrics.active_peers.clone();
         p.encode_bitrate = aud.metrics.encode_bitrate_kbps.clone();
+        p.capture_callback_hist = Some(aud.metrics.capture_callback_hist.clone());
+        p.playback_callback_hist = Some(aud.metrics.playback_callback_hist.clone());
+        p.callback_glitch_count = aud.metrics.callback_glitch_count.clone();
 
         // Load soundboard clips from config
         for clip in &config.soundboard_clips {

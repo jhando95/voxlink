@@ -83,6 +83,10 @@ pub fn update_perf_display(window: &MainWindow, snap: &PerfSnapshot) {
         screen_frames_completed: snap.screen_frames_completed as i32,
         screen_frames_dropped: snap.screen_frames_dropped as i32,
         screen_frames_timed_out: snap.screen_frames_timed_out as i32,
+        // M8
+        capture_callback_median_ms: snap.capture_callback_median_ms,
+        playback_callback_median_ms: snap.playback_callback_median_ms,
+        audio_glitch_count: snap.audio_glitch_count as i32,
     };
     window.set_perf(perf);
 

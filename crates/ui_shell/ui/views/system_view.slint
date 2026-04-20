@@ -338,6 +338,31 @@ export component SystemView inherits Rectangle {
                     VxCard {
                         VerticalLayout {
                             padding: 18px;
+                            spacing: 8px;
+                            SectionLabel { text: "AUDIO CALLBACKS"; }
+                            MetricRow {
+                                metric-label: "Capture median";
+                                metric-value: root.perf.capture-callback-median-ms + " ms";
+                                indicator-color: root.perf.capture-callback-median-ms < 5 ? VxTheme.success :
+                                                 root.perf.capture-callback-median-ms < 10 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Playback median";
+                                metric-value: root.perf.playback-callback-median-ms + " ms";
+                                indicator-color: root.perf.playback-callback-median-ms < 5 ? VxTheme.success :
+                                                 root.perf.playback-callback-median-ms < 10 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
+                                metric-label: "Glitches (>=10 ms)";
+                                metric-value: root.perf.audio-glitch-count + "";
+                                indicator-color: root.perf.audio-glitch-count == 0 ? VxTheme.success : VxTheme.danger;
+                            }
+                        }
+                    }
+
+                    VxCard {
+                        VerticalLayout {
+                            padding: 18px;
                             spacing: 10px;
                             HorizontalLayout {
                                 spacing: 8px;
@@ -945,6 +970,31 @@ export component SystemView inherits Rectangle {
                                              + root.perf.screen-frames-dropped
                                              + root.perf.screen-frames-timed-out == 0 ? VxTheme.text-muted :
                                              root.perf.screen-frames-timed-out == 0 ? VxTheme.success : VxTheme.danger;
+                        }
+                    }
+                }
+
+                VxCard {
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 8px;
+                        SectionLabel { text: "AUDIO CALLBACKS"; }
+                        MetricRow {
+                            metric-label: "Capture median";
+                            metric-value: root.perf.capture-callback-median-ms + " ms";
+                            indicator-color: root.perf.capture-callback-median-ms < 5 ? VxTheme.success :
+                                             root.perf.capture-callback-median-ms < 10 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Playback median";
+                            metric-value: root.perf.playback-callback-median-ms + " ms";
+                            indicator-color: root.perf.playback-callback-median-ms < 5 ? VxTheme.success :
+                                             root.perf.playback-callback-median-ms < 10 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Glitches (>=10 ms)";
+                            metric-value: root.perf.audio-glitch-count + "";
+                            indicator-color: root.perf.audio-glitch-count == 0 ? VxTheme.success : VxTheme.danger;
                         }
                     }
                 }
