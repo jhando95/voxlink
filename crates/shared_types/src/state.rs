@@ -216,6 +216,10 @@ pub struct PerfSnapshot {
     pub screen_frames_completed: u32,
     pub screen_frames_dropped: u32,
     pub screen_frames_timed_out: u32,
+    // M8: audio callback health
+    pub capture_callback_median_ms: f32,
+    pub playback_callback_median_ms: f32,
+    pub audio_glitch_count: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

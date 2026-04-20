@@ -28,6 +28,10 @@ pub struct PerfCollector {
     pub screen_frames_completed: Arc<AtomicU32>,
     pub screen_frames_dropped: Arc<AtomicU32>,
     pub screen_frames_timed_out: Arc<AtomicU32>,
+    // M8: audio callback health
+    pub capture_callback_hist: Option<Arc<audio_core::Histogram>>,
+    pub playback_callback_hist: Option<Arc<audio_core::Histogram>>,
+    pub callback_glitch_count: Arc<AtomicU32>,
     // For computing frame loss rate
     last_decoded: u32,
     last_dropped: u32,
@@ -56,6 +60,10 @@ impl PerfCollector {
             screen_frames_completed: Arc::new(AtomicU32::new(0)),
             screen_frames_dropped: Arc::new(AtomicU32::new(0)),
             screen_frames_timed_out: Arc::new(AtomicU32::new(0)),
+            // M8: start unwired; main.rs plugs the histograms in after AudioEngine::new()
+            capture_callback_hist: None,
+            playback_callback_hist: None,
+            callback_glitch_count: Arc::new(AtomicU32::new(0)),
             last_decoded: 0,
             last_dropped: 0,
         }
@@ -94,6 +102,24 @@ impl PerfCollector {
             0.0
         };
 
+        let capture_callback_median_ms = self
+            .capture_callback_hist
+            .as_ref()
+            .map(|h| {
+                let m = h.median() * 1000.0;
+                if m.is_finite() { m as f32 } else { 999.0 }
+            })
+            .unwrap_or(0.0);
+        let playback_callback_median_ms = self
+            .playback_callback_hist
+            .as_ref()
+            .map(|h| {
+                let m = h.median() * 1000.0;
+                if m.is_finite() { m as f32 } else { 999.0 }
+            })
+            .unwrap_or(0.0);
+        let audio_glitch_count = self.callback_glitch_count.load(Ordering::Relaxed);
+
         PerfSnapshot {
             cpu_percent: cpu_normalized,
             memory_mb: mem,
@@ -111,6 +137,10 @@ impl PerfCollector {
             screen_frames_completed: self.screen_frames_completed.load(Ordering::Relaxed),
             screen_frames_dropped: self.screen_frames_dropped.load(Ordering::Relaxed),
             screen_frames_timed_out: self.screen_frames_timed_out.load(Ordering::Relaxed),
+            // M8
+            capture_callback_median_ms,
+            playback_callback_median_ms,
+            audio_glitch_count,
         }
     }
 }

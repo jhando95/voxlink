@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 shared_types = { path = "../shared_types" }
+audio_core = { path = "../audio_core" }
 sysinfo = { workspace = true }
