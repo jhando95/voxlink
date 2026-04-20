@@ -38,6 +38,13 @@ pub struct AudioMetrics {
     pub current_jitter_ms: Arc<AtomicU32>,
     pub active_peers: Arc<AtomicU32>,
     pub encode_bitrate_kbps: Arc<AtomicU32>,
+    /// Capture-callback execution time distribution.
+    pub capture_callback_hist: Arc<Histogram>,
+    /// Playback-callback execution time distribution.
+    pub playback_callback_hist: Arc<Histogram>,
+    /// Count of capture OR playback callbacks that took >= 10 ms
+    /// (audible-glitch threshold at 48 kHz with typical buffer sizes).
+    pub callback_glitch_count: Arc<AtomicU32>,
 }
 
 impl AudioMetrics {
@@ -48,6 +55,15 @@ impl AudioMetrics {
             current_jitter_ms: Arc::new(AtomicU32::new(JITTER_INITIAL as u32 * 20)),
             active_peers: Arc::new(AtomicU32::new(0)),
             encode_bitrate_kbps: Arc::new(AtomicU32::new(64)),
+            capture_callback_hist: Arc::new(Histogram::new(
+                "audio_capture_callback_seconds",
+                "Execution time of cpal input callback (includes DSP chain + Opus encode)",
+            )),
+            playback_callback_hist: Arc::new(Histogram::new(
+                "audio_playback_callback_seconds",
+                "Execution time of cpal output callback (includes Opus decode + jitter buffer + mix)",
+            )),
+            callback_glitch_count: Arc::new(AtomicU32::new(0)),
         }
     }
 }
@@ -620,9 +636,14 @@ impl AudioEngine {
         let mut silence_frames: u32 = 0;
         let mut encode_errors: u64 = 0;
 
+        let capture_hist = self.metrics.capture_callback_hist.clone();
+        let glitch_count_capture = self.metrics.callback_glitch_count.clone();
+
         let stream = device.build_input_stream(
             &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+            move |data: &[f32], _info: &cpal::InputCallbackInfo| {
+                let t0 = std::time::Instant::now();
+
                 capture_ring.push_slice(data);
 
                 while capture_ring.read_frame(&mut frame_buf) {
@@ -720,6 +741,12 @@ impl AudioEngine {
                             }
                         }
                     }
+                }
+
+                let elapsed = t0.elapsed().as_secs_f64();
+                capture_hist.observe(elapsed);
+                if elapsed >= 0.010 {
+                    glitch_count_capture.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             },
             {
@@ -849,147 +876,158 @@ impl AudioEngine {
         // At 48kHz stereo the largest callback is 48000 samples per channel.
         let mut scratch = vec![0.0f32; SAMPLE_RATE as usize];
 
+        let playback_hist = self.metrics.playback_callback_hist.clone();
+        let glitch_count_playback = self.metrics.callback_glitch_count.clone();
+
         let stream = device.build_output_stream(
             &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                data.fill(0.0);
-                // data is interleaved stereo: [L0, R0, L1, R1, ...]
-                let stereo_frames = data.len() / 2;
+            move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+                let t0 = std::time::Instant::now();
+                'cb: {
+                    data.fill(0.0);
+                    // data is interleaved stereo: [L0, R0, L1, R1, ...]
+                    let stereo_frames = data.len() / 2;
 
-                // Mix feedback tone into both channels equally (mono → stereo)
-                // feedback_playback provides mono — mix into a temp mono buf, then spread
-                {
-                    // Reuse first `stereo_frames` of scratch for feedback mono mix
-                    let fb_buf = &mut scratch[..stereo_frames];
-                    fb_buf.fill(0.0);
-                    feedback_playback.mix_into(fb_buf);
-                    for i in 0..stereo_frames {
-                        let s = fb_buf[i];
-                        data[i * 2] += s;
-                        data[i * 2 + 1] += s;
+                    // Mix feedback tone into both channels equally (mono → stereo)
+                    // feedback_playback provides mono — mix into a temp mono buf, then spread
+                    {
+                        // Reuse first `stereo_frames` of scratch for feedback mono mix
+                        let fb_buf = &mut scratch[..stereo_frames];
+                        fb_buf.fill(0.0);
+                        feedback_playback.mix_into(fb_buf);
+                        for i in 0..stereo_frames {
+                            let s = fb_buf[i];
+                            data[i * 2] += s;
+                            data[i * 2 + 1] += s;
+                        }
                     }
-                }
 
-                // Refresh peer snapshot if generation changed (peer joined/left)
-                let gen = playback_generation.load(Ordering::Acquire);
-                if gen != local_gen {
-                    if let Ok(pp) = playback_peers.try_lock() {
-                        // Rebuild EQ states — keep existing state for peers that stayed,
-                        // add new states for new peers. Since we index by position and
-                        // the list is rebuilt entirely, just resize to match.
-                        eq_states.resize_with(pp.len(), eq::PeerEqState::new);
-                        local_peers.clone_from(&pp);
+                    // Refresh peer snapshot if generation changed (peer joined/left)
+                    let gen = playback_generation.load(Ordering::Acquire);
+                    if gen != local_gen {
+                        if let Ok(pp) = playback_peers.try_lock() {
+                            // Rebuild EQ states — keep existing state for peers that stayed,
+                            // add new states for new peers. Since we index by position and
+                            // the list is rebuilt entirely, just resize to match.
+                            eq_states.resize_with(pp.len(), eq::PeerEqState::new);
+                            local_peers.clone_from(&pp);
+                        }
+                        local_gen = gen;
                     }
-                    local_gen = gen;
-                }
 
-                if is_deafened.load(Ordering::Relaxed) {
-                    for peer in &local_peers {
-                        peer.ring.clear();
+                    if is_deafened.load(Ordering::Relaxed) {
+                        for peer in &local_peers {
+                            peer.ring.clear();
+                        }
+                        break 'cb;
                     }
-                    return;
-                }
 
-                // Lock-free mixing with volume ducking (single pass)
-                let duck_amt = ducking_amount.load(Ordering::Relaxed) as f32 / 1000.0;
-                let ducking_enabled = duck_amt > 0.001;
+                    // Lock-free mixing with volume ducking (single pass)
+                    let duck_amt = ducking_amount.load(Ordering::Relaxed) as f32 / 1000.0;
+                    let ducking_enabled = duck_amt > 0.001;
 
-                // Cache per-peer energy + speaking flag in one pass (no second peek_energy call)
-                let mut any_speaking = false;
-                if ducking_enabled {
-                    let duck_thresh = ducking_threshold.load(Ordering::Relaxed) as f32 / 1000.0;
-                    for peer in &local_peers {
+                    // Cache per-peer energy + speaking flag in one pass (no second peek_energy call)
+                    let mut any_speaking = false;
+                    if ducking_enabled {
+                        let duck_thresh = ducking_threshold.load(Ordering::Relaxed) as f32 / 1000.0;
+                        for peer in &local_peers {
+                            if !peer.is_ready() {
+                                continue;
+                            }
+                            let energy = peer.ring.peek_energy();
+                            let speaking = energy > duck_thresh;
+                            // Reuse the primed atomic as a "speaking" flag for ducking
+                            // (we overwrite it below anyway when mixing)
+                            peer.primed.store(speaking, Ordering::Relaxed);
+                            if speaking {
+                                any_speaking = true;
+                            }
+                        }
+                    }
+
+                    // Scratch buffer pre-allocated at init for max size — no resize needed.
+                    // Debug-assert to catch unexpected oversized callbacks.
+                    debug_assert!(
+                        scratch.len() >= stereo_frames,
+                        "scratch buffer too small: {} < {}",
+                        scratch.len(),
+                        stereo_frames
+                    );
+
+                    for (peer_idx, peer) in local_peers.iter().enumerate() {
                         if !peer.is_ready() {
+                            peer.rms_level.store(0, Ordering::Relaxed);
                             continue;
                         }
+                        // Peek RMS energy before consuming for level meters
                         let energy = peer.ring.peek_energy();
-                        let speaking = energy > duck_thresh;
-                        // Reuse the primed atomic as a "speaking" flag for ducking
-                        // (we overwrite it below anyway when mixing)
-                        peer.primed.store(speaking, Ordering::Relaxed);
-                        if speaking {
-                            any_speaking = true;
+                        peer.rms_level
+                            .store((energy.min(1.0) * 1000.0) as u32, Ordering::Relaxed);
+                        let mut vol = peer.volume_f32();
+                        if any_speaking {
+                            let is_speaking = peer.primed.load(Ordering::Relaxed);
+                            if !is_speaking {
+                                vol *= 1.0 - duck_amt;
+                            }
+                        }
+                        peer.primed.store(true, Ordering::Relaxed);
+
+                        // Drain mono samples into scratch buffer (not additive)
+                        let mono_buf = &mut scratch[..stereo_frames];
+                        mono_buf.fill(0.0);
+                        let consumed = peer.ring.drain_into(mono_buf);
+                        peer.callback_count.fetch_add(1, Ordering::Relaxed);
+                        if consumed < stereo_frames {
+                            peer.underrun_count.fetch_add(1, Ordering::Relaxed);
+                        }
+
+                        // Apply per-peer 3-band EQ (lock-free atomic reads)
+                        let bass_mb = peer.eq_bass.load(Ordering::Relaxed);
+                        let mid_mb = peer.eq_mid.load(Ordering::Relaxed);
+                        let treble_mb = peer.eq_treble.load(Ordering::Relaxed);
+                        if let Some(eq_state) = eq_states.get_mut(peer_idx) {
+                            eq_state.process(
+                                &mut mono_buf[..consumed.max(1)],
+                                bass_mb,
+                                mid_mb,
+                                treble_mb,
+                            );
+                        }
+
+                        // Apply per-peer stereo pan using constant-power pan law
+                        let pan_raw = peer.pan.load(Ordering::Relaxed).clamp(-100, 100);
+                        let pan_angle = (pan_raw + 100) as f32 / 200.0 * std::f32::consts::FRAC_PI_2;
+                        let left_gain = pan_angle.cos() * vol;
+                        let right_gain = pan_angle.sin() * vol;
+
+                        // Mix panned mono into stereo interleaved output
+                        for i in 0..consumed {
+                            let s = mono_buf[i];
+                            data[i * 2] += s * left_gain;
+                            data[i * 2 + 1] += s * right_gain;
                         }
                     }
-                }
 
-                // Scratch buffer pre-allocated at init for max size — no resize needed.
-                // Debug-assert to catch unexpected oversized callbacks.
-                debug_assert!(
-                    scratch.len() >= stereo_frames,
-                    "scratch buffer too small: {} < {}",
-                    scratch.len(),
-                    stereo_frames
-                );
-
-                for (peer_idx, peer) in local_peers.iter().enumerate() {
-                    if !peer.is_ready() {
-                        peer.rms_level.store(0, Ordering::Relaxed);
-                        continue;
-                    }
-                    // Peek RMS energy before consuming for level meters
-                    let energy = peer.ring.peek_energy();
-                    peer.rms_level
-                        .store((energy.min(1.0) * 1000.0) as u32, Ordering::Relaxed);
-                    let mut vol = peer.volume_f32();
-                    if any_speaking {
-                        let is_speaking = peer.primed.load(Ordering::Relaxed);
-                        if !is_speaking {
-                            vol *= 1.0 - duck_amt;
+                    // Record mixed audio to echo reference before volume scaling.
+                    // Echo reference is mono — sum L+R and halve.
+                    {
+                        let echo_buf = &mut scratch[..stereo_frames];
+                        for i in 0..stereo_frames {
+                            echo_buf[i] = (data[i * 2] + data[i * 2 + 1]) * 0.5;
                         }
-                    }
-                    peer.primed.store(true, Ordering::Relaxed);
-
-                    // Drain mono samples into scratch buffer (not additive)
-                    let mono_buf = &mut scratch[..stereo_frames];
-                    mono_buf.fill(0.0);
-                    let consumed = peer.ring.drain_into(mono_buf);
-                    peer.callback_count.fetch_add(1, Ordering::Relaxed);
-                    if consumed < stereo_frames {
-                        peer.underrun_count.fetch_add(1, Ordering::Relaxed);
+                        echo_ref_playback.record(echo_buf);
                     }
 
-                    // Apply per-peer 3-band EQ (lock-free atomic reads)
-                    let bass_mb = peer.eq_bass.load(Ordering::Relaxed);
-                    let mid_mb = peer.eq_mid.load(Ordering::Relaxed);
-                    let treble_mb = peer.eq_treble.load(Ordering::Relaxed);
-                    if let Some(eq_state) = eq_states.get_mut(peer_idx) {
-                        eq_state.process(
-                            &mut mono_buf[..consumed.max(1)],
-                            bass_mb,
-                            mid_mb,
-                            treble_mb,
-                        );
-                    }
-
-                    // Apply per-peer stereo pan using constant-power pan law
-                    let pan_raw = peer.pan.load(Ordering::Relaxed).clamp(-100, 100);
-                    let pan_angle = (pan_raw + 100) as f32 / 200.0 * std::f32::consts::FRAC_PI_2;
-                    let left_gain = pan_angle.cos() * vol;
-                    let right_gain = pan_angle.sin() * vol;
-
-                    // Mix panned mono into stereo interleaved output
-                    for i in 0..consumed {
-                        let s = mono_buf[i];
-                        data[i * 2] += s * left_gain;
-                        data[i * 2 + 1] += s * right_gain;
+                    // Apply master output volume
+                    let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;
+                    for sample in data.iter_mut() {
+                        *sample = soft_clip(*sample * vol);
                     }
                 }
-
-                // Record mixed audio to echo reference before volume scaling.
-                // Echo reference is mono — sum L+R and halve.
-                {
-                    let echo_buf = &mut scratch[..stereo_frames];
-                    for i in 0..stereo_frames {
-                        echo_buf[i] = (data[i * 2] + data[i * 2 + 1]) * 0.5;
-                    }
-                    echo_ref_playback.record(echo_buf);
-                }
-
-                // Apply master output volume
-                let vol = output_volume.load(Ordering::Relaxed) as f32 / 1000.0;
-                for sample in data.iter_mut() {
-                    *sample = soft_clip(*sample * vol);
+                let elapsed = t0.elapsed().as_secs_f64();
+                playback_hist.observe(elapsed);
+                if elapsed >= 0.010 {
+                    glitch_count_playback.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             },
             {
