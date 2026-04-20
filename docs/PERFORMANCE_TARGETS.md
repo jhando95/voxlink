@@ -116,3 +116,23 @@ Per `docs/IDLE_AUDIT.md`. Expected idle-CPU reduction by scenario:
 - **Server** (`server_zero_peers`, `server_one_idle_peer`): smaller idle-CPU change (the 60 s sweep was low frequency already) but noticeably lower peak-lock contention under churn. `auth_attempts`, `join_failures`, and `connections_per_ip` all prune on insert now; `udp_sessions` still swept. See commit `f54fcfb`.
 
 Run `./scripts/measure-idle-cpu.sh` with the M6 commits reverted (`git revert <sha>`) to capture the "before" numbers, and again with them applied to capture "after".
+
+---
+
+## Startup time
+
+Measured on Apple M4 Pro, release build, from `fn main()` entry to `window.run()`.
+
+Target: **total startup ≤ 500 ms**.
+Stretch: ≤ 300 ms.
+
+Observed: run the client once, open the Perf panel — the "Startup" card shows the total and per-phase breakdown. Also logged at info level in `voxlink.log` as `startup: <phase> @ <N>ms` lines.
+
+Per-phase expectations (rough heuristics, update after first real run):
+
+- `logging`, `config load`, `tokio runtime`, `core state`, `media + screen share`, `config applied`, `callbacks wired` — each should be ≤ 30 ms.
+- `audio engine` — expected to be the slowest phase on most machines (cpal device enumeration + Opus + neural denoiser init). Target ≤ 200 ms.
+- `main window` — Slint render-graph construction and initial layout. Target ≤ 250 ms.
+- `device populate` — one-time cpal audio device enumeration for the settings dropdown. Target ≤ 100 ms.
+
+If a phase consistently exceeds its target, it is a candidate for optimization in a follow-up milestone.
