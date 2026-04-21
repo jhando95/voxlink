@@ -220,6 +220,9 @@ pub struct PerfSnapshot {
     pub capture_callback_median_ms: f32,
     pub playback_callback_median_ms: f32,
     pub audio_glitch_count: u32,
+    /// RSS growth since `initial_memory_mb` was captured (second snapshot).
+    /// Zero until the baseline is established.
+    pub memory_growth_mb: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

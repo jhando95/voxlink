@@ -12,6 +12,9 @@ pub struct PerfCollector {
     pid: Pid,
     num_cpus: f32,
     peak_memory_mb: f32,
+    /// Set on the second `snapshot()` call so the sysinfo lazy-init cost
+    /// is captured as baseline, not reported as growth.
+    initial_memory_mb: Option<f32>,
     pub audio_active: Arc<AtomicBool>,
     pub network_connected: Arc<AtomicBool>,
     /// Shared counter for dropped audio frames (#11)
@@ -47,6 +50,7 @@ impl PerfCollector {
                 .map(|n| n.get() as f32)
                 .unwrap_or(1.0),
             peak_memory_mb: 0.0,
+            initial_memory_mb: None,
             audio_active: Arc::new(AtomicBool::new(false)),
             network_connected: Arc::new(AtomicBool::new(false)),
             dropped_frames: Arc::new(AtomicU64::new(0)),
@@ -84,6 +88,22 @@ impl PerfCollector {
             .unwrap_or((0.0, 0.0));
 
         self.peak_memory_mb = self.peak_memory_mb.max(mem);
+
+        // Two-phase baseline: first snapshot sets "pending" (NaN marker),
+        // second snapshot captures the actual baseline, subsequent snapshots
+        // report delta. This ensures sysinfo's lazy-init cost is baselined,
+        // not reported as growth.
+        let memory_growth_mb = match self.initial_memory_mb {
+            None => {
+                self.initial_memory_mb = Some(f32::NAN);
+                0.0
+            }
+            Some(b) if b.is_nan() => {
+                self.initial_memory_mb = Some(mem);
+                0.0
+            }
+            Some(baseline) => (mem - baseline).max(0.0),
+        };
 
         // #16: Normalize CPU% by core count so 100% = all cores saturated
         let cpu_normalized = cpu / self.num_cpus;
@@ -141,6 +161,7 @@ impl PerfCollector {
             capture_callback_median_ms,
             playback_callback_median_ms,
             audio_glitch_count,
+            memory_growth_mb,
         }
     }
 }
@@ -274,5 +295,33 @@ mod tests {
         let collector = PerfCollector::default();
         assert!(!collector.audio_active.load(Ordering::Relaxed));
         assert_eq!(collector.dropped_frames.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn memory_growth_is_zero_on_first_two_snapshots() {
+        let mut collector = PerfCollector::new();
+        let snap1 = collector.snapshot();
+        let snap2 = collector.snapshot();
+        assert_eq!(
+            snap1.memory_growth_mb, 0.0,
+            "snapshot #1 should report zero growth (baseline not yet set)"
+        );
+        assert_eq!(
+            snap2.memory_growth_mb, 0.0,
+            "snapshot #2 should report zero growth (baseline just set)"
+        );
+    }
+
+    #[test]
+    fn memory_growth_non_negative_on_third_snapshot() {
+        let mut collector = PerfCollector::new();
+        let _ = collector.snapshot();
+        let _ = collector.snapshot();
+        let snap3 = collector.snapshot();
+        assert!(
+            snap3.memory_growth_mb >= 0.0,
+            "snapshot #3 growth = {} should be non-negative",
+            snap3.memory_growth_mb
+        );
     }
 }
