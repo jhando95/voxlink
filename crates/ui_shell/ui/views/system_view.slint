@@ -220,6 +220,12 @@ export component SystemView inherits Rectangle {
                                                  root.perf.peak-memory-mb < 350 ? VxTheme.warning : VxTheme.danger;
                             }
                             MetricRow {
+                                metric-label: "Growth";
+                                metric-value: "+" + round(root.perf.memory-growth-mb * 10) / 10 + " MB";
+                                indicator-color: root.perf.memory-growth-mb <= 10 ? VxTheme.success :
+                                                 root.perf.memory-growth-mb <= 50 ? VxTheme.warning : VxTheme.danger;
+                            }
+                            MetricRow {
                                 metric-label: "Uptime";
                                 metric-value: root.uptime-text;
                                 indicator-color: VxTheme.accent;
@@ -913,6 +919,12 @@ export component SystemView inherits Rectangle {
                             metric-value: round(root.perf.peak-memory-mb * 10) / 10 + " MB";
                             indicator-color: root.perf.peak-memory-mb < 150 ? VxTheme.success :
                                              root.perf.peak-memory-mb < 350 ? VxTheme.warning : VxTheme.danger;
+                        }
+                        MetricRow {
+                            metric-label: "Growth";
+                            metric-value: "+" + round(root.perf.memory-growth-mb * 10) / 10 + " MB";
+                            indicator-color: root.perf.memory-growth-mb <= 10 ? VxTheme.success :
+                                             root.perf.memory-growth-mb <= 50 ? VxTheme.warning : VxTheme.danger;
                         }
                         MetricRow {
                             metric-label: "Transport";

@@ -87,6 +87,8 @@ pub fn update_perf_display(window: &MainWindow, snap: &PerfSnapshot) {
         capture_callback_median_ms: snap.capture_callback_median_ms,
         playback_callback_median_ms: snap.playback_callback_median_ms,
         audio_glitch_count: snap.audio_glitch_count as i32,
+        // M9
+        memory_growth_mb: snap.memory_growth_mb,
     };
     window.set_perf(perf);
 
