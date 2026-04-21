@@ -98,7 +98,7 @@ Note: criterion's detection is statistically rigorous but some benches (notably 
 
 ## Idle CPU baselines
 
-Reproducible script: `./scripts/measure-idle-cpu.sh` (macOS; three scenarios automated, two require manual UI steps). Record the before/after numbers from a clean run here.
+Reproducible script: `./scripts/measure-idle.sh` (macOS; three scenarios automated, two require manual UI steps). Record the before/after numbers from a clean run here.
 
 | Scenario | Before | After | Δ |
 |---|--:|--:|--:|
@@ -115,7 +115,7 @@ Per `docs/IDLE_AUDIT.md`. Expected idle-CPU reduction by scenario:
 - **Client** (`client_home`, `client_joined_silent`, `client_minimized`): ~15–30% reduction. Three idle-path fixes landed: the screen-chunk expiry no longer acquires the network mutex and scans a HashMap every second when nobody's sharing a screen; the unread-pulse property only writes when there are unread items; the typing-dot animation only writes when a typing indicator is actually visible.
 - **Server** (`server_zero_peers`, `server_one_idle_peer`): smaller idle-CPU change (the 60 s sweep was low frequency already) but noticeably lower peak-lock contention under churn. `auth_attempts`, `join_failures`, and `connections_per_ip` all prune on insert now; `udp_sessions` still swept. See commit `f54fcfb`.
 
-Run `./scripts/measure-idle-cpu.sh` with the M6 commits reverted (`git revert <sha>`) to capture the "before" numbers, and again with them applied to capture "after".
+Run `./scripts/measure-idle.sh` with the M6 commits reverted (`git revert <sha>`) to capture the "before" numbers, and again with them applied to capture "after".
 
 ---
 
@@ -136,3 +136,32 @@ Per-phase expectations (rough heuristics, update after first real run):
 - `device populate` — one-time cpal audio device enumeration for the settings dropdown. Target ≤ 100 ms.
 
 If a phase consistently exceeds its target, it is a candidate for optimization in a follow-up milestone.
+
+---
+
+## Memory baselines
+
+Measured on Apple M4 Pro, release build. RSS via `ps -o rss=`.
+
+| Scenario | Target RSS | Observed |
+|---|--:|--:|
+| `server_zero_peers` | < 50 MB | (run script) |
+| `server_one_idle_peer` | < 60 MB | (run script) |
+| `client_home` | < 150 MB | (run script) |
+| `client_joined_silent` (after 30 s) | < 180 MB | (manual) |
+
+Reproduce: `./scripts/measure-idle.sh`.
+
+### Growth check
+
+The Perf panel in the running client shows a "Growth" row that tracks RSS delta since the second perf snapshot (so sysinfo's lazy-init cost is captured as baseline, not reported as growth). Color thresholds:
+
+- **≤ +10 MB**: green (expected: log file growth, UI text cache churn, etc.)
+- **+10 to +50 MB**: amber (tolerable; worth an occasional look)
+- **> +50 MB**: red (investigate; likely leak in call state, channel buffers, or cached DMs)
+
+### Rationale
+
+Voxlink ships with a neural denoiser (nnnoiseless), the Slint render graph, and the Rust runtime. A realistic floor for the client before any room activity is ~140 MB. The server has no UI, no audio pipeline, no denoiser — it must fit comfortably inside the Oracle free-tier 1 GB VM alongside the OS — target ~50 MB idle.
+
+For comparison, Discord's Electron desktop client routinely idles at ~300+ MB.
