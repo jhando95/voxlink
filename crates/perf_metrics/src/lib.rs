@@ -164,6 +164,44 @@ impl PerfCollector {
             memory_growth_mb,
         }
     }
+
+    /// Return the current audio quality numbers as a tuple:
+    /// (capture_callback_median_ms, playback_callback_median_ms,
+    ///  cumulative_glitches, cumulative_frames_dropped, jitter_buffer_ms).
+    ///
+    /// The caller is responsible for computing deltas for the counter fields
+    /// (glitches, frames_dropped) against a cached previous value.
+    ///
+    /// Returns zeros for capture/playback medians if no audio has flowed yet.
+    pub fn audio_quality_numbers(&self) -> (u32, u32, u32, u32, u32) {
+        let capture_ms = self
+            .capture_callback_hist
+            .as_ref()
+            .map(|h| {
+                let m = h.median() * 1000.0;
+                if m.is_finite() { m as u32 } else { 999 }
+            })
+            .unwrap_or(0);
+        let playback_ms = self
+            .playback_callback_hist
+            .as_ref()
+            .map(|h| {
+                let m = h.median() * 1000.0;
+                if m.is_finite() { m as u32 } else { 999 }
+            })
+            .unwrap_or(0);
+        let glitches = self
+            .callback_glitch_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let frames_dropped_u64 = self
+            .dropped_frames
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let frames_dropped = u32::try_from(frames_dropped_u64).unwrap_or(u32::MAX);
+        let jitter_ms = self
+            .current_jitter_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        (capture_ms, playback_ms, glitches, frames_dropped, jitter_ms)
+    }
 }
 
 impl Default for PerfCollector {
@@ -323,5 +361,19 @@ mod tests {
             "snapshot #3 growth = {} should be non-negative",
             snap3.memory_growth_mb
         );
+    }
+
+    #[test]
+    fn audio_quality_numbers_returns_zeros_before_any_audio() {
+        let collector = PerfCollector::new();
+        let (c, p, g, f, j) = collector.audio_quality_numbers();
+        assert_eq!(c, 0, "capture median should be zero before any callbacks");
+        assert_eq!(p, 0, "playback median should be zero before any callbacks");
+        assert_eq!(g, 0, "glitches should be zero before any callbacks");
+        assert_eq!(f, 0, "frames_dropped should be zero before any callbacks");
+        // jitter has a non-zero default (JITTER_INITIAL * 20) from AudioMetrics::new
+        // but the PerfCollector-level current_jitter_ms is an Arc<AtomicU32> that
+        // starts at 0 until wired up by main.rs. Don't assert on it.
+        let _ = j;
     }
 }
