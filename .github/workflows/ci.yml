@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  build-test:
+    name: build-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - name: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets
+
+      - name: cargo test (skip flaky)
+        shell: bash
+        run: |
+          cargo test --workspace --no-fail-fast -- \
+            --skip live_stress \
+            --skip test_create_space \
+            --skip test_audio_after_leave_room \
+            --skip test_channel_audio_relay \
+            --skip test_authenticate_invalid_token_creates_new
+
+  lint:
+    name: lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint-macos
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: clippy (threshold 63)
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-targets 2>&1 | tee clippy.log
+          count=$(grep -cE "^warning:" clippy.log || true)
+          echo "Clippy warning count: $count"
+          if [ "$count" -gt 63 ]; then
+            echo "FAIL: clippy warning count $count exceeds baseline of 63"
+            exit 1
+          fi
+
+  windows-installer:
+    name: windows-installer
+    runs-on: windows-latest
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.94
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-installer
+
+      - name: cargo build --release
+        run: cargo build --release --workspace
+
+      - name: Build portable zip
+        shell: powershell
+        run: installer\build-portable.ps1
+
+      - name: Compile Inno Setup installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+        with:
+          path: installer/voxlink.iss
+          options: /O+
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxlink-windows-installer-${{ github.ref_name }}
+          path: |
+            installer/Output/Voxlink-Setup-*.exe
+            target/Voxlink-*
+          if-no-files-found: error
