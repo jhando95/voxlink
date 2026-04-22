@@ -123,6 +123,11 @@ pub fn start(
     let last_slow_update = Rc::new(RefCell::new(Instant::now()));
     let last_typing_expiry = Rc::new(RefCell::new(Instant::now()));
     let last_ping_update = Rc::new(RefCell::new(Instant::now()));
+    let last_telemetry_update = Rc::new(RefCell::new(Instant::now()));
+    // Cached cumulative values as of the last AudioQualityReport send.
+    // Deltas reported to the server = current - last_reported_*.
+    let last_reported_glitches = Rc::new(RefCell::new(0u32));
+    let last_reported_frames_dropped = Rc::new(RefCell::new(0u32));
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -750,6 +755,20 @@ pub fn start(
                 update_ping(&network, &rt_handle, &w, &perf);
             }
 
+            // --- Audio quality telemetry every 10s while in a call ---
+            if in_call
+                && last_telemetry_update.borrow().elapsed() >= Duration::from_secs(10)
+            {
+                *last_telemetry_update.borrow_mut() = Instant::now();
+                send_audio_quality_report(
+                    &network,
+                    &rt_handle,
+                    &perf,
+                    &last_reported_glitches,
+                    &last_reported_frames_dropped,
+                );
+            }
+
             // --- Adaptive bitrate every ~5s ---
             if tick.is_multiple_of(200) && in_call {
                 adapt_bitrate(&audio, w.get_ping_ms());
@@ -1250,6 +1269,56 @@ fn update_ping(
             network.lock().await.send_ping().await;
         });
     }
+}
+
+/// Build an AudioQualityReport from the current PerfCollector snapshot and
+/// ship it to the server. Computes counter deltas against cached previous
+/// values; updates caches even if the async send fails (the next report's
+/// delta will then simply cover that extra window — no retry loop needed).
+/// Skips the send entirely when nothing interesting is happening.
+fn send_audio_quality_report(
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+    perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
+    last_reported_glitches: &Rc<RefCell<u32>>,
+    last_reported_frames_dropped: &Rc<RefCell<u32>>,
+) {
+    let (capture_ms, playback_ms, glitches_cum, frames_dropped_cum, jitter_ms) = {
+        let p = perf.borrow();
+        p.audio_quality_numbers()
+    };
+
+    let prev_glitches = *last_reported_glitches.borrow();
+    let prev_frames = *last_reported_frames_dropped.borrow();
+    let glitches_delta = glitches_cum.saturating_sub(prev_glitches);
+    let frames_dropped_delta = frames_dropped_cum.saturating_sub(prev_frames);
+
+    // Skip reporting idle periods: no audio flowing, no losses, no glitches.
+    if capture_ms == 0
+        && playback_ms == 0
+        && glitches_delta == 0
+        && frames_dropped_delta == 0
+    {
+        return;
+    }
+
+    *last_reported_glitches.borrow_mut() = glitches_cum;
+    *last_reported_frames_dropped.borrow_mut() = frames_dropped_cum;
+
+    let msg = SignalMessage::AudioQualityReport {
+        capture_callback_median_ms: capture_ms,
+        playback_callback_median_ms: playback_ms,
+        glitches_delta,
+        frames_dropped_delta,
+        jitter_buffer_ms: jitter_ms,
+    };
+
+    let network = network.clone();
+    rt_handle.spawn(async move {
+        if let Err(e) = network.lock().await.send_signal(&msg).await {
+            log::debug!("Failed to send AudioQualityReport: {e}");
+        }
+    });
 }
 
 // ─── Message Retry Queue ───
