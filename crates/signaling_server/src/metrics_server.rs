@@ -30,6 +30,12 @@ pub(crate) struct ServerMetrics {
         [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
     pub(crate) signaling_dispatch_latency: Histogram,
     pub(crate) udp_relay_latency: Histogram,
+    // M10: aggregated from client AudioQualityReport messages
+    pub(crate) client_audio_capture_callback_seconds: Histogram,
+    pub(crate) client_audio_playback_callback_seconds: Histogram,
+    pub(crate) client_audio_glitches_total: AtomicU64,
+    pub(crate) client_audio_frames_dropped_total: AtomicU64,
+    pub(crate) client_jitter_buffer_seconds: Histogram,
     pub(crate) started_at: Instant,
 }
 
@@ -61,6 +67,21 @@ impl Default for ServerMetrics {
             udp_relay_latency: Histogram::new(
                 "voxlink_udp_relay_seconds",
                 "Time from UDP packet receive to final send_to call",
+            ),
+            // M10
+            client_audio_capture_callback_seconds: Histogram::new(
+                "voxlink_client_audio_capture_callback_seconds",
+                "Median capture-callback latency reported by clients (observed once per 10s report)",
+            ),
+            client_audio_playback_callback_seconds: Histogram::new(
+                "voxlink_client_audio_playback_callback_seconds",
+                "Median playback-callback latency reported by clients (observed once per 10s report)",
+            ),
+            client_audio_glitches_total: AtomicU64::new(0),
+            client_audio_frames_dropped_total: AtomicU64::new(0),
+            client_jitter_buffer_seconds: Histogram::new(
+                "voxlink_client_jitter_buffer_seconds",
+                "Jitter buffer depth reported by clients",
             ),
             started_at: Instant::now(),
         }
@@ -226,6 +247,18 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
         metrics.udp_invalid_packets_total.load(Ordering::Relaxed),
         metrics.udp_rate_limited_total.load(Ordering::Relaxed),
     ));
+    out.push_str(&format!(
+        concat!(
+            "# HELP voxlink_client_audio_glitches_total Audio glitches (>=10ms callbacks) reported by clients\n",
+            "# TYPE voxlink_client_audio_glitches_total counter\n",
+            "voxlink_client_audio_glitches_total {}\n",
+            "# HELP voxlink_client_audio_frames_dropped_total Audio frames dropped reported by clients\n",
+            "# TYPE voxlink_client_audio_frames_dropped_total counter\n",
+            "voxlink_client_audio_frames_dropped_total {}\n",
+        ),
+        metrics.client_audio_glitches_total.load(Ordering::Relaxed),
+        metrics.client_audio_frames_dropped_total.load(Ordering::Relaxed),
+    ));
     out.push_str("# HELP voxlink_signaling_messages_by_type_total Signaling messages received, broken down by SignalMessage variant\n");
     out.push_str("# TYPE voxlink_signaling_messages_by_type_total counter\n");
     for (i, name) in shared_types::SignalMessage::VARIANT_NAMES.iter().enumerate() {
@@ -240,6 +273,9 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
 
     metrics.signaling_dispatch_latency.render(&mut out);
     metrics.udp_relay_latency.render(&mut out);
+    metrics.client_audio_capture_callback_seconds.render(&mut out);
+    metrics.client_audio_playback_callback_seconds.render(&mut out);
+    metrics.client_jitter_buffer_seconds.render(&mut out);
 
     out
 }

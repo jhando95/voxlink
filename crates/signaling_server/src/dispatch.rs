@@ -627,6 +627,29 @@ pub(crate) async fn handle_signal(
         } => {
             handlers::recording::handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
         }
+        SignalMessage::AudioQualityReport {
+            capture_callback_median_ms,
+            playback_callback_median_ms,
+            glitches_delta,
+            frames_dropped_delta,
+            jitter_buffer_ms,
+        } => {
+            metrics
+                .client_audio_capture_callback_seconds
+                .observe(capture_callback_median_ms as f64 / 1000.0);
+            metrics
+                .client_audio_playback_callback_seconds
+                .observe(playback_callback_median_ms as f64 / 1000.0);
+            metrics
+                .client_audio_glitches_total
+                .fetch_add(glitches_delta as u64, std::sync::atomic::Ordering::Relaxed);
+            metrics
+                .client_audio_frames_dropped_total
+                .fetch_add(frames_dropped_delta as u64, std::sync::atomic::Ordering::Relaxed);
+            metrics
+                .client_jitter_buffer_seconds
+                .observe(jitter_buffer_ms as f64 / 1000.0);
+        }
         other => {
             log::debug!(
                 "Unhandled signal from {peer_id}: {:?}",
