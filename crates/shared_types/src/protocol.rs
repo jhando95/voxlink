@@ -859,6 +859,22 @@ pub enum SignalMessage {
         reactor_name: String,
         count: u32,
     },
+
+    // Client -> Server: periodic audio quality report for server-side
+    // aggregation. All values are client-observed; server only aggregates
+    // into /metrics.
+    AudioQualityReport {
+        /// Client's current capture callback median in milliseconds.
+        capture_callback_median_ms: u32,
+        /// Client's current playback callback median in milliseconds.
+        playback_callback_median_ms: u32,
+        /// Delta of audio glitches since the previous report.
+        glitches_delta: u32,
+        /// Delta of dropped frames since the previous report.
+        frames_dropped_delta: u32,
+        /// Current jitter-buffer depth in milliseconds.
+        jitter_buffer_ms: u32,
+    },
 }
 
 impl SignalMessage {
@@ -1073,6 +1089,7 @@ impl SignalMessage {
             Self::SendVoiceNote { .. } => 198,
             Self::VoiceNote { .. } => 199,
             Self::MessageReacted { .. } => 200,
+            Self::AudioQualityReport { .. } => 201,
         }
     }
 
@@ -1279,6 +1296,7 @@ impl SignalMessage {
         "SendVoiceNote",
         "VoiceNote",
         "MessageReacted",
+        "AudioQualityReport",
     ];
 }
 

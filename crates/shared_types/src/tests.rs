@@ -1269,3 +1269,32 @@ fn signal_message_variant_index_in_bounds() {
         assert!(!SignalMessage::VARIANT_NAMES[idx].is_empty());
     }
 }
+
+#[test]
+fn audio_quality_report_round_trips() {
+    let msg = SignalMessage::AudioQualityReport {
+        capture_callback_median_ms: 2,
+        playback_callback_median_ms: 3,
+        glitches_delta: 1,
+        frames_dropped_delta: 5,
+        jitter_buffer_ms: 40,
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    let back: SignalMessage = serde_json::from_str(&json).unwrap();
+    match back {
+        SignalMessage::AudioQualityReport {
+            capture_callback_median_ms,
+            playback_callback_median_ms,
+            glitches_delta,
+            frames_dropped_delta,
+            jitter_buffer_ms,
+        } => {
+            assert_eq!(capture_callback_median_ms, 2);
+            assert_eq!(playback_callback_median_ms, 3);
+            assert_eq!(glitches_delta, 1);
+            assert_eq!(frames_dropped_delta, 5);
+            assert_eq!(jitter_buffer_ms, 40);
+        }
+        other => panic!("wrong variant after round-trip: {other:?}"),
+    }
+}
