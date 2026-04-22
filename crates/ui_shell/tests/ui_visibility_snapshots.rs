@@ -764,6 +764,10 @@ fn sample_perf() -> PerfData {
         screen_frames_completed: 14,
         screen_frames_dropped: 1,
         screen_frames_timed_out: 0,
+        capture_callback_median_ms: 0.8,
+        playback_callback_median_ms: 0.9,
+        audio_glitch_count: 0,
+        memory_growth_mb: 0.0,
     }
 }
 
