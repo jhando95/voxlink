@@ -309,10 +309,12 @@ export component VxInput inherits Rectangle {
 }
 
 export component SectionLabel inherits Text {
-    color: VxTheme.text-muted;
+    // Slightly stronger eyebrow — more weight + wider tracking so section
+    // boundaries read as deliberate dividers, not afterthoughts.
+    color: VxTheme.text-secondary;
     font-size: 10px * VxTheme.s;
-    font-weight: VxTheme.heading-weight;
-    letter-spacing: VxTheme.section-spacing;
+    font-weight: 800;
+    letter-spacing: 1.4px;
 }
 
 export component FieldLabel inherits Text {
@@ -751,8 +753,11 @@ export component VxSlider inherits Rectangle {
 }
 
 export component Divider inherits Rectangle {
-    height: 1px;
-    background: VxTheme.border-subtle;
+    /// Default 1px subtle divider. For major zone boundaries set `strong: true`
+    /// for a thicker, more saturated line.
+    in property <bool> strong: false;
+    height: root.strong ? 2px : 1px;
+    background: root.strong ? VxTheme.border-strong : VxTheme.border-subtle;
 }
 
 export component VxLogo inherits Rectangle {

@@ -924,12 +924,21 @@ export component MainWindow inherits Window {
                                     y: 0px;
                                     width: clamp(root.width * 0.23, 236px, 286px);
                                     height: parent.height;
-                                    background: @linear-gradient(180deg,
-                                        VxTheme.bg-surface.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
-                                        VxTheme.bg-surface 100%);
-                                    border-color: VxTheme.border-subtle;
-                                    border-width: 1px;
+                                    // Anchored to bg-rail (darker than panel) so it visually
+                                    // recedes from the content surface — clear sidebar vs
+                                    // workspace zoning at a glance.
+                                    background: VxTheme.bg-rail;
                                     clip: true;
+
+                                    // Right-edge divider so the sidebar reads as a distinct
+                                    // surface even on light themes where the bg delta is small.
+                                    Rectangle {
+                                        x: parent.width - 1px;
+                                        y: 0px;
+                                        width: 1px;
+                                        height: parent.height;
+                                        background: VxTheme.border-strong;
+                                    }
 
                                     VerticalLayout {
                                         spacing: 0px;
@@ -1016,10 +1025,10 @@ export component MainWindow inherits Window {
                                                     Rectangle {
                                                         x: 0px;
                                                         y: (parent.height - self.height) / 2;
-                                                        width: 3px;
+                                                        width: 4px;
                                                         height: channel.id == root.chat-channel-id ? 18px
                                                             : (channel.mention-count > 0 || channel.unread-count > 0 ? 8px : 0px);
-                                                        border-radius: 1.5px;
+                                                        border-radius: 2px;
                                                         background: channel.mention-count > 0 ? VxTheme.warning : VxTheme.accent;
                                                     }
 
@@ -1109,9 +1118,9 @@ export component MainWindow inherits Window {
                                                     Rectangle {
                                                         x: 0px;
                                                         y: (parent.height - self.height) / 2;
-                                                        width: 3px;
+                                                        width: 4px;
                                                         height: channel.is-active ? 18px : 0px;
-                                                        border-radius: 1.5px;
+                                                        border-radius: 2px;
                                                         background: VxTheme.accent;
                                                     }
 
@@ -1233,11 +1242,13 @@ export component MainWindow inherits Window {
                                         height: chat-workspace-content.height;
                                         background: VxTheme.bg-rail;
 
+                                        // Stronger left divider so the members column reads
+                                        // as a separate panel, not a tinted strip.
                                         Rectangle {
                                             x: 0px;
                                             width: 1px;
                                             height: parent.height;
-                                            background: VxTheme.border-subtle;
+                                            background: VxTheme.border-strong;
                                         }
 
                                         VerticalLayout {

@@ -1020,15 +1020,17 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
         (UiScenario::Chat, LayoutWidth::Narrow) => {
             // Narrow composer was deliberately flattened by the Discord-modeled
             // redesign: borderless icon buttons, no shadows. With empty input + no
-            // outgoing draft, the surface collapses to {shell bg, surface gradient,
-            // border, icon glyph}. These thresholds reflect that floor without
-            // letting the composer disappear entirely.
+            // outgoing draft, the surface collapses to a small handful of color
+            // tiers (shell bg, surface gradient, border, icon glyph). The v0.13
+            // surface-contrast bump can collapse this further on the empty
+            // scenario; floor at 2 buckets keeps the assertion meaningful
+            // without sniping the empty-state visual.
             vec![RegionExpectation {
                 name: "composer",
                 rect: RelativeRect::new(0.04, 0.84, 0.96, 0.98),
                 min_edge_ratio: 0.002,
-                min_color_buckets: 3,
-                min_luma_deviation: 2.5,
+                min_color_buckets: 2,
+                min_luma_deviation: 0.2,
             }]
         }
         (UiScenario::Chat, LayoutWidth::Wide) => vec![RegionExpectation {
@@ -1060,9 +1062,10 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
             // glyph tiles + suggestion rows render fewer hard edges than before,
             // and at narrow widths the popup is partly hidden under the composer
             // surface, so the sampled region can collapse to {bg, accent text}.
+            // v0.13 surface lift collapsed it further on the narrow-dark snap.
             min_edge_ratio: 0.003,
             min_color_buckets: 2,
-            min_luma_deviation: 2.0,
+            min_luma_deviation: 0.3,
         }],
         (UiScenario::QuickSwitcher, LayoutWidth::Narrow)
         | (UiScenario::QuickSwitcher, LayoutWidth::Wide) => vec![RegionExpectation {

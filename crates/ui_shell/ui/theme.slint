@@ -267,21 +267,26 @@ export global VxTheme {
         is-arctic ? (dark-mode ? #0b161b : #f5fbfd) :
         dark-mode ? #10171f : #f4f8fb;
     out property <color> bg-panel:
-        is-party ? (dark-mode ? #152012 : #ffffff) :
-        is-space ? (dark-mode ? #0f1530 : #ffffff) :
-        is-retro ? (dark-mode ? #0d1713 : #ffffff) :
-        is-amber ? (dark-mode ? #23180c : #fffdf9) :
-        is-noir ? (dark-mode ? #11141a : #ffffff) :
-        is-arctic ? (dark-mode ? #102127 : #ffffff) :
-        dark-mode ? #161f2b : #ffffff;
+        // Lifted ~2 RGB units across the board in dark mode to create more
+        // separation from bg-rail (sidebar) and bg-soft (background fill).
+        // Light mode stays pure white — light-mode contrast comes from borders.
+        is-party ? (dark-mode ? #1a2516 : #ffffff) :
+        is-space ? (dark-mode ? #131a38 : #ffffff) :
+        is-retro ? (dark-mode ? #121d17 : #ffffff) :
+        is-amber ? (dark-mode ? #2a1d10 : #fffdf9) :
+        is-noir ? (dark-mode ? #161a23 : #ffffff) :
+        is-arctic ? (dark-mode ? #142932 : #ffffff) :
+        dark-mode ? #1c2638 : #ffffff;
     out property <color> bg-card:
-        is-party ? (dark-mode ? #192715 : #ffffff) :
-        is-space ? (dark-mode ? #141c3a : #ffffff) :
-        is-retro ? (dark-mode ? #111d18 : #ffffff) :
-        is-amber ? (dark-mode ? #291c0f : #fffdfb) :
-        is-noir ? (dark-mode ? #151921 : #ffffff) :
-        is-arctic ? (dark-mode ? #13292f : #ffffff) :
-        dark-mode ? #1b2533 : #ffffff;
+        // Lifted again over bg-panel so cards visibly pop off the surface
+        // they sit on. Boundary feels like a real raised tile, not a tint.
+        is-party ? (dark-mode ? #213019 : #ffffff) :
+        is-space ? (dark-mode ? #1a2348 : #ffffff) :
+        is-retro ? (dark-mode ? #17251e : #ffffff) :
+        is-amber ? (dark-mode ? #312214 : #fffdfb) :
+        is-noir ? (dark-mode ? #1d2330 : #ffffff) :
+        is-arctic ? (dark-mode ? #1a3138 : #ffffff) :
+        dark-mode ? #243049 : #ffffff;
     out property <color> bg-raised:
         is-party ? (dark-mode ? #22331d : #dfead5) :
         is-space ? (dark-mode ? #1a2548 : #dfe5fb) :
@@ -299,13 +304,16 @@ export global VxTheme {
         is-arctic ? (dark-mode ? #0c1b21 : #f7fdff) :
         dark-mode ? #0c121a : #f6f9fc;
     out property <color> bg-rail:
-        is-party ? (dark-mode ? #091008 : #e5ecde) :
-        is-space ? (dark-mode ? #050915 : #e6ebfb) :
-        is-retro ? (dark-mode ? #040a07 : #e3eee8) :
-        is-amber ? (dark-mode ? #100904 : #f2e4d3) :
-        is-noir ? (dark-mode ? #07090d : #e7ebf2) :
-        is-arctic ? (dark-mode ? #081318 : #e4f1f5) :
-        dark-mode ? #0e141d : #e9f0f5;
+        // Sidebar anchor — pushed darker in dark mode so the side panel
+        // visibly recedes from the lifted bg-panel content surface. Light
+        // mode pushed slightly more saturated for the same effect.
+        is-party ? (dark-mode ? #050a05 : #dde6d3) :
+        is-space ? (dark-mode ? #03050f : #dde4f8) :
+        is-retro ? (dark-mode ? #020604 : #d9e8de) :
+        is-amber ? (dark-mode ? #080501 : #ebd9c1) :
+        is-noir ? (dark-mode ? #04050a : #dee4ee) :
+        is-arctic ? (dark-mode ? #050f13 : #d8ecf1) :
+        dark-mode ? #080d15 : #dfe9f0;
     out property <color> bg-overlay:
         is-party ? (dark-mode ? #040804d0 : #ffffffdd) :
         is-space ? (dark-mode ? #03040bd0 : #ffffffdd) :
@@ -331,23 +339,24 @@ export global VxTheme {
         is-arctic ? (dark-mode ? #0d181d : #f4fafc) :
         dark-mode ? #10171f : #f3f8fb;
 
-    // Borders
+    // Borders — pushed harder than v0.12 so dividers between zones read at
+    // a glance and section boundaries are unambiguous.
     out property <color> border-subtle:
-        is-party ? (dark-mode ? #2d4724 : #c5d5b8) :
-        is-space ? (dark-mode ? #273467 : #c8d2f0) :
-        is-retro ? (dark-mode ? #204238 : #bfd8cc) :
-        is-amber ? (dark-mode ? #5b3b1e : #dfc1a0) :
-        is-noir ? (dark-mode ? #2b3240 : #cfd6e3) :
-        is-arctic ? (dark-mode ? #24404a : #bfd9e1) :
-        dark-mode ? #27344a : #d6e0e8;
+        is-party ? (dark-mode ? #38582c : #b8cba6) :
+        is-space ? (dark-mode ? #2f3f7d : #bbc9e9) :
+        is-retro ? (dark-mode ? #275246 : #b1cfc1) :
+        is-amber ? (dark-mode ? #6e4824 : #d5b58e) :
+        is-noir ? (dark-mode ? #344056 : #c2cbdb) :
+        is-arctic ? (dark-mode ? #2c4f5a : #b3cfd9) :
+        dark-mode ? #2e3f58 : #c8d4e0;
     out property <color> border-strong:
-        is-party ? (dark-mode ? #4a7138 : #a9c193) :
-        is-space ? (dark-mode ? #3d5399 : #a9b8e8) :
-        is-retro ? (dark-mode ? #327060 : #97bcae) :
-        is-amber ? (dark-mode ? #835328 : #c69e72) :
-        is-noir ? (dark-mode ? #455068 : #b5bfd4) :
-        is-arctic ? (dark-mode ? #396273 : #9ec3ce) :
-        dark-mode ? #35465f : #bfd1df;
+        is-party ? (dark-mode ? #5a8643 : #8ab075) :
+        is-space ? (dark-mode ? #4a64b3 : #8ea2da) :
+        is-retro ? (dark-mode ? #3c8472 : #78ac99) :
+        is-amber ? (dark-mode ? #99622f : #b78958) :
+        is-noir ? (dark-mode ? #525f7b : #9aa7be) :
+        is-arctic ? (dark-mode ? #437288 : #82b4c2) :
+        dark-mode ? #405677 : #a8bfd1;
     out property <color> border-focus:
         is-party ? (dark-mode ? #98f15d : #5cad2c) :
         is-space ? (dark-mode ? #7cc8ff : #4d8fd9) :

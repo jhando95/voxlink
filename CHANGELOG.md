@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.13.1 — UI: clearer sector definition
+
+Cosmetic-only pass on top of v0.13.0. The view zones (sidebar / content /
+members) now read as distinct surfaces at a glance instead of blending into
+one tinted plane.
+
+- **Stronger surface contrast in dark mode** — `bg-rail` (sidebar) pushed
+  darker so the side panel visibly recedes; `bg-panel` (content surface) and
+  `bg-card` (raised cards) lifted so the 3-tier hierarchy is unambiguous.
+  All 7 themes shifted proportionally; light mode tweaked subtly so the
+  same zoning reads.
+- **`border-subtle` and `border-strong` pushed** about 25–30% more saturated
+  so dividers between panels are visible without dominating.
+- **Chat sidebar switched from `bg-panel` to `bg-rail`** with a 1px
+  `border-strong` divider on its right edge — sidebar feels anchored to the
+  screen edge instead of bleeding into the chat surface.
+- **Member panel left divider upgraded** from `border-subtle` to `border-strong`
+  so the members column reads as its own panel.
+- **Active-channel / active-row left accent strip** thickened from 3px → 4px
+  for clearer selection state.
+- **`SectionLabel` typography** bumped to font-weight 800 with wider letter
+  spacing (1.4px) and a more visible color tier (`text-secondary` not
+  `text-muted`) — section headers act as intentional dividers.
+- **`Divider` component** gained a `strong: true` mode (2px on `border-strong`)
+  for use at major zone boundaries.
+
 ## v0.13.0 — Correctness, Durability, Personal-Safety & Custom Roles
 
 A "complete-and-fully-functional" sweep driven by a workspace-wide audit, plus
