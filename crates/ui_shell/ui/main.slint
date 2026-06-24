@@ -1,4 +1,4 @@
-import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, StartupPhaseData, VxTheme } from "theme.slint";
+import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, GroupDMThreadData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, StartupPhaseData, VxTheme } from "theme.slint";
 import { VxButton, VxCard, VxInput } from "components.slint";
 import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
@@ -71,7 +71,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
-    in-out property <string> version-text: "0.10.4";
+    in-out property <string> version-text: "0.11.0";
     in-out property <string> uptime-text: "0s";
     in-out property <string> listening-keybind: "";
     in-out property <string> ptt-key-display: "Space";
@@ -157,6 +157,25 @@ export component MainWindow inherits Window {
     in-out property <[ChatMessage]> chat-messages: [];
     in-out property <[ChatMessage]> chat-pinned-messages: [];
     in-out property <string> chat-channel-id: "";
+    /// Send-failed messages serialized as a string ("type\u{1f}target\u{1f}content"
+    /// separated by \u{1e}). Written from worker tasks (Slint Weak is Send,
+    /// property writes are not racy with property reads), drained by the tick
+    /// loop on the UI thread into AppState.pending_messages for the retry path.
+    in-out property <string> pending-outbox-drop-in: "";
+    /// Channel/message pairs to MarkChannelRead on the next tick.
+    /// Format: "channel_id\u{1f}message_id" entries separated by \u{1e}.
+    in-out property <string> pending-mark-read: "";
+    /// Active group-DM id when the user has a group thread open, else empty.
+    /// When non-empty, send-text-message routes through SendGroupMessage.
+    in-out property <string> chat-group-id: "";
+    /// Threads for multi-user direct messages (server-allocated group_id keyed).
+    in-out property <[GroupDMThreadData]> group-dm-threads: [];
+    /// Set of friend user_ids selected for a new group DM. Cleared after create.
+    in-out property <[string]> new-group-dm-selection: [];
+    in-out property <bool> show-new-group-dm-picker: false;
+    callback create-group-dm();
+    callback open-group-dm(string); // group_id
+    callback toggle-new-group-dm-friend(string); // user_id (toggles membership in selection)
     in-out property <string> chat-channel-name: "";
     in-out property <bool> chat-is-direct-message: false;
     in-out property <string> chat-context-subtitle: "";
@@ -192,8 +211,10 @@ export component MainWindow inherits Window {
     in-out property <string> thread-parent-sender: "";
     in-out property <string> thread-parent-content: "";
     in-out property <string> thread-parent-timestamp: "";
+    in-out property <string> thread-parent-id: "";
     callback open-thread(string, string);
     callback close-thread();
+    callback send-thread-reply(string, string);
 
     // Profile popup
     in-out property <bool> profile-popup-visible: false;
@@ -219,6 +240,8 @@ export component MainWindow inherits Window {
     in-out property <bool> compact-chat: false;
     in-out property <bool> streamer-mode: false;
     in-out property <bool> desktop-notifications: true;
+    in-out property <bool> rich-presence-enabled: false;
+    in-out property <string> rich-presence-allowlist: "";
     in-out property <int> notification-sound-index: 0; // 0=Default, 1=Subtle, 2=Chime, 3=None
     callback set-notification-sound(int);
     in-out property <int> status-preset: 0; // 0=Online, 1=Idle, 2=DND, 3=Invisible
@@ -234,6 +257,8 @@ export component MainWindow inherits Window {
     callback toggle-compact-chat();
     callback toggle-streamer-mode();
     callback toggle-desktop-notifications();
+    callback toggle-rich-presence();
+    callback set-rich-presence-allowlist(string);
     callback toggle-member-widget();
     // Soundboard
     in property <[SoundboardClipData]> soundboard-clips: [];
@@ -362,6 +387,10 @@ export component MainWindow inherits Window {
     callback select-text-channel(string);
     callback chat-typing-activity(bool);
     callback send-text-message();
+    // Open a native file picker and upload the chosen file into the active channel.
+    callback attach-file();
+    // attachment-id — fetch and save a received attachment's bytes.
+    callback download-attachment(string);
     callback edit-text-message(string, string);
     callback delete-text-message(string);
     callback react-to-message(string, string);
@@ -370,6 +399,8 @@ export component MainWindow inherits Window {
     callback copy-message-text(string);
     callback kick-member(string);
     callback ban-member(string);
+    callback block-user(string);
+    callback unblock-user(string);
     callback server-mute-member(string, bool);
     callback set-member-role(string, int);
     callback set-user-status(string);
@@ -408,8 +439,9 @@ export component MainWindow inherits Window {
     callback create-account();
     callback logout();
     callback change-password(string, string);
+    callback change-email(string, string); // current_password, new_email
     callback change-display-name(string);
-    callback delete-account();
+    callback delete-account(string); // current_password
     callback revoke-all-sessions();
     // Scheduled events
     in property <[ScheduledEventData]> scheduled-events: [];
@@ -577,14 +609,16 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "Connection lost — attempting to reconnect...";
                                 color: VxTheme.danger;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 700;
                                 vertical-alignment: center;
                             }
                         }
                     }
 
-                    NavBreadcrumb {
+                    // Hide the breadcrumb in the chat view — the chat header already
+                    // shows the channel, so the breadcrumb is redundant there.
+                    if root.current-view != 5 : NavBreadcrumb {
                         current-view: root.current-view;
                         previous-view: root.previous-view;
                         space-name: root.current-space-name;
@@ -618,6 +652,13 @@ export component MainWindow inherits Window {
                             room-password <=> root.room-password;
                             direct-message-threads: root.direct-message-threads;
                             unread-direct-messages-count: root.unread-direct-messages-count;
+                            group-dm-threads: root.group-dm-threads;
+                            favorite-friends: root.favorite-friends;
+                            new-group-dm-selection: root.new-group-dm-selection;
+                            show-new-group-dm-picker <=> root.show-new-group-dm-picker;
+                            toggle-new-group-dm-friend(uid) => { root.toggle-new-group-dm-friend(uid); }
+                            create-group-dm => { root.create-group-dm(); }
+                            open-group-dm(gid) => { root.open-group-dm(gid); }
                             connect-server => { root.connect-server(); }
                             disconnect-server => { root.disconnect-server(); }
                             find-server => { root.find-server(); }
@@ -748,6 +789,10 @@ export component MainWindow inherits Window {
                             toggle-streamer-mode => { root.toggle-streamer-mode(); }
                             desktop-notifications: root.desktop-notifications;
                             toggle-desktop-notifications => { root.toggle-desktop-notifications(); }
+                            rich-presence-enabled: root.rich-presence-enabled;
+                            rich-presence-allowlist <=> root.rich-presence-allowlist;
+                            toggle-rich-presence => { root.toggle-rich-presence(); }
+                            set-rich-presence-allowlist(list) => { root.set-rich-presence-allowlist(list); }
                             notification-sound-index: root.notification-sound-index;
                             set-notification-sound(idx) => { root.set-notification-sound(idx); }
                             clear-keybind(binding) => { root.clear-keybind(binding); }
@@ -762,8 +807,9 @@ export component MainWindow inherits Window {
                             show-about => { root.about-visible = true; }
                             revoke-all-sessions => { root.revoke-all-sessions(); }
                             change-password(old, new) => { root.change-password(old, new); }
+                            change-email(pw, email) => { root.change-email(pw, email); }
                             change-display-name(name) => { root.change-display-name(name); }
-                            delete-account => { root.delete-account(); }
+                            delete-account(pw) => { root.delete-account(pw); }
                             soundboard-clips: root.soundboard-clips;
                             play-soundboard-clip(idx) => { root.play-soundboard-clip(idx); }
                             remove-soundboard-clip(idx) => { root.remove-soundboard-clip(idx); }
@@ -821,6 +867,8 @@ export component MainWindow inherits Window {
                             set-space-public(public) => { root.set-space-public(public); }
                             kick-member(member-id) => { root.kick-member(member-id); }
                             ban-member(member-id) => { root.ban-member(member-id); }
+                            block-user(user-id) => { root.block-user(user-id); }
+                            unblock-user(user-id) => { root.unblock-user(user-id); }
                             server-mute-member(member-id, muted) => { root.server-mute-member(member-id, muted); }
                             set-member-role(user-id, role-index) => { root.set-member-role(user-id, role-index); }
                             set-user-status(status) => { root.set-user-status(status); }
@@ -918,7 +966,7 @@ export component MainWindow inherits Window {
                                                     Text {
                                                         text: root.visible-text-channels + " text · " + root.visible-voice-channels + " voice";
                                                         color: VxTheme.text-muted;
-                                                        font-size: 9px;
+                                                        font-size: 11px;
                                                         overflow: elide;
                                                     }
                                                 }
@@ -942,27 +990,37 @@ export component MainWindow inherits Window {
                                                 padding-top: 10px;
                                                 padding-bottom: 12px;
                                                 spacing: 6px;
+                                                alignment: start;
 
                                                 Text {
                                                     text: "TEXT CHANNELS";
                                                     color: VxTheme.text-muted;
-                                                    font-size: 9px;
+                                                    font-size: 11px;
                                                     font-weight: 700;
                                                 }
 
                                                 for channel in root.channels : Rectangle {
                                                     visible: !channel.is-category-header && !channel.is-voice;
-                                                    height: self.visible ? 38px : 0px;
-                                                    border-radius: 10px;
+                                                    height: self.visible ? 34px : 0px;
+                                                    border-radius: 6px;
                                                     background: channel.id == root.chat-channel-id
-                                                        ? VxTheme.tab-active-bg
-                                                        : text-channel-touch.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    border-color: channel.id == root.chat-channel-id ? VxTheme.accent-border : transparent;
-                                                    border-width: channel.id == root.chat-channel-id ? 1px : 0px;
+                                                        ? VxTheme.surface-active
+                                                        : text-channel-touch.has-hover ? VxTheme.row-hover-bg : transparent;
 
                                                     text-channel-touch := TouchArea {
                                                         mouse-cursor: pointer;
                                                         clicked => { root.select-text-channel(channel.id); }
+                                                    }
+
+                                                    // Discord-style left selection/unread indicator (no full border)
+                                                    Rectangle {
+                                                        x: 0px;
+                                                        y: (parent.height - self.height) / 2;
+                                                        width: 3px;
+                                                        height: channel.id == root.chat-channel-id ? 18px
+                                                            : (channel.mention-count > 0 || channel.unread-count > 0 ? 8px : 0px);
+                                                        border-radius: 1.5px;
+                                                        background: channel.mention-count > 0 ? VxTheme.warning : VxTheme.accent;
                                                     }
 
                                                     HorizontalLayout {
@@ -982,7 +1040,7 @@ export component MainWindow inherits Window {
                                                         Text {
                                                             text: channel.name;
                                                             color: channel.id == root.chat-channel-id ? VxTheme.accent : VxTheme.text-primary;
-                                                            font-size: 11px;
+                                                            font-size: 12px;
                                                             font-weight: channel.id == root.chat-channel-id ? 700 : 600;
                                                             horizontal-stretch: 1;
                                                             overflow: elide;
@@ -998,7 +1056,7 @@ export component MainWindow inherits Window {
                                                             mention-pill := Text {
                                                                 text: "@" + channel.mention-count;
                                                                 color: VxTheme.warning;
-                                                                font-size: 8px;
+                                                                font-size: 10px;
                                                                 font-weight: 700;
                                                                 horizontal-alignment: center;
                                                                 vertical-alignment: center;
@@ -1014,7 +1072,7 @@ export component MainWindow inherits Window {
                                                             unread-pill := Text {
                                                                 text: channel.unread-count > 99 ? "99+" : channel.unread-count + "";
                                                                 color: channel.id == root.chat-channel-id ? VxTheme.accent : VxTheme.text-secondary;
-                                                                font-size: 8px;
+                                                                font-size: 10px;
                                                                 font-weight: 700;
                                                                 horizontal-alignment: center;
                                                                 vertical-alignment: center;
@@ -1031,23 +1089,30 @@ export component MainWindow inherits Window {
                                                 Text {
                                                     text: "VOICE CHANNELS";
                                                     color: VxTheme.text-muted;
-                                                    font-size: 9px;
+                                                    font-size: 11px;
                                                     font-weight: 700;
                                                 }
 
                                                 for channel in root.channels : Rectangle {
                                                     visible: !channel.is-category-header && channel.is-voice;
-                                                    height: self.visible ? 38px : 0px;
-                                                    border-radius: 10px;
+                                                    height: self.visible ? 34px : 0px;
+                                                    border-radius: 6px;
                                                     background: channel.is-active
-                                                        ? VxTheme.tab-active-bg
-                                                        : voice-channel-touch.has-hover ? VxTheme.card-hover-bg : transparent;
-                                                    border-color: channel.is-active ? VxTheme.accent-border : transparent;
-                                                    border-width: channel.is-active ? 1px : 0px;
+                                                        ? VxTheme.surface-active
+                                                        : voice-channel-touch.has-hover ? VxTheme.row-hover-bg : transparent;
 
                                                     voice-channel-touch := TouchArea {
                                                         mouse-cursor: pointer;
                                                         clicked => { root.join-channel(channel.id); }
+                                                    }
+
+                                                    Rectangle {
+                                                        x: 0px;
+                                                        y: (parent.height - self.height) / 2;
+                                                        width: 3px;
+                                                        height: channel.is-active ? 18px : 0px;
+                                                        border-radius: 1.5px;
+                                                        background: VxTheme.accent;
                                                     }
 
                                                     HorizontalLayout {
@@ -1059,14 +1124,14 @@ export component MainWindow inherits Window {
                                                         Text {
                                                             text: "\u{1F50A}";
                                                             color: channel.is-active ? VxTheme.accent : VxTheme.text-secondary;
-                                                            font-size: 12px;
+                                                            font-size: 13px;
                                                             vertical-alignment: center;
                                                         }
 
                                                         Text {
                                                             text: channel.name;
                                                             color: channel.is-active ? VxTheme.accent : VxTheme.text-primary;
-                                                            font-size: 11px;
+                                                            font-size: 12px;
                                                             font-weight: channel.is-active ? 700 : 600;
                                                             horizontal-stretch: 1;
                                                             overflow: elide;
@@ -1082,7 +1147,7 @@ export component MainWindow inherits Window {
                                                             peer-pill := Text {
                                                                 text: channel.peer-count + "";
                                                                 color: channel.is-active ? VxTheme.success : VxTheme.text-secondary;
-                                                                font-size: 8px;
+                                                                font-size: 10px;
                                                                 font-weight: 700;
                                                                 horizontal-alignment: center;
                                                                 vertical-alignment: center;
@@ -1102,10 +1167,13 @@ export component MainWindow inherits Window {
                                     height: parent.height;
                                     background: transparent;
 
+                                    property <bool> show-members: root.members.length > 0 && !root.chat-is-direct-message;
+                                    property <length> member-col-width: chat-workspace-content.show-members ? 232px : 0px;
+
                                     ChatView {
                                         x: 0px;
                                         y: 0px;
-                                        width: parent.width;
+                                        width: chat-workspace-content.width - chat-workspace-content.member-col-width;
                                         height: parent.height;
                                         wide: true;
                                         compact-mode: root.compact-chat;
@@ -1133,6 +1201,8 @@ export component MainWindow inherits Window {
                                         forward-message(message-id) => { root.forward-message(message-id); }
                                         copy-message-text(content) => { root.copy-message-text(content); }
                                         show-profile(user-id) => { root.show-profile(user-id); }
+                                        attach-file => { root.attach-file(); }
+                                        download-attachment(attachment-id) => { root.download-attachment(attachment-id); }
                                         chat-search-results: root.chat-search-results;
                                         chat-search-query <=> root.chat-search-query;
                                         search-messages(query) => { root.search-messages(query); }
@@ -1144,13 +1214,109 @@ export component MainWindow inherits Window {
                                         thread-parent-sender: root.thread-parent-sender;
                                         thread-parent-content: root.thread-parent-content;
                                         thread-parent-timestamp: root.thread-parent-timestamp;
+                                        thread-parent-id: root.thread-parent-id;
                                         open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
                                         close-thread => { root.close-thread(); }
+                                        send-thread-reply(parent-id, text) => { root.send-thread-reply(parent-id, text); }
                                         mention-popup-visible: root.mention-popup-visible;
                                         mention-suggestions: root.mention-suggestions;
                                         mention-selected-index <=> root.mention-selected-index;
                                         mention-input-changed(text) => { root.mention-input-changed(text); }
                                         mention-selected(idx) => { root.mention-selected(idx); }
+                                    }
+
+                                    // Discord-style member list — space members on the right.
+                                    if chat-workspace-content.show-members : Rectangle {
+                                        x: chat-workspace-content.width - chat-workspace-content.member-col-width;
+                                        y: 0px;
+                                        width: chat-workspace-content.member-col-width;
+                                        height: chat-workspace-content.height;
+                                        background: VxTheme.bg-rail;
+
+                                        Rectangle {
+                                            x: 0px;
+                                            width: 1px;
+                                            height: parent.height;
+                                            background: VxTheme.border-subtle;
+                                        }
+
+                                        VerticalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            padding-top: 12px;
+                                            padding-bottom: 12px;
+                                            spacing: 2px;
+                                            alignment: start;
+
+                                            Text {
+                                                text: "MEMBERS — " + root.members.length;
+                                                color: VxTheme.text-muted;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                letter-spacing: 0.5px;
+                                            }
+                                            Rectangle { height: 6px; }
+
+                                            for m in root.members : Rectangle {
+                                                height: 42px;
+                                                border-radius: 6px;
+                                                background: member-row-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                                                member-row-touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.show-profile(m.user-id); }
+                                                }
+                                                HorizontalLayout {
+                                                    padding-left: 6px;
+                                                    padding-right: 6px;
+                                                    spacing: 10px;
+                                                    alignment: center;
+
+                                                    Rectangle {
+                                                        width: 30px;
+                                                        height: 30px;
+                                                        border-radius: 15px;
+                                                        background: VxTheme.avatar-color(m.color-index);
+                                                        Text {
+                                                            text: m.initial;
+                                                            color: #0b1017;
+                                                            font-size: 12px;
+                                                            font-weight: 800;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                        Rectangle {
+                                                            x: parent.width - self.width + 1px;
+                                                            y: parent.height - self.height + 1px;
+                                                            width: 11px;
+                                                            height: 11px;
+                                                            border-radius: 5.5px;
+                                                            background: m.is-online ? VxTheme.success : VxTheme.text-muted;
+                                                            border-color: VxTheme.bg-rail;
+                                                            border-width: 2px;
+                                                        }
+                                                    }
+
+                                                    VerticalLayout {
+                                                        spacing: 1px;
+                                                        horizontal-stretch: 1;
+                                                        alignment: center;
+                                                        Text {
+                                                            text: m.nickname != "" ? m.nickname : m.name;
+                                                            color: m.is-online ? VxTheme.text-primary : VxTheme.text-muted;
+                                                            font-size: 13px;
+                                                            font-weight: 600;
+                                                            overflow: elide;
+                                                        }
+                                                        if m.activity != "" : Text {
+                                                            text: m.activity;
+                                                            color: VxTheme.text-muted;
+                                                            font-size: 11px;
+                                                            overflow: elide;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1182,6 +1348,8 @@ export component MainWindow inherits Window {
                                 forward-message(message-id) => { root.forward-message(message-id); }
                                 copy-message-text(content) => { root.copy-message-text(content); }
                                 show-profile(user-id) => { root.show-profile(user-id); }
+                                attach-file => { root.attach-file(); }
+                                download-attachment(attachment-id) => { root.download-attachment(attachment-id); }
                                 chat-search-results: root.chat-search-results;
                                 chat-search-query <=> root.chat-search-query;
                                 search-messages(query) => { root.search-messages(query); }
@@ -1193,8 +1361,10 @@ export component MainWindow inherits Window {
                                 thread-parent-sender: root.thread-parent-sender;
                                 thread-parent-content: root.thread-parent-content;
                                 thread-parent-timestamp: root.thread-parent-timestamp;
+                                thread-parent-id: root.thread-parent-id;
                                 open-thread(channel-id, message-id) => { root.open-thread(channel-id, message-id); }
                                 close-thread => { root.close-thread(); }
+                                send-thread-reply(parent-id, text) => { root.send-thread-reply(parent-id, text); }
                                 mention-popup-visible: root.mention-popup-visible;
                                 mention-suggestions: root.mention-suggestions;
                                 mention-selected-index <=> root.mention-selected-index;
@@ -1302,7 +1472,7 @@ export component MainWindow inherits Window {
                                 auth-err-text := Text {
                                     text: root.auth-error;
                                     color: VxTheme.danger;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                     horizontal-alignment: center;
                                 }
@@ -1314,7 +1484,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "Email";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     letter-spacing: 0.5px;
                                 }
@@ -1331,7 +1501,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "Password";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     letter-spacing: 0.5px;
                                 }
@@ -1349,7 +1519,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "Display Name";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     letter-spacing: 0.5px;
                                 }
@@ -1379,7 +1549,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: root.login-mode ? "Sign In" : "Create Account";
                                     color: VxTheme.text-inverse;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1393,12 +1563,12 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: root.login-mode ? "Don't have an account?" : "Already have an account?";
                                     color: VxTheme.text-muted;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                 }
                                 Text {
                                     text: root.login-mode ? "Register" : "Sign In";
                                     color: VxTheme.accent;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     TouchArea {
                                         mouse-cursor: pointer;
@@ -1416,7 +1586,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "Continue without account";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => { root.show-login-view = false; }
@@ -1459,7 +1629,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Esc to close · Up/Down to navigate";
                             color: VxTheme.text-muted;
-                            font-size: 9px;
+                            font-size: 11px;
                         }
                     }
 
@@ -1480,7 +1650,7 @@ export component MainWindow inherits Window {
                     if root.quick-switcher-items.length == 0 && root.quick-switcher-query != "" : Text {
                         text: "No matches found";
                         color: VxTheme.text-muted;
-                        font-size: 10px;
+                        font-size: 12px;
                     }
 
                     for item[idx] in root.quick-switcher-items : Rectangle {
@@ -1522,7 +1692,7 @@ export component MainWindow inherits Window {
                                     text: item.is-voice ? "VC" : item.status == "dm" ? "DM" : "#";
                                     color: item.is-voice ? VxTheme.accent :
                                            item.status == "dm" ? VxTheme.warning : VxTheme.text-muted;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     font-weight: 800;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1531,7 +1701,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: item.name;
                                 color: idx == root.quick-switcher-index ? VxTheme.accent : VxTheme.text-primary;
-                                font-size: 11px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 horizontal-stretch: 1;
                                 overflow: elide;
@@ -1539,7 +1709,7 @@ export component MainWindow inherits Window {
                             if item.category != "" : Text {
                                 text: item.category;
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                             }
                         }
                     }
@@ -1573,7 +1743,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: root.incoming-call-name + " is calling you";
                                 color: VxTheme.text-secondary;
-                                font-size: 12px;
+                                font-size: 13px;
                                 horizontal-alignment: center;
                                 overflow: elide;
                                 max-width: 280px;
@@ -1598,7 +1768,7 @@ export component MainWindow inherits Window {
                                     Text {
                                         text: "Accept";
                                         color: VxTheme.text-inverse;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -1620,7 +1790,7 @@ export component MainWindow inherits Window {
                                     Text {
                                         text: "Decline";
                                         color: VxTheme.text-inverse;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -1662,14 +1832,14 @@ export component MainWindow inherits Window {
                           root.toast-type == 2 ? "⚠" :
                           root.toast-type == 1 ? "✓" : "ℹ";
                     color: root.toast-type >= 1 ? #fff : VxTheme.accent;
-                    font-size: 12px;
+                    font-size: 13px;
                     font-weight: 700;
                     vertical-alignment: center;
                 }
                 Text {
                     text: root.toast-message;
                     color: root.toast-type >= 1 ? #fff : VxTheme.text-primary;
-                    font-size: 11px;
+                    font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
@@ -1761,7 +1931,7 @@ export component MainWindow inherits Window {
                                     color: root.profile-popup-role-color-index > 0
                                         ? VxTheme.role-color(root.profile-popup-role-color-index)
                                         : VxTheme.accent;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1786,7 +1956,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: root.profile-popup-status;
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
 
@@ -1802,7 +1972,7 @@ export component MainWindow inherits Window {
                             width: parent.width - 20px;
                             text: root.profile-popup-activity;
                             color: VxTheme.text-secondary;
-                            font-size: 10px;
+                            font-size: 12px;
                             font-weight: 600;
                             wrap: word-wrap;
                         }
@@ -1814,14 +1984,14 @@ export component MainWindow inherits Window {
                         Text {
                             text: "ABOUT";
                             color: VxTheme.text-muted;
-                            font-size: 9px;
+                            font-size: 11px;
                             font-weight: 700;
                             letter-spacing: 0.8px;
                         }
                         Text {
                             text: root.profile-popup-bio;
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                     }
@@ -1843,7 +2013,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Message";
                             color: VxTheme.text-inverse;
-                            font-size: 11px;
+                            font-size: 12px;
                             font-weight: 700;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -1889,7 +2059,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "WELCOME";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                                 font-weight: 700;
                                 letter-spacing: 1.2px;
                                 horizontal-alignment: center;
@@ -1921,7 +2091,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: "Got it!";
                                     color: VxTheme.text-inverse;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1964,12 +2134,12 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Esc to close";
                             color: VxTheme.text-muted;
-                            font-size: 9px;
+                            font-size: 11px;
                         }
                     }
 
                     // Navigation
-                    Text { text: "NAVIGATION"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    Text { text: "NAVIGATION"; color: VxTheme.text-muted; font-size: 11px; font-weight: 700; }
                     for shortcut in [
                         { key: "Ctrl/Cmd+K", desc: "Quick switcher" },
                         { key: "Ctrl+/", desc: "Keyboard shortcuts" },
@@ -1989,7 +2159,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: shortcut.key;
                                 color: VxTheme.accent;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -1998,13 +2168,13 @@ export component MainWindow inherits Window {
                         Text {
                             text: shortcut.desc;
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             vertical-alignment: center;
                         }
                     }
 
                     // Voice
-                    Text { text: "VOICE"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    Text { text: "VOICE"; color: VxTheme.text-muted; font-size: 11px; font-weight: 700; }
                     for shortcut in [
                         { key: root.mute-key-display, desc: "Toggle mute" },
                         { key: root.deafen-key-display, desc: "Toggle deafen" },
@@ -2021,7 +2191,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: shortcut.key;
                                 color: VxTheme.accent;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -2030,13 +2200,13 @@ export component MainWindow inherits Window {
                         Text {
                             text: shortcut.desc;
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             vertical-alignment: center;
                         }
                     }
 
                     // Chat
-                    Text { text: "CHAT"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                    Text { text: "CHAT"; color: VxTheme.text-muted; font-size: 11px; font-weight: 700; }
                     for shortcut in [
                         { key: "Enter", desc: "Send message" },
                         { key: "Shift+Enter", desc: "New line" },
@@ -2054,7 +2224,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: shortcut.key;
                                 color: VxTheme.accent;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -2063,7 +2233,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: shortcut.desc;
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             vertical-alignment: center;
                         }
                     }
@@ -2106,7 +2276,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "VX";
                                 color: VxTheme.text-inverse;
-                                font-size: 12px;
+                                font-size: 13px;
                                 font-weight: 800;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -2125,7 +2295,7 @@ export component MainWindow inherits Window {
                     Text {
                         text: "Version " + root.version-text;
                         color: VxTheme.text-secondary;
-                        font-size: 11px;
+                        font-size: 12px;
                         font-weight: 600;
                         horizontal-alignment: center;
                     }
@@ -2133,7 +2303,7 @@ export component MainWindow inherits Window {
                     Text {
                         text: "Voice without limits";
                         color: VxTheme.text-muted;
-                        font-size: 12px;
+                        font-size: 13px;
                         font-italic: true;
                         horizontal-alignment: center;
                     }
@@ -2151,14 +2321,14 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Report a Bug";
                             color: VxTheme.text-primary;
-                            font-size: 11px;
+                            font-size: 12px;
                             font-weight: 700;
                             horizontal-alignment: center;
                         }
                         Text {
                             text: "github.com/jhando95/voxlink";
                             color: VxTheme.accent;
-                            font-size: 11px;
+                            font-size: 12px;
                             font-weight: 600;
                             horizontal-alignment: center;
                         }
@@ -2173,7 +2343,7 @@ export component MainWindow inherits Window {
                     Text {
                         text: "Made with Rust + Slint";
                         color: VxTheme.text-muted;
-                        font-size: 10px;
+                        font-size: 12px;
                         horizontal-alignment: center;
                     }
 

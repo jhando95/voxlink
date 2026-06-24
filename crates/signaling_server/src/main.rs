@@ -1,29 +1,33 @@
-mod handlers;
-pub mod persistence;
-mod types;
-mod tls;
-mod metrics_server;
-mod discovery;
-mod validation;
-mod relay;
 mod connection;
+mod discovery;
 mod dispatch;
+mod handlers;
 mod histogram;
+mod link_preview;
+mod metrics_server;
+mod outbound;
+pub mod persistence;
+mod relay;
+mod tls;
+mod types;
+mod validation;
 
+pub(crate) use connection::{
+    decrement_ip, handle_connection, handle_disconnect, send_error, send_to,
+};
+pub(crate) use dispatch::handle_signal;
+pub(crate) use metrics_server::{run_metrics_server, ServerMetrics};
+pub(crate) use relay::udp::{handle_request_udp, run_udp_relay};
+pub(crate) use tls::{
+    allow_insecure_public_bind, bind_requires_tls, load_tls_config, ServerStream,
+};
 pub(crate) use types::{
     max_channel_messages, ChannelMeta, Db, Peer, Room, ServerState, Space, State,
     MAX_SPACE_AUDIT_ENTRIES,
 };
-pub(crate) use tls::{bind_requires_tls, allow_insecure_public_bind, load_tls_config, ServerStream};
-pub(crate) use metrics_server::{ServerMetrics, run_metrics_server};
-pub(crate) use validation::{
-    validate_name, validate_password, validate_room_code, now_epoch_secs,
-};
+pub(crate) use validation::{now_epoch_secs, validate_name, validate_password, validate_room_code};
 #[allow(unused_imports)]
 pub(crate) use validation::{MAX_NAME_LEN, MAX_PASSWORD_LEN};
-pub(crate) use relay::udp::{run_udp_relay, handle_request_udp};
-pub(crate) use connection::{handle_connection, handle_disconnect, send_to, send_error, decrement_ip};
-pub(crate) use dispatch::handle_signal;
 
 use shared_types::SignalMessage;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -38,13 +42,20 @@ use tokio::sync::RwLock;
 pub(crate) const DB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Server limits, configurable via environment variables with sensible defaults.
-struct ServerLimits {
-    max_room_peers: usize,
-    max_connections_per_ip: u32,
-    max_channel_messages: usize,
-    max_audio_fps: u32,
-    max_screen_fps: u32,
-    rate_limit_per_sec: u32,
+pub(crate) struct ServerLimits {
+    pub max_room_peers: usize,
+    pub max_connections_per_ip: u32,
+    pub max_channel_messages: usize,
+    pub max_audio_fps: u32,
+    pub max_screen_fps: u32,
+    pub rate_limit_per_sec: u32,
+    /// Cap on spaces a single user_id can own. Owner-side abuse bound.
+    pub max_spaces_per_user: u32,
+    /// Cap on channels a single space can hold (text+voice combined).
+    pub max_channels_per_space: u32,
+    /// Cap on member_ids in a single space. Prevents one space from
+    /// monopolising server memory.
+    pub max_members_per_space: u32,
 }
 
 fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
@@ -58,21 +69,20 @@ fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
 static UDP_PORT: AtomicU16 = AtomicU16::new(0);
 static UDP_SOCKET: std::sync::OnceLock<Arc<UdpSocket>> = std::sync::OnceLock::new();
 
-static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
+pub(crate) static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
     max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
     max_connections_per_ip: env_or("VOXLINK_MAX_CONNECTIONS_PER_IP", 20),
     max_channel_messages: env_or("VOXLINK_MAX_CHANNEL_MESSAGES", 100),
     max_audio_fps: env_or("VOXLINK_MAX_AUDIO_FPS", 100),
     max_screen_fps: env_or("VOXLINK_MAX_SCREEN_FPS", 60),
     rate_limit_per_sec: env_or("VOXLINK_RATE_LIMIT_PER_SEC", 100),
+    max_spaces_per_user: env_or("VOXLINK_MAX_SPACES_PER_USER", 20),
+    max_channels_per_space: env_or("VOXLINK_MAX_CHANNELS_PER_SPACE", 100),
+    max_members_per_space: env_or("VOXLINK_MAX_MEMBERS_PER_SPACE", 500),
 });
-
 
 // Types are in types.rs, re-exported via `pub(crate) use types::*` above.
 type Metrics = Arc<ServerMetrics>;
-
-
-
 
 // ─── Main ───
 
@@ -82,15 +92,28 @@ async fn main() {
         .format_timestamp_millis()
         .init();
 
+    // rustls 0.23 requires an explicit CryptoProvider before any ServerConfig::builder()
+    // call; without this, TLS startup panics with "no process-level CryptoProvider
+    // available". Install ring once at process start.
+    if tokio_rustls::rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        log::debug!("CryptoProvider already installed (test harness?)");
+    }
+
     // Force-initialize limits from env vars and log them
     log::info!(
-        "Server limits: max_room_peers={}, max_connections_per_ip={}, max_channel_messages={}, max_audio_fps={}, max_screen_fps={}, rate_limit_per_sec={}",
+        "Server limits: max_room_peers={}, max_connections_per_ip={}, max_channel_messages={}, max_audio_fps={}, max_screen_fps={}, rate_limit_per_sec={}, max_spaces_per_user={}, max_channels_per_space={}, max_members_per_space={}",
         LIMITS.max_room_peers,
         LIMITS.max_connections_per_ip,
         LIMITS.max_channel_messages,
         LIMITS.max_audio_fps,
         LIMITS.max_screen_fps,
         LIMITS.rate_limit_per_sec,
+        LIMITS.max_spaces_per_user,
+        LIMITS.max_channels_per_space,
+        LIMITS.max_members_per_space,
     );
 
     let addr = std::env::var("PV_ADDR").unwrap_or_else(|_| "0.0.0.0:9090".into());
@@ -117,11 +140,7 @@ async fn main() {
                                 days
                             );
                         } else {
-                            log::info!(
-                                "TLS cert for {} expires in {} days",
-                                info.subject,
-                                days
-                            );
+                            log::info!("TLS cert for {} expires in {} days", info.subject, days);
                         }
                     }
                     Err(e) => log::warn!("Could not parse cert for expiry check: {e}"),
@@ -205,7 +224,7 @@ async fn main() {
                         topic: cr.topic.clone().unwrap_or_default(),
                         voice_quality: cr.voice_quality.unwrap_or(2),
                         user_limit: 0,
-                        category: String::new(),
+                        category: cr.category.clone().unwrap_or_default(),
                         status: String::new(),
                         slow_mode_secs: 0,
                         min_role: match cr.min_role.as_deref() {
@@ -228,7 +247,7 @@ async fn main() {
                     }
                 }
 
-                // Load text message history
+                // Load text message history (+ reattach persisted reactions)
                 let mut text_messages: HashMap<String, VecDeque<shared_types::TextMessageData>> =
                     HashMap::new();
                 for cr in &channels_rows {
@@ -236,7 +255,7 @@ async fn main() {
                         if let Ok(msgs) =
                             db.load_messages_for_channel(&cr.id, max_channel_messages())
                         {
-                            let dq: VecDeque<_> = msgs
+                            let mut dq: VecDeque<shared_types::TextMessageData> = msgs
                                 .into_iter()
                                 .map(|m| shared_types::TextMessageData {
                                     sender_id: m.sender_id,
@@ -251,11 +270,34 @@ async fn main() {
                                     reply_preview: m.reply_preview,
                                     pinned: m.pinned,
                                     forwarded_from: None,
-                                    attachment_name: None,
-                                    attachment_size: None,
+                                    attachment_name: m.attachment_name,
+                                    attachment_size: m.attachment_size,
+                                    attachment_id: m.attachment_id,
                                     link_url: m.link_url,
                                 })
                                 .collect();
+                            // Replay reactions onto loaded messages.
+                            if let Ok(reactions) = db.load_reactions_for_channel(&cr.id) {
+                                // Build an index of message_id -> position in dq (O(1) lookups).
+                                let mut idx: HashMap<String, usize> = HashMap::with_capacity(dq.len());
+                                for (i, m) in dq.iter().enumerate() {
+                                    idx.insert(m.message_id.clone(), i);
+                                }
+                                for (mid, emoji, user_name) in reactions {
+                                    let Some(pos) = idx.get(&mid).copied() else { continue };
+                                    let Some(msg) = dq.get_mut(pos) else { continue };
+                                    if let Some(r) = msg.reactions.iter_mut().find(|r| r.emoji == emoji) {
+                                        if !r.users.contains(&user_name) {
+                                            r.users.push(user_name);
+                                        }
+                                    } else {
+                                        msg.reactions.push(shared_types::ReactionData {
+                                            emoji,
+                                            users: vec![user_name],
+                                        });
+                                    }
+                                }
+                            }
                             if !dq.is_empty() {
                                 text_messages.insert(cr.id.clone(), dq);
                             }
@@ -490,6 +532,35 @@ async fn main() {
         });
     }
 
+    // Periodic WAL checkpoint + expired-timeout sweep (every 5 minutes).
+    // WAL grows unbounded between checkpoints; SQLite triggers one at 1000
+    // pages by default but a long quiet stretch can still drift. This nudges
+    // the WAL back to disk on a steady cadence and drops timeout rows whose
+    // until_epoch has already passed so the table stays small.
+    if let Some(ref db) = db {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let db_for_checkpoint = db.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Ok(conn) = db_for_checkpoint.lock_conn() {
+                        // PASSIVE — yields to writers in flight, doesn't block.
+                        let _ = conn.pragma_update(None, "wal_checkpoint", "PASSIVE");
+                    }
+                })
+                .await;
+                let db_for_purge = db.clone();
+                let now = now_epoch_secs() as i64;
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = db_for_purge.purge_expired_timeouts(now);
+                })
+                .await;
+            }
+        });
+    }
+
     // Periodic scheduled message delivery (every 30 seconds)
     if let Some(ref db) = db {
         let db = db.clone();
@@ -529,6 +600,7 @@ async fn main() {
                         forwarded_from: None,
                         attachment_name: None,
                         attachment_size: None,
+                        attachment_id: None,
                         link_url,
                     };
                     // Store in in-memory buffer and broadcast
@@ -568,6 +640,9 @@ async fn main() {
                                 reply_preview: None,
                                 pinned: false,
                                 link_url: None,
+                                attachment_id: None,
+                                attachment_name: None,
+                                attachment_size: None,
                             });
                         });
                     }
@@ -588,11 +663,46 @@ async fn main() {
         });
     }
 
-    // Graceful shutdown: accept loop races against ctrl_c / SIGTERM
+    // Graceful shutdown: accept loop races against ctrl_c and SIGTERM (the latter is
+    // what systemctl stop / docker stop send by default — without it the shutdown
+    // broadcast never runs on redeploy).
+    #[cfg(unix)]
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            log::warn!("Failed to install SIGTERM handler: {e}");
+            None
+        }
+    };
     loop {
+        // Branch on SIGTERM only when the handler installed cleanly. On non-unix
+        // platforms or if installation failed, just rely on ctrl_c.
+        #[cfg(unix)]
+        let sigterm_fut = async {
+            if let Some(s) = sigterm.as_mut() {
+                s.recv().await;
+            } else {
+                std::future::pending::<Option<()>>().await;
+            }
+        };
+        #[cfg(not(unix))]
+        let sigterm_fut = std::future::pending::<()>();
+
         tokio::select! {
             result = listener.accept() => {
                 let Ok((stream, addr)) = result else { break };
+                // Enable TCP_NODELAY so signaling/audio writes hit the wire
+                // immediately, and turn on SO_KEEPALIVE so dead NAT entries
+                // surface as a connection error within ~10 minutes (OS default)
+                // instead of leaving an orphan socket forever.
+                let _ = stream.set_nodelay(true);
+                {
+                    let sref = socket2::SockRef::from(&stream);
+                    let ka = socket2::TcpKeepalive::new()
+                        .with_time(std::time::Duration::from_secs(60))
+                        .with_interval(std::time::Duration::from_secs(20));
+                    let _ = sref.set_tcp_keepalive(&ka);
+                }
                 // Per-IP connection limit
                 {
                     let mut s = state.write().await;
@@ -630,7 +740,11 @@ async fn main() {
                 });
             }
             _ = tokio::signal::ctrl_c() => {
-                log::info!("Shutdown signal received, notifying all peers...");
+                log::info!("SIGINT received, notifying all peers...");
+                break;
+            }
+            _ = sigterm_fut => {
+                log::info!("SIGTERM received, notifying all peers...");
                 break;
             }
         }
@@ -641,7 +755,7 @@ async fn main() {
         let s = state.read().await;
         let shutdown_msg = SignalMessage::ServerShutdown;
         for peer in s.peers.values() {
-            send_to(peer, &shutdown_msg).await;
+            send_to(peer, &shutdown_msg);
         }
     }
     // Give peers a moment to receive the message
@@ -649,9 +763,7 @@ async fn main() {
     log::info!("Server shut down gracefully");
 }
 
-
 // ─── LAN Discovery ───
-
 
 // ─── DM Voice Call Handlers ───
 

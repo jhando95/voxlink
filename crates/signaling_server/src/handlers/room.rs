@@ -33,7 +33,7 @@ pub async fn broadcast_to_room(
 ) {
     let others = collect_room_others(state, room_code, exclude_id).await;
     for peer in others {
-        send_to(&peer, msg).await;
+        send_to(&peer, msg);
     }
 }
 
@@ -78,7 +78,7 @@ pub async fn handle_create_room(
 
     if let Some(peer) = s.peers.get(peer_id).cloned() {
         drop(s);
-        send_to(&peer, &SignalMessage::RoomCreated { room_code: code }).await;
+        send_to(&peer, &SignalMessage::RoomCreated { room_code: code });
     }
 }
 
@@ -110,15 +110,27 @@ pub async fn handle_join_room(
                         &SignalMessage::Error {
                             message: format!("Room {room_code} not found"),
                         },
-                    )
-                    .await;
+                    );
                 }
                 return;
             }
             Some(room) => {
                 if let Some(ref room_pw) = room.password {
                     let provided = password.as_deref().unwrap_or("");
-                    if provided != room_pw {
+                    // Constant-time compare so an attacker can't time-side-channel
+                    // the password byte by byte. We compare equal-length byte
+                    // slices via XOR-accumulate; for unequal lengths, fail fast
+                    // (length itself is a coarse channel, but doesn't reveal bytes).
+                    let ok = provided.len() == room_pw.len() && {
+                        let a = provided.as_bytes();
+                        let b = room_pw.as_bytes();
+                        let mut acc: u8 = 0;
+                        for i in 0..a.len() {
+                            acc |= a[i] ^ b[i];
+                        }
+                        acc == 0
+                    };
+                    if !ok {
                         if let Some(peer) = s.peers.get(peer_id).cloned() {
                             drop(s);
                             send_to(
@@ -126,8 +138,7 @@ pub async fn handle_join_room(
                                 &SignalMessage::Error {
                                     message: "Incorrect room password".into(),
                                 },
-                            )
-                            .await;
+                            );
                         }
                         return;
                     }
@@ -144,8 +155,7 @@ pub async fn handle_join_room(
                                     LIMITS.max_room_peers
                                 ),
                             },
-                        )
-                        .await;
+                        );
                     }
                     return;
                 }
@@ -191,8 +201,7 @@ pub async fn handle_join_room(
                 room_code: room_code.clone(),
                 participants,
             },
-        )
-        .await;
+        );
     }
 
     // Build joiner info for broadcasting
@@ -225,7 +234,7 @@ pub async fn handle_join_room(
         drop(s);
 
         for peer in others {
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
     }
 
@@ -316,8 +325,7 @@ pub async fn handle_start_screen_share(state: &State, peer_id: &str) {
                 sharer_name: sharer_name.clone(),
                 is_self: peer.id == peer_id,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -372,8 +380,7 @@ pub async fn handle_screen_share_transport_feedback(
                 frames_dropped,
                 frames_timed_out,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -400,7 +407,6 @@ pub async fn stop_screen_share_in_room(state: &State, room_code: &str, sharer_id
             &SignalMessage::ScreenShareStopped {
                 sharer_id: sharer_id.to_string(),
             },
-        )
-        .await;
+        );
     }
 }

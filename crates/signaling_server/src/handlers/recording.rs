@@ -46,7 +46,7 @@ pub(crate) async fn handle_start_recording(state: &State, peer_id: &str, channel
         started_by,
     };
     for p in &room_peers {
-        send_to(p, &msg).await;
+        send_to(p, &msg);
     }
 }
 
@@ -89,7 +89,7 @@ pub(crate) async fn handle_stop_recording(state: &State, peer_id: &str, channel_
     drop(s);
     let msg = SignalMessage::RecordingStopped { channel_id };
     for p in &room_peers {
-        send_to(p, &msg).await;
+        send_to(p, &msg);
     }
 }
 
@@ -132,8 +132,7 @@ pub(crate) async fn handle_send_voice_note(
                     &SignalMessage::Error {
                         message: "You are timed out and cannot send messages".into(),
                     },
-                )
-                .await;
+                );
                 return;
             }
         }
@@ -169,8 +168,7 @@ pub(crate) async fn handle_send_voice_note(
                         &SignalMessage::Error {
                             message: "You don't have permission to use this channel".into(),
                         },
-                    )
-                    .await;
+                    );
                 }
                 return;
             }
@@ -197,7 +195,7 @@ pub(crate) async fn handle_send_voice_note(
                             drop(s);
                             send_to(&peer, &SignalMessage::Error {
                                 message: format!("Slow mode: wait {remaining}s before sending another message"),
-                            }).await;
+                            });
                         }
                         return;
                     }
@@ -266,34 +264,28 @@ pub(crate) async fn handle_send_voice_note(
         forwarded_from: None,
         attachment_name: Some(format!("voice_note_{duration_secs}s.opus")),
         attachment_size: Some(data.len() as u32),
+        attachment_id: None,
         link_url: None,
     };
 
-    // Broadcast to all peers in the same space (they filter by selected channel client-side)
+    // Broadcast to all space members. `member_ids` holds peer-map keys, so look
+    // them up directly — mirroring handle_send_text_message. (The earlier version
+    // matched against peer.user_id, which is the account id, so voice notes were
+    // never delivered.)
+    let notify = SignalMessage::TextMessage {
+        channel_id: channel_id.clone(),
+        message: msg,
+    };
     let s = state.read().await;
     if let Some(space) = s.spaces.get(&space_id) {
-        for mid in &space.member_ids {
-            for (_, p) in s.peers.iter() {
-                let uid = p.user_id.lock().await.clone().unwrap_or_default();
-                if uid == *mid {
-                    // Block check: skip recipients who have blocked the sender
-                    if p.blocked_by
-                        .read()
-                        .map(|b| b.contains(&user_id))
-                        .unwrap_or(false)
-                    {
-                        continue;
-                    }
-                    send_to(
-                        p,
-                        &SignalMessage::TextMessage {
-                            channel_id: channel_id.clone(),
-                            message: msg.clone(),
-                        },
-                    )
-                    .await;
-                }
-            }
+        let members: Vec<_> = space
+            .member_ids
+            .iter()
+            .filter_map(|id| s.peers.get(id).cloned())
+            .collect();
+        drop(s);
+        for peer in &members {
+            send_to(peer, &notify);
         }
     }
 }

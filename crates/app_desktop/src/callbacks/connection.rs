@@ -42,10 +42,15 @@ pub fn setup_connect(
             match net.connect(&addr).await {
                 Ok(()) => {
                     log::info!("Connected to server");
-                    // Send Authenticate after connecting
+                    // Send Authenticate after connecting.
+                    // Read the auth token off the UI thread — keychain reads on
+                    // ad-hoc-signed dev binaries can stall for tens of seconds.
                     let cfg = config_store::load_config();
+                    let auth_token = tokio::task::spawn_blocking(config_store::load_auth_token)
+                        .await
+                        .unwrap_or(None);
                     let auth_msg = shared_types::SignalMessage::Authenticate {
-                        token: config_store::load_auth_token(),
+                        token: auth_token,
                         user_name: cfg.user_name,
                     };
                     if let Err(e) = net.send_signal(&auth_msg).await {

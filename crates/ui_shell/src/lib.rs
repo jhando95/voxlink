@@ -44,6 +44,40 @@ pub fn safe_blank_image() -> slint::Image {
     slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(1, 1))
 }
 
+/// Decode image bytes (png/jpeg/gif/webp) into a Slint image for inline chat
+/// preview. Returns `None` if the bytes are not a supported, decodable image.
+pub fn decode_image_bytes(bytes: &[u8]) -> Option<slint::Image> {
+    let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let raw = rgba.into_raw();
+    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&raw, w, h);
+    Some(slint::Image::from_rgba8(buffer))
+}
+
+#[cfg(test)]
+mod attachment_image_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_a_png_to_correct_size() {
+        // Encode a 2x3 PNG with the image crate, then decode via our helper.
+        let img = image::RgbaImage::from_pixel(2, 3, image::Rgba([10, 20, 30, 255]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let decoded = decode_image_bytes(&bytes.into_inner()).expect("should decode PNG");
+        assert_eq!(decoded.size().width, 2);
+        assert_eq!(decoded.size().height, 3);
+    }
+
+    #[test]
+    fn rejects_non_image_bytes() {
+        assert!(decode_image_bytes(b"definitely not an image").is_none());
+        assert!(decode_image_bytes(&[]).is_none());
+    }
+}
+
 pub fn clear_screen_share_widget_image() {
     with_screen_share_widget(|widget| {
         widget.set_has_screen_image(false);
@@ -416,6 +450,28 @@ pub fn set_friend_list(window: &MainWindow, friends: &[shared_types::FavoriteFri
     window.set_favorite_friends(std::rc::Rc::new(slint::VecModel::from(model)).into());
 }
 
+pub fn set_group_dm_threads(window: &MainWindow, groups: &[shared_types::GroupDMThread]) {
+    let model = groups
+        .iter()
+        .map(|g| GroupDMThreadData {
+            group_id: g.group_id.clone().into(),
+            name: if g.name.is_empty() {
+                format!("Group ({} people)", g.members.len()).into()
+            } else {
+                g.name.clone().into()
+            },
+            member_count: g.members.len() as i32,
+            preview: if g.last_message_preview.is_empty() {
+                "No messages yet".into()
+            } else {
+                g.last_message_preview.clone().into()
+            },
+            unread_count: g.unread_count as i32,
+        })
+        .collect::<Vec<_>>();
+    window.set_group_dm_threads(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
 pub fn set_direct_message_threads(
     window: &MainWindow,
     threads: &[shared_types::DirectMessageThread],
@@ -628,6 +684,7 @@ pub fn render_space(
     user_notes: &std::collections::HashMap<String, String>,
     channel_notification_overrides: &std::collections::HashMap<String, String>,
     favorite_channels: &[String],
+    blocked_users: &[String],
 ) {
     let query = search_query.trim().to_lowercase();
     let mut visible_text_channels = 0i32;
@@ -685,7 +742,11 @@ pub fn render_space(
                 slow_mode_secs: channel.slow_mode_secs as i32,
                 is_category_header: false,
                 category_collapsed: is_collapsed,
-                mention_count: 0,
+                mention_count: space
+                    .mentioned_text_channels
+                    .get(&channel.id)
+                    .copied()
+                    .unwrap_or(0) as i32,
                 auto_delete_hours: channel.auto_delete_hours as i32,
                 is_favorite: is_fav,
                 notification_setting: channel_notification_overrides
@@ -739,16 +800,18 @@ pub fn render_space(
             .then_with(|| member_role_tier(right.role).cmp(&member_role_tier(left.role)))
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
+    let blocked_set: HashSet<&str> = blocked_users.iter().map(|s| s.as_str()).collect();
     let members: Vec<MemberData> = visible_members
         .into_iter()
         .map(|member| {
             let stable_id = stable_member_key(member);
-            let mut md = member_data_from_info(
+            let mut md = member_data_from_info_with_blocks(
                 member,
                 favorite_ids.contains(stable_id),
                 incoming_ids.contains(stable_id),
                 outgoing_ids.contains(stable_id),
                 self_user_id == Some(stable_id),
+                blocked_set.contains(stable_id),
             );
             if let Some(note) = user_notes.get(stable_id) {
                 md.user_note = note.clone().into();
@@ -808,6 +871,85 @@ pub fn set_chat_messages_for_identity(
 
 /// Set chat messages with an optional last-read message ID.
 /// If provided, the first message after that ID gets a "NEW" separator.
+/// Index (within the visible window) of the first unread message — where the
+/// "NEW" separator should render. `None` when everything is read or there is no
+/// last-read marker.
+fn first_unread_separator_index(
+    messages: &[shared_types::TextMessageData],
+    visible_start: usize,
+    last_read: Option<&str>,
+) -> Option<usize> {
+    let last_read = last_read?;
+    match messages.iter().position(|m| m.message_id == last_read) {
+        // last_read is in view: separator on the next message, or None if it's the
+        // last one (everything is read).
+        Some(pos) => {
+            let next = pos + 1;
+            (next < messages.len()).then_some(next)
+        }
+        // last_read is not in view: only meaningful if older messages were
+        // truncated, in which case the whole visible window is unread.
+        None => (visible_start > 0).then_some(0),
+    }
+}
+
+#[cfg(test)]
+mod unread_separator_tests {
+    use super::*;
+
+    fn msg(id: &str) -> shared_types::TextMessageData {
+        shared_types::TextMessageData {
+            message_id: id.into(),
+            sender_id: "u".into(),
+            sender_name: "n".into(),
+            content: "c".into(),
+            timestamp: 1,
+            edited: false,
+            reactions: vec![],
+            reply_to_message_id: None,
+            reply_to_sender_name: None,
+            reply_preview: None,
+            pinned: false,
+            forwarded_from: None,
+            attachment_name: None,
+            attachment_size: None,
+            attachment_id: None,
+            link_url: None,
+        }
+    }
+
+    #[test]
+    fn no_last_read_means_no_separator() {
+        let m = vec![msg("a"), msg("b")];
+        assert_eq!(first_unread_separator_index(&m, 0, None), None);
+    }
+
+    #[test]
+    fn separator_goes_on_the_message_after_last_read() {
+        let m = vec![msg("a"), msg("b"), msg("c")];
+        assert_eq!(first_unread_separator_index(&m, 0, Some("a")), Some(1));
+        assert_eq!(first_unread_separator_index(&m, 0, Some("b")), Some(2));
+    }
+
+    #[test]
+    fn all_read_means_no_separator() {
+        let m = vec![msg("a"), msg("b")];
+        assert_eq!(first_unread_separator_index(&m, 0, Some("b")), None);
+    }
+
+    #[test]
+    fn last_read_below_truncated_window_marks_top() {
+        let m = vec![msg("x"), msg("y")];
+        assert_eq!(first_unread_separator_index(&m, 5, Some("older")), Some(0));
+    }
+
+    #[test]
+    fn last_read_gone_without_truncation_has_no_separator() {
+        let m = vec![msg("x"), msg("y")];
+        assert_eq!(first_unread_separator_index(&m, 0, Some("gone")), None);
+    }
+}
+
 pub fn set_chat_messages_with_last_read(
     window: &MainWindow,
     messages: &[shared_types::TextMessageData],
@@ -825,22 +967,9 @@ pub fn set_chat_messages_with_last_read(
         }
     }
 
-    // Find the index of the first unread message (the one right after last_read_message_id)
-    let new_separator_idx: Option<usize> = last_read_message_id.and_then(|last_read| {
-        visible_messages
-            .iter()
-            .position(|m| m.message_id == last_read)
-            .and_then(|pos| {
-                // The separator goes on the next message (first unread)
-                let next = pos + 1;
-                if next < visible_messages.len() {
-                    Some(next)
-                } else {
-                    None // all messages are read
-                }
-            })
-            .or_else(|| (visible_start > 0).then_some(0))
-    });
+    // Index of the first unread message (where the "NEW" separator goes).
+    let new_separator_idx =
+        first_unread_separator_index(visible_messages, visible_start, last_read_message_id);
 
     let mut model: Vec<ChatMessage> = Vec::with_capacity(visible_messages.len());
     let mut prev_sender: Option<&str> = None;
@@ -956,6 +1085,24 @@ fn member_data_from_info(
     has_outgoing_request: bool,
     is_self: bool,
 ) -> MemberData {
+    member_data_from_info_with_blocks(
+        member,
+        is_friend,
+        has_incoming_request,
+        has_outgoing_request,
+        is_self,
+        false,
+    )
+}
+
+fn member_data_from_info_with_blocks(
+    member: &shared_types::MemberInfo,
+    is_friend: bool,
+    has_incoming_request: bool,
+    has_outgoing_request: bool,
+    is_self: bool,
+    is_blocked_by_me: bool,
+) -> MemberData {
     MemberData {
         id: member.id.clone().into(),
         user_id: stable_member_id(member).into(),
@@ -984,6 +1131,7 @@ fn member_data_from_info(
         user_note: Default::default(),
         role_color_index: hex_color_to_index(&member.role_color),
         activity: member.activity.clone().into(),
+        is_blocked_by_me,
     }
 }
 
@@ -1332,11 +1480,22 @@ pub fn text_msg_to_chat_msg_for_identity(
             .map(format_file_size)
             .unwrap_or_default()
             .into(),
+        attachment_id: m.attachment_id.clone().unwrap_or_default().into(),
+        attachment_image: Default::default(),
+        has_attachment_image: false,
         channel_name: Default::default(),
         show_header: true,
         date_separator: Default::default(),
         reply_count: 0,
         link_url: m.link_url.clone().unwrap_or_default().into(),
+        link_domain: m
+            .link_url
+            .as_deref()
+            .and_then(shared_types::extract_url_host)
+            .unwrap_or_default()
+            .into(),
+        link_preview_title: Default::default(),
+        link_preview_description: Default::default(),
         is_new_separator: false,
     }
 }
@@ -1762,6 +1921,7 @@ mod tests {
             forwarded_from: None,
             attachment_name: None,
             attachment_size: None,
+            attachment_id: None,
             link_url: None,
         }
     }

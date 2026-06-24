@@ -81,7 +81,7 @@ The main tick loop in `tick_loop/mod.rs` already implements the correct active/i
 
 3. **Screen chunk expiry** (`expire_stale_screen_chunks` inside slow block): acquires a `try_lock` on the network client and iterates a HashMap every second regardless of whether screen sharing has ever been used. Gate on `w.get_has_screen_share()`.
 
-4. **Ping update** (every ~3 s): spawns a tokio task and writes `ping_ms`, `udp_active`, and `bandwidth_*` Slint properties every 3 s whether or not the perf panel or room view is visible. The ping itself must still be sent (it keeps RTT fresh for adaptive bitrate), but the three Slint property writes should be gated on the view being visible.
+4. ~~**Ping update** (every ~3 s): spawns a tokio task and writes `ping_ms`, `udp_active`, and `bandwidth_*` Slint properties every 3 s whether or not the perf panel or room view is visible. The ping itself must still be sent (it keeps RTT fresh for adaptive bitrate), but the three Slint property writes should be gated on the view being visible.~~ ✓ DONE — `update_ping` now updates the perf atomics unconditionally but only writes `ping_ms`/`udp_active` to Slint when `current_view` is Room (1) or System (3); the ping send is unchanged.
 
 ---
 

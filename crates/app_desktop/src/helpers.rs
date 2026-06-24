@@ -131,6 +131,8 @@ pub fn auto_save_settings(
             favorite_channels: existing.favorite_channels,
             recent_reactions: existing.recent_reactions,
             first_run_completed: existing.first_run_completed,
+            rich_presence_enabled: existing.rich_presence_enabled,
+            rich_presence_allowlist: existing.rich_presence_allowlist,
         };
         match config_store::save_config(&cfg) {
             Ok(()) => log::info!("Settings auto-saved"),
@@ -297,6 +299,67 @@ pub fn save_last_text_channel_async(space_id: String, channel_id: String) {
         cfg.last_channel_id = Some(channel_id);
         let _ = config_store::save_config(&cfg);
     });
+}
+
+/// The last message id the user had read in `channel_id` (for the unread separator).
+pub fn last_read_for_channel(channel_id: &str) -> Option<String> {
+    let _lock = CONFIG_LOCK.lock().ok();
+    config_store::load_config()
+        .last_read_messages
+        .get(channel_id)
+        .cloned()
+}
+
+/// Record that the user has read `channel_id` up to `message_id`. Persists
+/// locally only — pair with `enqueue_mark_read` at call sites that have a
+/// MainWindow handle so the server learns about it too.
+pub fn save_last_read_async(channel_id: String, message_id: String) {
+    crate::helpers::spawn_config_save(move || {
+        let _lock = CONFIG_LOCK.lock().ok();
+        let mut cfg = config_store::load_config();
+        cfg.last_read_messages.insert(channel_id, message_id);
+        let _ = config_store::save_config(&cfg);
+    });
+}
+
+/// Overlay a server-issued read-state snapshot onto the local config. The
+/// server's values are authoritative for multi-device — if a different device
+/// read further in a channel, that progress is what shows up here too.
+pub fn apply_read_state_snapshot(entries: &[shared_types::ReadStateEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    crate::helpers::spawn_config_save({
+        let entries: Vec<(String, String)> = entries
+            .iter()
+            .map(|e| (e.channel_id.clone(), e.last_read_message_id.clone()))
+            .collect();
+        move || {
+            let _lock = CONFIG_LOCK.lock().ok();
+            let mut cfg = config_store::load_config();
+            for (channel_id, message_id) in entries {
+                cfg.last_read_messages.insert(channel_id, message_id);
+            }
+            let _ = config_store::save_config(&cfg);
+        }
+    });
+}
+
+/// Queue a `MarkChannelRead` send for the server. Tick loop drains
+/// `pending-mark-read` into outbound signals. Safe to call on the UI thread
+/// only (Slint properties aren't documented as thread-safe).
+pub fn enqueue_mark_read(window: &ui_shell::MainWindow, channel_id: &str, message_id: &str) {
+    if channel_id.is_empty() || message_id.is_empty() {
+        return;
+    }
+    let prev = window.get_pending_mark_read().to_string();
+    let record = format!("{channel_id}\u{1f}{message_id}");
+    let combined = if prev.is_empty() {
+        record
+    } else {
+        format!("{prev}\u{1e}{record}")
+    };
+    window.set_pending_mark_read(combined.into());
 }
 
 pub fn remember_saved_space(window: &MainWindow, space: &shared_types::SpaceInfo) {

@@ -44,6 +44,26 @@ pub async fn handle_create_channel(
         return;
     }
 
+    // Cap channels per space so a single admin can't blow the channel list up.
+    {
+        let s = state.read().await;
+        if let Some(space) = s.spaces.get(&space_id) {
+            if space.channels.len() as u32 >= crate::LIMITS.max_channels_per_space {
+                drop(s);
+                send_error(
+                    state,
+                    peer_id,
+                    &format!(
+                        "This space already has the max of {} channels",
+                        crate::LIMITS.max_channels_per_space
+                    ),
+                )
+                .await;
+                return;
+            }
+        }
+    }
+
     let actor_name = {
         let peer = {
             let s = state.read().await;
@@ -148,6 +168,7 @@ pub async fn handle_create_channel(
                 min_role: None,
                 position: None,
                 auto_delete_hours: None,
+                category: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
@@ -168,7 +189,7 @@ pub async fn handle_create_channel(
             .collect();
         drop(s);
         for peer in members {
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
     }
 
@@ -288,12 +309,12 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
         channel_id: channel_id.clone(),
     };
     for peer in &member_peers {
-        send_to(peer, &deleted_notify).await;
+        send_to(peer, &deleted_notify);
     }
 
     for peer in &affected_voice_peers {
         peer.set_room_code(None).await;
-        send_to(peer, &SignalMessage::ChannelLeft).await;
+        send_to(peer, &SignalMessage::ChannelLeft);
     }
 
     for member_id in affected_voice_ids {
@@ -303,7 +324,7 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
             channel_name: None,
         };
         for peer in &member_peers {
-            send_to(peer, &notify).await;
+            send_to(peer, &notify);
         }
     }
 
@@ -380,8 +401,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                 &SignalMessage::Error {
                     message: "Channel not found".into(),
                 },
-            )
-            .await;
+            );
         }
         return;
     };
@@ -412,8 +432,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                     &SignalMessage::Error {
                         message: "You don't have permission to access this channel".into(),
                     },
-                )
-                .await;
+                );
             }
             return;
         }
@@ -454,8 +473,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                         &SignalMessage::Error {
                             message: format!("Channel is full ({user_limit}/{user_limit})"),
                         },
-                    )
-                    .await;
+                    );
                 }
                 return;
             }
@@ -471,8 +489,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                 &SignalMessage::Error {
                     message: "Cannot join a text channel for voice".into(),
                 },
-            )
-            .await;
+            );
         }
         return;
     }
@@ -547,14 +564,13 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
                 participants,
                 voice_quality,
             },
-        )
-        .await;
+        );
     }
 
     if let Some(info) = joiner_info {
         let notify = SignalMessage::PeerJoined { peer: info };
         for peer in &others {
-            send_to(peer, &notify).await;
+            send_to(peer, &notify);
         }
     }
 
@@ -570,7 +586,7 @@ pub async fn handle_join_channel(state: &State, peer_id: &str, channel_id: Strin
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
     }
 
@@ -613,7 +629,7 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
         peer_id: peer_id.to_string(),
     };
     for peer in remaining {
-        send_to(&peer, &notify).await;
+        send_to(&peer, &notify);
     }
 
     // Clear peer's room code and send ChannelLeft (single lock acquisition)
@@ -623,7 +639,7 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
             peer.set_room_code(None).await;
             let peer = peer.clone();
             drop(s);
-            send_to(&peer, &SignalMessage::ChannelLeft).await;
+            send_to(&peer, &SignalMessage::ChannelLeft);
         }
     }
 
@@ -640,7 +656,7 @@ pub async fn handle_leave_channel(state: &State, peer_id: &str) {
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id).cloned() {
                 drop(s);
-                send_to(&peer, &notify).await;
+                send_to(&peer, &notify);
             }
         }
     }

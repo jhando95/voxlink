@@ -7,6 +7,9 @@ pub use state::*;
 pub mod message_data;
 pub use message_data::*;
 
+pub mod permissions;
+pub use permissions::*;
+
 pub mod protocol;
 pub use protocol::*;
 
@@ -15,6 +18,10 @@ pub use screen::*;
 
 pub mod helpers;
 pub use helpers::*;
+
+pub mod b64;
+
+pub mod attachment;
 
 /// Maximum audio frame size in bytes (Opus at 24kbps, 20ms = ~60 bytes typical, 256 max)
 pub const MAX_AUDIO_FRAME_SIZE: usize = 4096;
@@ -31,6 +38,11 @@ pub const UDP_DEFAULT_PORT_OFFSET: u16 = 1;
 pub const UDP_KEEPALIVE: u8 = 0xFE;
 /// Interval between UDP keepalive packets.
 pub const UDP_KEEPALIVE_INTERVAL_SECS: u64 = 15;
+
+/// Maximum size of a single chat file/image attachment, in bytes (8 MiB).
+/// Enforced client-side as a pre-check and authoritatively by the server.
+/// Kept below the WebSocket frame limit even after base64 expansion (~1.33x).
+pub const MAX_ATTACHMENT_SIZE: usize = 8 * 1024 * 1024;
 
 pub const SAMPLE_RATE: u32 = 48000;
 pub const CHANNELS: u16 = 1;

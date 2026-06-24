@@ -19,6 +19,7 @@ pub fn handle_text_channel_selected(
     w.set_chat_channel_id(channel_id.into());
     w.set_chat_channel_name(channel_name.into());
     w.set_chat_is_direct_message(false);
+    w.set_chat_group_id(slint::SharedString::default());
 
     // Show channel topic in subtitle if available, else fall back to space name
     let (topic, slow_mode_secs) = {
@@ -67,7 +68,20 @@ pub fn handle_text_channel_selected(
 
     let my_name = w.get_user_name().to_string();
     let self_user_id = state.borrow().self_user_id.clone();
-    ui_shell::set_chat_messages_for_identity(w, history, self_user_id.as_deref(), &my_name);
+    // Render with a "NEW" separator at the first message the user hasn't read yet.
+    let saved_last_read = crate::helpers::last_read_for_channel(channel_id);
+    ui_shell::set_chat_messages_with_last_read(
+        w,
+        history,
+        self_user_id.as_deref(),
+        &my_name,
+        saved_last_read.as_deref(),
+    );
+    // Now that the channel is open, mark it read up to its newest message.
+    if let Some(last) = history.last() {
+        crate::helpers::save_last_read_async(channel_id.to_string(), last.message_id.clone());
+        crate::helpers::enqueue_mark_read(w, channel_id, &last.message_id);
+    }
     sync_pinned_messages(w);
 
     {
@@ -75,9 +89,10 @@ pub fn handle_text_channel_selected(
         if let Some(ref mut space) = s.space {
             space.selected_text_channel_id = Some(channel_id.to_string());
             space.unread_text_channels.remove(channel_id);
+            space.mentioned_text_channels.remove(channel_id);
             crate::helpers::save_last_text_channel_async(space.id.clone(), channel_id.to_string());
         }
-        s.active_direct_message_user_id = None;
+        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
         s.current_view = AppView::TextChat;
     }
 
@@ -99,6 +114,7 @@ pub fn handle_direct_message_selected(
     w.set_chat_channel_id(user_id.into());
     w.set_chat_channel_name(user_name.into());
     w.set_chat_is_direct_message(true);
+    w.set_chat_group_id(slint::SharedString::default());
     w.set_chat_context_subtitle("Direct message".into());
     w.set_slow_mode_secs(0);
     w.set_slow_mode_remaining(0);
@@ -217,6 +233,9 @@ pub fn handle_text_message(
     let chat_msg =
         ui_shell::text_msg_to_chat_msg_for_identity(message, self_user_id.as_deref(), &my_name);
     push_chat_message(w, chat_msg);
+    // The channel is open, so the user has now read this message.
+    crate::helpers::save_last_read_async(channel_id.to_string(), message.message_id.clone());
+    crate::helpers::enqueue_mark_read(w, channel_id, &message.message_id);
     sync_typing_text(w, state, channel_id);
 }
 
@@ -769,6 +788,50 @@ fn push_chat_message(w: &MainWindow, chat_msg: ui_shell::ChatMessage) {
     }
 }
 
+/// Set the decoded inline image on the chat message that owns `attachment_id`
+/// (no-op if that message isn't in the currently-displayed model).
+pub(crate) fn set_attachment_image(w: &MainWindow, attachment_id: &str, img: slint::Image) {
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages
+        .as_any()
+        .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+    {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if !msg.attachment_id.is_empty() && msg.attachment_id.as_str() == attachment_id {
+                    let mut updated = msg;
+                    updated.attachment_image = img.clone();
+                    updated.has_attachment_image = true;
+                    model.set_row_data(i, updated);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Apply a fetched OpenGraph preview to the message that owns `message_id`
+/// (no-op if it isn't in the currently-displayed model).
+pub(crate) fn set_link_preview(w: &MainWindow, message_id: &str, title: &str, description: &str) {
+    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+    if let Some(model) = messages
+        .as_any()
+        .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+    {
+        for i in 0..model.row_count() {
+            if let Some(msg) = model.row_data(i) {
+                if msg.message_id.as_str() == message_id {
+                    let mut updated = msg;
+                    updated.link_preview_title = title.into();
+                    updated.link_preview_description = description.into();
+                    model.set_row_data(i, updated);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 pub fn thread_reply_start_index(messages: &[shared_types::TextMessageData]) -> usize {
     if messages.len() <= 1 {
         1
@@ -900,6 +963,7 @@ mod tests {
             forwarded_from: None,
             attachment_name: None,
             attachment_size: None,
+            attachment_id: None,
             link_url: None,
         }
     }

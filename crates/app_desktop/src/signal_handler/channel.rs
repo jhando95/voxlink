@@ -143,6 +143,7 @@ pub fn handle_channel_deleted(
             space_id = Some(space.id.clone());
             space.channels.retain(|channel| channel.id != channel_id);
             space.unread_text_channels.remove(channel_id);
+            space.mentioned_text_channels.remove(channel_id);
             space.typing_users.remove(channel_id);
             if space.active_channel_id.as_deref() == Some(channel_id) {
                 space.active_channel_id = None;

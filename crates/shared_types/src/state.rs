@@ -127,6 +127,15 @@ pub struct MemberInfo {
     pub activity: String,
 }
 
+/// One row in a server → client read-state sync snapshot. `last_read_message_id`
+/// is the id of the most-recent message the user has acknowledged reading on
+/// some device; subsequent messages should be rendered as unread.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReadStateEntry {
+    pub channel_id: String,
+    pub last_read_message_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BanInfo {
     pub user_id: String,
@@ -163,6 +172,9 @@ pub struct SpaceState {
     pub selected_text_channel_id: Option<String>,
     pub self_role: SpaceRole,
     pub unread_text_channels: HashMap<String, u32>,
+    /// Per-channel mention count (subset of unread). Drives the warning-tinted
+    /// @N badge in the channel sidebar.
+    pub mentioned_text_channels: HashMap<String, u32>,
     pub typing_users: HashMap<String, Vec<String>>,
     /// Typing timestamps: (channel_id, user_name) → tick when typing started.
     /// Used for client-side 5-second timeout of stale typing indicators.
@@ -193,6 +205,25 @@ pub struct AppState {
     pub direct_typing_ticks: HashMap<String, u64>,
     pub direct_message_threads: Vec<DirectMessageThread>,
     pub pending_messages: Vec<PendingMessage>,
+    /// Active group-DM id when the user has a group thread open, else None.
+    /// Routes outbound chat through SendGroupMessage instead of SendDirectMessage.
+    pub active_group_dm_id: Option<String>,
+    /// Threads for multi-user direct messages. Keyed by server-issued group id;
+    /// distinct from DirectMessageThread which is strictly 1:1.
+    pub group_dm_threads: Vec<GroupDMThread>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GroupDMThread {
+    pub group_id: String,
+    pub name: String,
+    pub members: Vec<String>,
+    #[serde(default)]
+    pub last_message_preview: String,
+    #[serde(default)]
+    pub last_message_at: u64,
+    #[serde(default)]
+    pub unread_count: u32,
 }
 
 #[derive(Debug, Clone, Default)]

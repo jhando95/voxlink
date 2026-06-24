@@ -91,6 +91,8 @@ pub fn setup(
     space::setup_delete_space(window, network, rt_handle);
     space::setup_kick_member(window, network, rt_handle);
     space::setup_ban_member(window, network, rt_handle);
+    space::setup_block_user(window, network, rt_handle);
+    space::setup_unblock_user(window, network, rt_handle);
     space::setup_server_mute_member(window, network, rt_handle);
     space::setup_set_member_role(window, network, rt_handle);
     space::setup_set_user_status(window, network, rt_handle);
@@ -159,6 +161,7 @@ pub fn setup(
     ui::setup_revoke_all_sessions(window, network, rt_handle);
     ui::setup_change_display_name(window, network, rt_handle);
     ui::setup_change_password(window, network, rt_handle);
+    ui::setup_change_email(window, network, rt_handle);
     ui::setup_delete_account(window, network, rt_handle);
     ui::setup_show_profile(window, state);
     ui::setup_toggle_favorite_channel(window, state);
@@ -175,7 +178,8 @@ pub fn setup(
     chat::setup_close_direct_message(window, state);
     chat::setup_select_text_channel(window, state, network, rt_handle);
     chat::setup_chat_typing_activity(window, network, rt_handle);
-    chat::setup_send_text_message(window, network, rt_handle);
+    chat::setup_send_text_message(window, state, network, rt_handle);
+    chat::setup_attachments(window, network, rt_handle);
     chat::setup_edit_text_message(window, network, rt_handle);
     chat::setup_delete_text_message(window, network, rt_handle);
     chat::setup_react_to_message(window, network, rt_handle);
@@ -185,6 +189,8 @@ pub fn setup(
     chat::setup_search_messages(window, network, rt_handle);
     chat::setup_open_thread(window, network, rt_handle);
     chat::setup_close_thread(window);
+    chat::setup_send_thread_reply(window, network, rt_handle);
+    chat::setup_group_dm(window, state, network, rt_handle);
     chat::setup_mention_input_changed(window, state);
     chat::setup_mention_selected(window);
     chat::setup_call_user(window, network, rt_handle);
@@ -219,4 +225,11 @@ pub fn setup(
     soundboard::setup_play_clip(window, audio, rt_handle);
     soundboard::setup_remove_clip(window, audio, rt_handle);
     soundboard::setup_add_clip(window, audio, rt_handle);
+}
+
+/// Wire the rich-presence toggle + allowlist editor. Separate from [`setup`]
+/// because it needs the shared [`crate::presence::PresenceState`] that main also
+/// hands to the poll task.
+pub fn setup_rich_presence(window: &MainWindow, state: &crate::presence::PresenceState) {
+    ui::setup_rich_presence(window, state);
 }

@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use futures_util::SinkExt;
 use tokio::net::UdpSocket;
-use tokio_tungstenite::tungstenite::Message;
 use crate::types::{Peer, State};
 use crate::validation::atomic_rate_check;
 use crate::metrics_server::ServerMetrics;
@@ -40,6 +38,17 @@ pub(crate) async fn relay_audio(
     // Server-enforced mute: drop audio from muted peers
     if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
         return;
+    }
+
+    // Server-enforced timeout: drop audio while the peer is under moderation timeout.
+    // Without this, a moderation timeout only suppresses chat sends; voice was still
+    // relayed, which made timeouts feel half-applied.
+    {
+        let now = crate::now_epoch_secs() as u64;
+        let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+        if until > now {
+            return;
+        }
     }
 
     // #5: Audio frame rate limiting (lock-free)
@@ -121,44 +130,14 @@ pub(crate) async fn relay_audio(
         .audio_frames_out_total
         .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
 
-    // Send with timeout to prevent slow peers from blocking the relay.
-    // If a peer can't accept within 500ms, drop the frame for them.
-    let send_timeout = std::time::Duration::from_millis(500);
-
-    // Single-peer fast path (common case): avoid Arc overhead
-    if room_peers_buf.len() == 1 {
-        let peer_id_dbg = room_peers_buf[0].id.clone();
-        let frame_owned: Vec<u8> = relay_buf.clone();
-        let fut = async {
-            let mut tx = room_peers_buf[0].tx.lock().await;
-            if let Err(e) = tx.send(Message::Binary(frame_owned.into())).await {
-                log::debug!("Audio frame send failed for peer {peer_id_dbg}: {e}");
-            }
-        };
-        let _ = tokio::time::timeout(send_timeout, fut).await;
-        return;
+    // Hand each recipient a cheap refcount-bumped clone of the shared frame
+    // and push it onto their per-peer media lane. try_send_media is
+    // non-blocking; on Full it drops the frame and bumps the lossy counter.
+    let shared: tokio_tungstenite::tungstenite::Bytes =
+        tokio_tungstenite::tungstenite::Bytes::copy_from_slice(&relay_buf[..]);
+    for peer in room_peers_buf.iter() {
+        crate::outbound::try_send_media(peer, shared.clone(), metrics);
     }
-
-    // Multi-peer path: clone frame per peer (Arc overhead not worth it for small frames)
-    let futs: Vec<_> = room_peers_buf
-        .iter()
-        .map(|peer| {
-            let frame_copy: Vec<u8> = relay_buf.clone();
-            let timeout_dur = send_timeout;
-            let peer_id_dbg = peer.id.clone();
-            let peer = peer.clone();
-            async move {
-                let fut = async {
-                    let mut tx = peer.tx.lock().await;
-                    if let Err(e) = tx.send(Message::Binary(frame_copy.into())).await {
-                        log::debug!("Audio frame send failed for peer {peer_id_dbg}: {e}");
-                    }
-                };
-                let _ = tokio::time::timeout(timeout_dur, fut).await;
-            }
-        })
-        .collect();
-    futures_util::future::join_all(futs).await;
 }
 
 /// Relay audio received via UDP to room peers, preferring UDP delivery.
@@ -187,6 +166,16 @@ pub(crate) async fn relay_audio_udp(
     // Server-enforced mute: drop audio from muted peers
     if peer.is_muted.load(std::sync::atomic::Ordering::Relaxed) {
         return;
+    }
+
+    // Server-enforced timeout: drop audio while under moderation timeout (mirrors
+    // the WebSocket relay above so UDP can't bypass moderation).
+    {
+        let now = crate::now_epoch_secs() as u64;
+        let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+        if until > now {
+            return;
+        }
     }
 
     if !atomic_rate_check(
@@ -270,6 +259,10 @@ pub(crate) async fn relay_audio_udp(
         .audio_frames_out_total
         .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
 
+    // Share one Bytes across every WS-fallback recipient (UDP recipients send
+    // straight off the &[u8] slice; only WS recipients need the ref-counted form).
+    let ws_shared: tokio_tungstenite::tungstenite::Bytes =
+        tokio_tungstenite::tungstenite::Bytes::copy_from_slice(frame);
     for peer in room_peers_buf.iter() {
         let udp_addr = peer.udp_addr.read().ok().and_then(|a| *a);
         if let Some(addr) = udp_addr {
@@ -279,14 +272,8 @@ pub(crate) async fn relay_audio_udp(
             }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
-            // Fallback: send via WebSocket
-            let frame_clone = frame.to_vec();
-            let send_timeout = std::time::Duration::from_millis(500);
-            let fut = async {
-                let mut tx = peer.tx.lock().await;
-                let _ = tx.send(Message::Binary(frame_clone.into())).await;
-            };
-            let _ = tokio::time::timeout(send_timeout, fut).await;
+            // Fallback: push onto the WS media lane (drop on Full).
+            crate::outbound::try_send_media(peer, ws_shared.clone(), metrics);
         }
     }
 }

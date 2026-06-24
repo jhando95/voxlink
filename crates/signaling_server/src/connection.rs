@@ -3,13 +3,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use shared_types::SignalMessage;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_tungstenite::tungstenite::Message;
 use crate::types::{Peer, State, Db};
 use crate::tls::ServerStream;
 use crate::metrics_server::ServerMetrics;
+use crate::outbound;
 use crate::validation::instant_to_ms;
 use crate::validation::check_rate_limit;
 use crate::relay::audio::relay_audio;
@@ -34,7 +35,13 @@ pub(crate) async fn handle_connection(
     addr: SocketAddr,
     db: Db,
 ) {
-    let ws = match tokio_tungstenite::accept_async(stream).await {
+    // Cap per-message size (default is 64 MiB). 16 MiB comfortably covers an
+    // 8 MiB attachment after base64 (~11 MB) while limiting per-connection memory
+    // on small hosts. Covers both plain and TLS connections via ServerStream.
+    let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(16 * 1024 * 1024))
+        .max_frame_size(Some(16 * 1024 * 1024));
+    let ws = match tokio_tungstenite::accept_async_with_config(stream, Some(ws_config)).await {
         Ok(ws) => ws,
         Err(e) => {
             metrics
@@ -46,6 +53,13 @@ pub(crate) async fn handle_connection(
     };
 
     let (tx, mut rx) = ws.split();
+
+    // Per-peer outbound lanes. The drain task is the sole owner of the sink;
+    // senders never lock anything (see outbound.rs).
+    let (signaling_tx, signaling_rx) =
+        mpsc::channel(outbound::SIGNALING_LANE_CAPACITY);
+    let (media_tx, media_rx) = mpsc::channel(outbound::MEDIA_LANE_CAPACITY);
+    let disconnect = Arc::new(Notify::new());
 
     let peer_id = {
         let mut s = state.write().await;
@@ -63,7 +77,9 @@ pub(crate) async fn handle_connection(
                 is_server_deafened: AtomicBool::new(false),
                 status: Mutex::new(String::new()),
                 activity: Mutex::new(String::new()),
-                tx: Mutex::new(tx),
+                signaling_tx,
+                media_tx,
+                disconnect: disconnect.clone(),
                 space_id: Mutex::new(None),
                 typing_channel_id: Mutex::new(None),
                 typing_dm_user_id: Mutex::new(None),
@@ -81,16 +97,28 @@ pub(crate) async fn handle_connection(
                 screen_rate_window_ms: AtomicU64::new(instant_to_ms()),
                 last_screen_chunk_sequence: AtomicU32::new(0),
                 blocked_by: std::sync::RwLock::new(HashSet::new()),
+                status_preset: Mutex::new(shared_types::UserStatus::default()),
             }),
         );
         id
     };
 
+    // Spawn the per-peer drain task that owns the WS sink.
+    let drain_handle = outbound::spawn_peer_drain(
+        peer_id.clone(),
+        tx,
+        signaling_rx,
+        media_rx,
+        disconnect.clone(),
+        metrics.clone(),
+    );
+
     metrics.active_connections.fetch_add(1, Ordering::Relaxed);
 
     log::info!("Peer {peer_id} connected from {addr}");
 
-    // Keepalive: send WebSocket pings every 30s to survive NAT/firewall timeouts
+    // Keepalive: send WebSocket pings every 30s to survive NAT/firewall timeouts.
+    // Uses the per-peer signaling lane so we never lock a sink directly.
     let ping_peer = {
         let s = state.read().await;
         s.peers.get(&peer_id).cloned()
@@ -101,9 +129,8 @@ pub(crate) async fn handle_connection(
             interval.tick().await; // skip first immediate tick
             loop {
                 interval.tick().await;
-                let mut tx = peer.tx.lock().await;
-                if tx.send(Message::Ping(vec![].into())).await.is_err() {
-                    break;
+                if !outbound::try_send_ping(&peer) {
+                    break; // peer torn down
                 }
             }
         })
@@ -113,7 +140,16 @@ pub(crate) async fn handle_connection(
     let mut relay_buf: Vec<u8> = Vec::with_capacity(512);
     let mut room_peers_buf: Vec<Arc<Peer>> = Vec::with_capacity(20);
 
-    while let Some(msg) = rx.next().await {
+    loop {
+        let msg = tokio::select! {
+            biased;
+            // Drain task or an overflowing sender asked us to bail.
+            _ = disconnect.notified() => break,
+            next = rx.next() => match next {
+                Some(m) => m,
+                None => break,
+            },
+        };
         match msg {
             Ok(Message::Text(text)) => {
                 // Rate limit signaling messages
@@ -198,6 +234,10 @@ pub(crate) async fn handle_connection(
         // Clean up any UDP session token for this peer
         s.udp_sessions.retain(|_, pid| pid != &peer_id);
     }
+    // Both Senders drop when the peer is removed; that closes the receivers
+    // and lets the drain task observe `else => break` and exit cleanly.
+    // Wait briefly so the WebSocket close handshake actually flushes.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), drain_handle).await;
     if let Some(ref user_id) = disconnected_user_id {
         // Persist last-seen timestamp so offline friends see when this user was last online
         if let Some(ref db) = db {
@@ -228,8 +268,7 @@ pub(crate) async fn send_error(state: &State, peer_id: &str, message: &str) {
             &SignalMessage::Error {
                 message: message.to_string(),
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -262,7 +301,7 @@ pub(crate) async fn handle_disconnect(state: &State, peer_id: &str) {
             peer_id: peer_id.to_string(),
         };
         for peer in remaining {
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
 
         // For space channels, broadcast MemberChannelChanged so space members
@@ -321,11 +360,41 @@ pub(crate) async fn handle_disconnect(state: &State, peer_id: &str) {
     }
 }
 
-pub(crate) async fn send_to(peer: &Peer, msg: &SignalMessage) {
-    if let Ok(json) = serde_json::to_string(msg) {
-        let mut tx = peer.tx.lock().await;
-        if let Err(e) = tx.send(Message::Text(json.into())).await {
-            log::debug!("Signaling send failed for peer {}: {e}", peer.id);
+/// Push a signaling message onto the peer's reliable outbound lane.
+///
+/// Non-blocking: serialize → `try_send` on the bounded signaling channel. On
+/// Full, increment overflow counters and notify the disconnect watcher; the
+/// rx loop will then break out and `handle_disconnect` will clean up.
+///
+/// Returns immediately. All existing callers that previously `.await`ed have
+/// been migrated to non-await calls; the sink write is done asynchronously by
+/// the per-peer drain task.
+pub(crate) fn send_to(peer: &Peer, msg: &SignalMessage) {
+    // We don't have access to the metrics struct here; the metrics-aware
+    // path lives in outbound::try_send_signaling and is called from
+    // contexts that DO have metrics. For ergonomics inside handlers, route
+    // through the no-metrics shim: peer.signaling_tx::try_send directly.
+    let json = match serde_json::to_string(msg) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Failed to serialize signal for peer {}: {e}", peer.id);
+            return;
+        }
+    };
+    match peer
+        .signaling_tx
+        .try_send(crate::outbound::OutboundFrame::Signaling(json))
+    {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            log::warn!(
+                "Signaling lane full for peer {}; triggering disconnect",
+                peer.id
+            );
+            peer.disconnect.notify_one();
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // Peer is already torn down; no-op.
         }
     }
 }

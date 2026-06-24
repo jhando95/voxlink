@@ -69,7 +69,7 @@ component ThemePresetCard inherits Rectangle {
         Text {
             text: root.label;
             color: root.selected ? root.tone : VxTheme.text-primary;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: root.selected ? 700 : 600;
             overflow: elide;
         }
@@ -102,8 +102,12 @@ export component SettingsView inherits Rectangle {
     in property <bool> compact-chat: false;
     in property <bool> streamer-mode: false;
     in property <bool> desktop-notifications: true;
+    in property <bool> rich-presence-enabled: false;
+    in-out property <string> rich-presence-allowlist: "";
     callback toggle-streamer-mode();
     callback toggle-desktop-notifications();
+    callback toggle-rich-presence();
+    callback set-rich-presence-allowlist(string);
     in-out property <string> listening-keybind: "";
     in property <string> ptt-key-display: "";
     in property <string> mute-key-display: "";
@@ -144,13 +148,17 @@ export component SettingsView inherits Rectangle {
     callback show-about();
     callback revoke-all-sessions();
     callback change-password(string, string);
+    callback change-email(string, string); // current_password, new_email
     callback change-display-name(string);
-    callback delete-account();
+    callback delete-account(string); // current_password
     property <length> side-column-width: clamp(root.width * 0.24, 236px, 284px);
     in-out property <string> acct-old-pw: "";
     in-out property <string> acct-new-pw: "";
+    in-out property <string> acct-email-pw: "";
+    in-out property <string> acct-new-email: "";
     in-out property <string> acct-new-name: "";
     in-out property <string> acct-delete-confirm: "";
+    in-out property <string> acct-delete-pw: "";
     // Soundboard
     in property <[SoundboardClipData]> soundboard-clips: [];
     callback play-soundboard-clip(int);
@@ -222,7 +230,7 @@ export component SettingsView inherits Rectangle {
                         Text {
                             text: "Tune devices, voice behavior, and alerts without adding runtime drag.";
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
@@ -281,7 +289,7 @@ export component SettingsView inherits Rectangle {
                                             root.theme-preset == 6 ? (root.dark-mode ? "Arctic glass dark" : "Arctic glass light") :
                                             root.dark-mode ? "Voxlink dark" : "Voxlink light";
                                         color: VxTheme.text-primary;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                     }
                                     Text {
@@ -294,7 +302,7 @@ export component SettingsView inherits Rectangle {
                                             root.theme-preset == 6 ? "Frosted cyan glass with brighter surfaces and cleaner contrast." :
                                             "The default premium shell. Theme changes apply instantly without touching the audio pipeline.";
                                         color: VxTheme.text-muted;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -435,12 +443,12 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "No microphones found";
                                         color: VxTheme.danger;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                     }
                                     Text {
                                         text: "Check connections, update drivers, or click Refresh.";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                 }
                             }
@@ -462,12 +470,12 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "No speakers found";
                                         color: VxTheme.danger;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                     }
                                     Text {
                                         text: "Check connections, update drivers, or click Refresh.";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                 }
                             }
@@ -496,7 +504,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: Math.round(root.input-volume * 100) + "%";
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 700;
                                         min-width: 44px;
                                         horizontal-alignment: right;
@@ -520,7 +528,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: Math.round(root.output-volume * 100) + "%";
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 700;
                                         min-width: 44px;
                                         horizontal-alignment: right;
@@ -538,7 +546,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "Less";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                         vertical-alignment: center;
                                     }
                                     VxSlider {
@@ -552,7 +560,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "More";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                         vertical-alignment: center;
                                     }
                                 }
@@ -562,7 +570,7 @@ export component SettingsView inherits Rectangle {
                                           root.noise-suppression < 0.6 ? "Medium" :
                                           root.noise-suppression < 0.8 ? "High" : "Max";
                                     color: root.noise-suppression < 0.2 ? VxTheme.text-muted : VxTheme.accent;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                 }
                             }
@@ -577,13 +585,13 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "AI noise suppression";
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 600;
                                     }
                                     Text {
                                         text: "Neural network removes background noise";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                 }
                                 VxToggle {
@@ -600,13 +608,13 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "Echo cancellation";
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 600;
                                     }
                                     Text {
                                         text: "Reduces speaker audio picked up by your mic";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                 }
                                 VxToggle {
@@ -621,57 +629,57 @@ export component SettingsView inherits Rectangle {
                             Text {
                                 text: "What Voxlink applies to your audio, in order. Read-only.";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                             }
                             // Each row: status dot + name + detail
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
-                                Text { text: "High-pass filter"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: "80 Hz cutoff"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "High-pass filter"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "80 Hz cutoff"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.noise-suppression >= 0.2 ? VxTheme.success : VxTheme.text-muted; }
-                                Text { text: "Noise gate"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: root.noise-suppression < 0.2 ? "Off" : "Threshold: " + root.audio-noise-gate-threshold; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "Noise gate"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.noise-suppression < 0.2 ? "Off" : "Threshold: " + root.audio-noise-gate-threshold; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
-                                Text { text: "AGC"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: "Target: -18 dB"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "AGC"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "Target: -18 dB"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
-                                Text { text: "De-esser"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: "Active"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "De-esser"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: "Active"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.neural-noise-suppression ? VxTheme.success : VxTheme.text-muted; }
-                                Text { text: "Neural denoise"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: root.neural-noise-suppression ? "On" : "Off"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "Neural denoise"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.neural-noise-suppression ? "On" : "Off"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.echo-cancellation ? VxTheme.success : VxTheme.text-muted; }
-                                Text { text: "Echo cancellation"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: root.echo-cancellation ? "On" : "Off"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "Echo cancellation"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.echo-cancellation ? "On" : "Off"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: VxTheme.success; }
-                                Text { text: "Opus encode"; color: VxTheme.text-primary; font-size: 10px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
-                                Text { text: root.audio-opus-bitrate; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                                Text { text: "Opus encode"; color: VxTheme.text-primary; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                Text { text: root.audio-opus-bitrate; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                             }
                         }
                     }
@@ -713,7 +721,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: root.output-devices.length > 0 ? root.output-devices[root.selected-output] : "No output route selected";
                                         color: root.output-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -724,7 +732,7 @@ export component SettingsView inherits Rectangle {
                                     ? "Use the sample to confirm your selected route and output level before joining a room."
                                     : "This opens playback only long enough to hear a short preview tone. It does not join a call.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
 
@@ -754,7 +762,7 @@ export component SettingsView inherits Rectangle {
                             if root.output-devices.length == 0 : Text {
                                 text: "No speaker route is currently available.";
                                 color: VxTheme.danger;
-                                font-size: 10px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -791,7 +799,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: root.input-devices.length > 0 ? "Capture stays local to settings." : "No microphone route selected";
                                         color: root.input-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -804,7 +812,7 @@ export component SettingsView inherits Rectangle {
                                       root.mic-level > 0.06 ? "Signal looks healthy for normal speaking." :
                                       "Speak at your normal distance to verify the meter responds.";
                                 color: root.mic-preview-active && root.mic-level > 0.20 ? VxTheme.warning : VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
 
@@ -851,7 +859,7 @@ export component SettingsView inherits Rectangle {
                             if root.input-devices.length == 0 : Text {
                                 text: "No microphone route is currently available.";
                                 color: VxTheme.danger;
-                                font-size: 10px;
+                                font-size: 12px;
                             }
                         }
                     }
@@ -884,7 +892,7 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: root.is-open-mic ? "Natural flow for quieter rooms." : "Tighter transmit control when you need it.";
                                         color: VxTheme.text-secondary;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -900,7 +908,7 @@ export component SettingsView inherits Rectangle {
                                     ? "Use this when the room is quiet and you want a natural flow."
                                     : "Use this when you need tighter control over when you transmit.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             VxButton {
@@ -922,7 +930,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Join, leave, mute, and deafen sounds";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -936,7 +944,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Desktop notifications for messages and joins";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                     wrap: word-wrap;
@@ -951,7 +959,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Minimize to system tray on close";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -965,7 +973,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Join and leave notification sounds";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -982,13 +990,13 @@ export component SettingsView inherits Rectangle {
                                     Text {
                                         text: "OS desktop notifications";
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 600;
                                     }
                                     Text {
                                         text: "Show system notifications for mentions and DMs when unfocused";
                                         color: VxTheme.text-muted;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -1003,7 +1011,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Notification sound style";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                 }
                                 HorizontalLayout {
@@ -1030,7 +1038,7 @@ export component SettingsView inherits Rectangle {
                                         Text {
                                             text: item.label;
                                             color: root.notification-sound-index == idx ? VxTheme.accent : VxTheme.text-secondary;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             font-weight: root.notification-sound-index == idx ? 700 : 500;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -1051,7 +1059,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Compact chat density";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -1065,7 +1073,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Show spoiler text by default";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -1088,7 +1096,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Streamer mode";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     horizontal-stretch: 1;
                                 }
@@ -1100,8 +1108,46 @@ export component SettingsView inherits Rectangle {
                             Text {
                                 text: "Hides server IPs, invite codes, room codes, and email from the UI.";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                                 wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Text {
+                                    text: "Rich presence";
+                                    color: VxTheme.text-primary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                VxToggle {
+                                    checked: root.rich-presence-enabled;
+                                    toggled => { root.toggle-rich-presence(); }
+                                }
+                            }
+                            Text {
+                                text: "Shares the app you're using (e.g. \"Playing Helldivers 2\") with your spaces, refreshed every few seconds. Off by default.";
+                                color: VxTheme.text-muted;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                            if root.rich-presence-enabled : VerticalLayout {
+                                spacing: 6px;
+                                FieldLabel { text: "Allowed apps (comma-separated)"; }
+                                VxInput {
+                                    prominent: true;
+                                    horizontal-stretch: 1;
+                                    text <=> root.rich-presence-allowlist;
+                                    placeholder: "Helldivers 2, Spotify";
+                                    accepted => { root.set-rich-presence-allowlist(root.rich-presence-allowlist); }
+                                }
+                                Text {
+                                    text: "Only these apps are ever shared. Empty list = nothing is broadcast. Press Enter to save.";
+                                    color: VxTheme.text-muted;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }
@@ -1114,7 +1160,7 @@ export component SettingsView inherits Rectangle {
                             Text {
                                 text: "Set your presence so others know your availability.";
                                 color: VxTheme.text-muted;
-                                font-size: 9px;
+                                font-size: 11px;
                             }
                             HorizontalLayout {
                                 spacing: 6px;
@@ -1155,7 +1201,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "Auto-idle timeout";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                 }
                                 Text {
@@ -1163,7 +1209,7 @@ export component SettingsView inherits Rectangle {
                                         ? "Disabled — status will not change automatically."
                                         : "Switch to idle after " + root.idle-timeout-mins + " minutes of inactivity.";
                                     color: VxTheme.text-muted;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     wrap: word-wrap;
                                 }
                                 HorizontalLayout {
@@ -1191,7 +1237,7 @@ export component SettingsView inherits Rectangle {
                                         Text {
                                             text: item.label;
                                             color: root.idle-timeout-mins == item.mins ? VxTheme.accent : VxTheme.text-secondary;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             font-weight: root.idle-timeout-mins == item.mins ? 700 : 500;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -1210,13 +1256,13 @@ export component SettingsView inherits Rectangle {
                             if root.listening-keybind != "" : Text {
                                 text: "Press a key combination now, or click Cancel to abort.";
                                 color: VxTheme.accent;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                             }
                             if root.listening-keybind == "" : Text {
                                 text: "Click Set to assign a keybind, then press your key combo.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                             }
 
                             HorizontalLayout {
@@ -1225,7 +1271,7 @@ export component SettingsView inherits Rectangle {
                                 if root.listening-keybind == "ptt" : Text {
                                     text: "Listening…";
                                     color: VxTheme.accent;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                 }
                                 if root.listening-keybind != "ptt" : KeyPill {
@@ -1252,7 +1298,7 @@ export component SettingsView inherits Rectangle {
                                 if root.listening-keybind == "mute" : Text {
                                     text: "Listening…";
                                     color: VxTheme.accent;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                 }
                                 if root.listening-keybind != "mute" : KeyPill {
@@ -1279,7 +1325,7 @@ export component SettingsView inherits Rectangle {
                                 if root.listening-keybind == "deafen" : Text {
                                     text: "Listening…";
                                     color: VxTheme.accent;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                 }
                                 if root.listening-keybind != "deafen" : KeyPill {
@@ -1333,14 +1379,14 @@ export component SettingsView inherits Rectangle {
                                         root.theme-preset == 6 ? (root.dark-mode ? "Arctic glass dark" : "Arctic glass light") :
                                         root.dark-mode ? "Voxlink dark" : "Voxlink light";
                                     color: VxTheme.text-primary;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                     horizontal-stretch: 1;
                                 }
                                 Text {
                                     text: "Theme swaps are visual only and apply instantly.";
                                     color: VxTheme.text-muted;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     wrap: word-wrap;
                                 }
                             }
@@ -1491,13 +1537,13 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: root.speaker-test-active ? "Playing a local sample." : "Play a local speaker test.";
                                     color: VxTheme.text-primary;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                 }
                                 Text {
                                     text: root.output-devices.length > 0 ? "Confirms the selected route before a call." : "Choose an output route first.";
                                     color: root.output-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                 }
                             }
@@ -1507,7 +1553,7 @@ export component SettingsView inherits Rectangle {
                                 ? "Confirms the selected speaker route without joining a call."
                                 : "Choose an output route to test playback.";
                             color: root.output-devices.length > 0 ? VxTheme.text-muted : VxTheme.danger;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         VxButton {
@@ -1541,13 +1587,13 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: root.mic-preview-active ? "Mic check is live." : "Start a local mic check.";
                                     color: VxTheme.text-primary;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                 }
                                 Text {
                                     text: root.input-devices.length > 0 ? "Capture stays local to settings." : "Choose an input route first.";
                                     color: root.input-devices.length > 0 ? VxTheme.text-secondary : VxTheme.danger;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                 }
                             }
@@ -1598,13 +1644,13 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: root.is-open-mic ? "Open mic is active." : "Push to talk is active.";
                                     color: VxTheme.text-primary;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                 }
                                 Text {
                                     text: root.is-open-mic ? "Natural flow for quieter rooms." : "Tighter transmit control when needed.";
                                     color: VxTheme.text-secondary;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                 }
                             }
@@ -1639,7 +1685,7 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: "VX";
                                     color: VxTheme.text-inverse;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1650,13 +1696,13 @@ export component SettingsView inherits Rectangle {
                                 Text {
                                     text: root.streamer-mode ? "****@****.***" : root.account-email;
                                     color: VxTheme.text-primary;
-                                    font-size: 12px;
+                                    font-size: 13px;
                                     font-weight: 600;
                                 }
                                 Text {
                                     text: "Signed in";
                                     color: VxTheme.success;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                 }
                             }
                         }
@@ -1727,16 +1773,51 @@ export component SettingsView inherits Rectangle {
                                 }
                             }
                         }
+                        // Change email
+                        FieldLabel { text: "Change Email"; }
+                        VerticalLayout {
+                            spacing: 8px;
+                            VxInput {
+                                prominent: true;
+                                horizontal-stretch: 1;
+                                text <=> root.acct-email-pw;
+                                placeholder: "Current password";
+                            }
+                            VxInput {
+                                prominent: true;
+                                horizontal-stretch: 1;
+                                text <=> root.acct-new-email;
+                                placeholder: "New email";
+                            }
+                            VxButton {
+                                label: "Update email";
+                                accent: true;
+                                horizontal-stretch: 1;
+                                clicked => {
+                                    if root.acct-email-pw != "" && root.acct-new-email != "" {
+                                        root.change-email(root.acct-email-pw, root.acct-new-email);
+                                        root.acct-email-pw = "";
+                                        root.acct-new-email = "";
+                                    }
+                                }
+                            }
+                        }
                         Divider { }
                         // Delete account
                         FieldLabel { text: "Danger Zone"; }
                         Text {
                             text: "Type DELETE to confirm account deletion.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                         VerticalLayout {
                             spacing: 8px;
+                            VxInput {
+                                prominent: true;
+                                horizontal-stretch: 1;
+                                text <=> root.acct-delete-pw;
+                                placeholder: "Current password";
+                            }
                             VxInput {
                                 prominent: true;
                                 horizontal-stretch: 1;
@@ -1746,11 +1827,12 @@ export component SettingsView inherits Rectangle {
                             VxButton {
                                 label: "Delete Account";
                                 soft: true;
-                                enabled: root.acct-delete-confirm == "DELETE";
+                                enabled: root.acct-delete-confirm == "DELETE" && root.acct-delete-pw != "";
                                 horizontal-stretch: 1;
                                 clicked => {
-                                    root.delete-account();
+                                    root.delete-account(root.acct-delete-pw);
                                     root.acct-delete-confirm = "";
+                                    root.acct-delete-pw = "";
                                 }
                             }
                         }
@@ -1761,7 +1843,7 @@ export component SettingsView inherits Rectangle {
                         Text {
                             text: "Sign in or create an account to sync your identity across devices.";
                             color: VxTheme.text-muted;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         VxButton {
@@ -1785,7 +1867,7 @@ export component SettingsView inherits Rectangle {
                     if root.soundboard-clips.length == 0 : Text {
                         text: "No clips loaded. Add WAV files to play into voice chat.";
                         color: VxTheme.text-muted;
-                        font-size: 10px;
+                        font-size: 12px;
                         wrap: word-wrap;
                     }
 
@@ -1807,7 +1889,7 @@ export component SettingsView inherits Rectangle {
                             Text {
                                 text: clip.name;
                                 color: VxTheme.text-primary;
-                                font-size: 11px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 horizontal-stretch: 1;
                                 overflow: elide;
@@ -1836,7 +1918,7 @@ export component SettingsView inherits Rectangle {
 
                     if root.soundboard-clips.length < 16 : VerticalLayout {
                         spacing: 6px;
-                        Text { text: "ADD CLIP"; color: VxTheme.text-muted; font-size: 9px; font-weight: 700; }
+                        Text { text: "ADD CLIP"; color: VxTheme.text-muted; font-size: 11px; font-weight: 700; }
                         VxInput {
                             prominent: true;
                             text <=> root.new-clip-name;
@@ -1878,7 +1960,7 @@ export component SettingsView inherits Rectangle {
                         Text {
                             text: "48kHz mono WAV recommended. Max 16 clips, 5s each.";
                             color: VxTheme.text-muted;
-                            font-size: 9px;
+                            font-size: 11px;
                         }
                     }
                 }
@@ -1893,7 +1975,7 @@ export component SettingsView inherits Rectangle {
                     Text {
                         text: "Voxlink is transparent about what data it stores and where.";
                         color: VxTheme.text-muted;
-                        font-size: 10px;
+                        font-size: 12px;
                         wrap: word-wrap;
                     }
 
@@ -1903,22 +1985,22 @@ export component SettingsView inherits Rectangle {
                         spacing: 4px;
                         HorizontalLayout {
                             spacing: 6px;
-                            Text { text: "Config:"; color: VxTheme.text-secondary; font-size: 10px; font-weight: 600; }
+                            Text { text: "Config:"; color: VxTheme.text-secondary; font-size: 12px; font-weight: 600; }
                             Text {
                                 text: root.privacy-config-path != "" ? root.privacy-config-path + "/config.json" : "(unknown)";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 overflow: elide;
                                 horizontal-stretch: 1;
                             }
                         }
                         HorizontalLayout {
                             spacing: 6px;
-                            Text { text: "Log:"; color: VxTheme.text-secondary; font-size: 10px; font-weight: 600; }
+                            Text { text: "Log:"; color: VxTheme.text-secondary; font-size: 12px; font-weight: 600; }
                             Text {
                                 text: root.privacy-config-path != "" ? root.privacy-config-path + "/voxlink.log" : "(unknown)";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 overflow: elide;
                                 horizontal-stretch: 1;
                             }
@@ -1934,22 +2016,22 @@ export component SettingsView inherits Rectangle {
                         HorizontalLayout {
                             spacing: 6px;
                             Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.accent; }
-                            Text { text: "Account: email, display name, hashed password"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            Text { text: "Account: email, display name, hashed password"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                         }
                         HorizontalLayout {
                             spacing: 6px;
                             Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.accent; }
-                            Text { text: "Messages: text messages in spaces you belong to"; color: VxTheme.text-muted; font-size: 10px; vertical-alignment: center; }
+                            Text { text: "Messages: text messages in spaces you belong to"; color: VxTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                         }
                         HorizontalLayout {
                             spacing: 6px;
                             Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.success; }
-                            Text { text: "No voice data is ever recorded or stored"; color: VxTheme.success; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                            Text { text: "No voice data is ever recorded or stored"; color: VxTheme.success; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                         }
                         HorizontalLayout {
                             spacing: 6px;
                             Rectangle { width: 6px; height: 6px; border-radius: 3px; background: VxTheme.success; }
-                            Text { text: "No telemetry or analytics collected"; color: VxTheme.success; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                            Text { text: "No telemetry or analytics collected"; color: VxTheme.success; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                         }
                     }
 
@@ -1974,13 +2056,13 @@ export component SettingsView inherits Rectangle {
                     Text {
                         text: "Clear resets config to defaults (keeps your login). Export copies config JSON to clipboard.";
                         color: VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         wrap: word-wrap;
                     }
                     if root.is-logged-in : Text {
                         text: "To delete your server account, use the Delete Account option above.";
                         color: VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         wrap: word-wrap;
                     }
                 }
@@ -1998,7 +2080,7 @@ export component SettingsView inherits Rectangle {
                 Text {
                     text: "Settings save automatically";
                     color: VxTheme.text-muted;
-                    font-size: 10px;
+                    font-size: 12px;
                 }
             }
 

@@ -358,13 +358,18 @@ pub fn check_connection(
                 .upgrade()
                 .map(|w| w.get_current_view() == snapshot_view)
                 .unwrap_or(false);
+            // Read the auth token off the UI thread — keychain reads on ad-hoc-signed
+            // dev binaries can stall for tens of seconds while macOS prompts the user.
+            let auth_token = tokio::task::spawn_blocking(config_store::load_auth_token)
+                .await
+                .unwrap_or(None);
             if !view_still_valid && (is_in_room || is_in_space) {
                 log::info!("Skipping auto-rejoin: user navigated away during reconnect");
                 // Still re-authenticate even if we skip rejoin
                 let net = network.lock().await;
                 let _ = net
                     .send_signal(&SignalMessage::Authenticate {
-                        token: config_store::load_auth_token(),
+                        token: auth_token,
                         user_name,
                     })
                     .await;
@@ -375,7 +380,7 @@ pub fn check_connection(
             // Re-authenticate after reconnect
             let _ = net
                 .send_signal(&SignalMessage::Authenticate {
-                    token: config_store::load_auth_token(),
+                    token: auth_token,
                     user_name: user_name.clone(),
                 })
                 .await;

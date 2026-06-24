@@ -41,15 +41,30 @@ pub(crate) async fn handle_timeout_member(
         (target, actor_name)
     };
 
-    if let Some(ref target) = target_peer {
+    let target_user_id = if let Some(ref target) = target_peer {
         target.timeout_until.store(until_epoch, Ordering::Relaxed);
-    }
+        target.user_id.lock().await.clone()
+    } else {
+        None
+    };
 
     let target_name = if let Some(ref target) = target_peer {
         target.name.lock().await.clone()
     } else {
         member_id.clone()
     };
+
+    // Persist the timeout so it survives reconnects and server restarts.
+    if let (Some(db), Some(target_uid)) = (db, target_user_id) {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let actor_uid = actor_user_id.clone();
+        let until_signed = until_epoch as i64;
+        let now_signed = now_epoch_secs() as i64;
+        tokio::task::spawn_blocking(move || {
+            db.upsert_timeout(&sid, &target_uid, until_signed, &actor_uid, now_signed);
+        });
+    }
 
     // Broadcast timeout to space
     let notify = SignalMessage::MemberTimedOut {

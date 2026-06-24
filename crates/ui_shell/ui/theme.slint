@@ -73,11 +73,17 @@ export struct ChatMessage {
     forwarded-from: string,
     attachment-name: string,
     attachment-size: string,
+    attachment-id: string,
+    attachment-image: image,
+    has-attachment-image: bool,
     channel-name: string,
     show-header: bool,
     date-separator: string,
     reply-count: int,
     link-url: string,
+    link-domain: string,
+    link-preview-title: string,
+    link-preview-description: string,
     is-new-separator: bool,
 }
 
@@ -127,6 +133,16 @@ export struct MemberData {
     role-color-index: int,
     // Activity status (e.g. "Playing Valorant"), empty if none
     activity: string,
+    // True when this user is in the current user's local blocked list
+    is-blocked-by-me: bool,
+}
+
+export struct GroupDMThreadData {
+    group-id: string,
+    name: string,
+    member-count: int,
+    preview: string,
+    unread-count: int,
 }
 
 export struct AuditEntryData {
@@ -241,7 +257,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #120b06 : #f8efe3) :
         is-noir ? (dark-mode ? #050608 : #eef1f6) :
         is-arctic ? (dark-mode ? #071014 : #edf8fb) :
-        dark-mode ? #071019 : #eef3f7;
+        dark-mode ? #0b1017 : #eef3f7;
     out property <color> bg-app:
         is-party ? (dark-mode ? #10180e : #f5f8f0) :
         is-space ? (dark-mode ? #080c18 : #f5f7ff) :
@@ -249,7 +265,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #181008 : #fcf6ee) :
         is-noir ? (dark-mode ? #0a0c10 : #f7f8fb) :
         is-arctic ? (dark-mode ? #0b161b : #f5fbfd) :
-        dark-mode ? #0a141e : #f4f8fb;
+        dark-mode ? #10171f : #f4f8fb;
     out property <color> bg-panel:
         is-party ? (dark-mode ? #152012 : #ffffff) :
         is-space ? (dark-mode ? #0f1530 : #ffffff) :
@@ -257,7 +273,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #23180c : #fffdf9) :
         is-noir ? (dark-mode ? #11141a : #ffffff) :
         is-arctic ? (dark-mode ? #102127 : #ffffff) :
-        dark-mode ? #101b26 : #ffffff;
+        dark-mode ? #161f2b : #ffffff;
     out property <color> bg-card:
         is-party ? (dark-mode ? #192715 : #ffffff) :
         is-space ? (dark-mode ? #141c3a : #ffffff) :
@@ -265,7 +281,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #291c0f : #fffdfb) :
         is-noir ? (dark-mode ? #151921 : #ffffff) :
         is-arctic ? (dark-mode ? #13292f : #ffffff) :
-        dark-mode ? #13202d : #ffffff;
+        dark-mode ? #1b2533 : #ffffff;
     out property <color> bg-raised:
         is-party ? (dark-mode ? #22331d : #dfead5) :
         is-space ? (dark-mode ? #1a2548 : #dfe5fb) :
@@ -273,7 +289,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #362615 : #f0dfcb) :
         is-noir ? (dark-mode ? #1e2430 : #e0e5ef) :
         is-arctic ? (dark-mode ? #1a3640 : #dff1f5) :
-        dark-mode ? #182736 : #e7eff6;
+        dark-mode ? #232f3f : #e7eff6;
     out property <color> bg-input:
         is-party ? (dark-mode ? #0e160d : #f7faf4) :
         is-space ? (dark-mode ? #0a1124 : #f7f9ff) :
@@ -281,7 +297,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #1b1209 : #fff9f3) :
         is-noir ? (dark-mode ? #0c1015 : #fafbff) :
         is-arctic ? (dark-mode ? #0c1b21 : #f7fdff) :
-        dark-mode ? #0d1722 : #f6f9fc;
+        dark-mode ? #0c121a : #f6f9fc;
     out property <color> bg-rail:
         is-party ? (dark-mode ? #091008 : #e5ecde) :
         is-space ? (dark-mode ? #050915 : #e6ebfb) :
@@ -289,7 +305,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #100904 : #f2e4d3) :
         is-noir ? (dark-mode ? #07090d : #e7ebf2) :
         is-arctic ? (dark-mode ? #081318 : #e4f1f5) :
-        dark-mode ? #09121b : #e9f0f5;
+        dark-mode ? #0e141d : #e9f0f5;
     out property <color> bg-overlay:
         is-party ? (dark-mode ? #040804d0 : #ffffffdd) :
         is-space ? (dark-mode ? #03040bd0 : #ffffffdd) :
@@ -305,7 +321,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #21160d : #f7eddc) :
         is-noir ? (dark-mode ? #10141b : #edf1f7) :
         is-arctic ? (dark-mode ? #0f1e24 : #eef7fa) :
-        dark-mode ? #0e1721 : #edf4f8;
+        dark-mode ? #141c26 : #edf4f8;
     out property <color> bg-stage:
         is-party ? (dark-mode ? #0d150c : #f4f8f0) :
         is-space ? (dark-mode ? #091020 : #f3f6ff) :
@@ -313,7 +329,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #1b1209 : #fbf6ee) :
         is-noir ? (dark-mode ? #0b0f14 : #f6f8fb) :
         is-arctic ? (dark-mode ? #0d181d : #f4fafc) :
-        dark-mode ? #0c151d : #f3f8fb;
+        dark-mode ? #10171f : #f3f8fb;
 
     // Borders
     out property <color> border-subtle:
@@ -323,7 +339,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #5b3b1e : #dfc1a0) :
         is-noir ? (dark-mode ? #2b3240 : #cfd6e3) :
         is-arctic ? (dark-mode ? #24404a : #bfd9e1) :
-        dark-mode ? #213344 : #d6e0e8;
+        dark-mode ? #27344a : #d6e0e8;
     out property <color> border-strong:
         is-party ? (dark-mode ? #4a7138 : #a9c193) :
         is-space ? (dark-mode ? #3d5399 : #a9b8e8) :
@@ -331,7 +347,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #835328 : #c69e72) :
         is-noir ? (dark-mode ? #455068 : #b5bfd4) :
         is-arctic ? (dark-mode ? #396273 : #9ec3ce) :
-        dark-mode ? #2d465b : #bfd1df;
+        dark-mode ? #35465f : #bfd1df;
     out property <color> border-focus:
         is-party ? (dark-mode ? #98f15d : #5cad2c) :
         is-space ? (dark-mode ? #7cc8ff : #4d8fd9) :
@@ -365,7 +381,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #a18159 : #9a7c61) :
         is-noir ? (dark-mode ? #7a8398 : #798396) :
         is-arctic ? (dark-mode ? #70929a : #6f919b) :
-        dark-mode ? #6f8295 : #76899c;
+        dark-mode ? #7d8ea1 : #76899c;
     out property <color> text-inverse:   dark-mode ? #081018 : #ffffff;
 
     // Accent
@@ -443,7 +459,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #2b1d10 : #f3e7d6) :
         is-noir ? (dark-mode ? #171c26 : #e8edf5) :
         is-arctic ? (dark-mode ? #162a31 : #e7f4f8) :
-        dark-mode ? #172535 : #edf4fa;
+        dark-mode ? #212c3c : #edf4fa;
     out property <color> card-hover-border:
         is-party ? (dark-mode ? #4c6a39 : #afc691) :
         is-space ? (dark-mode ? #4a63a8 : #a5b7e7) :
@@ -451,7 +467,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #8f5f31 : #ca9d69) :
         is-noir ? (dark-mode ? #52607c : #b7c1d6) :
         is-arctic ? (dark-mode ? #46717e : #a1ccd6) :
-        dark-mode ? #2b4458 : #c4d8e6;
+        dark-mode ? #36495f : #c4d8e6;
     out property <color> btn-hover-bg:
         is-party ? (dark-mode ? #263a1f : #dcead0) :
         is-space ? (dark-mode ? #1d2a54 : #dce5fb) :
@@ -459,7 +475,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #3a2815 : #ead9c3) :
         is-noir ? (dark-mode ? #222938 : #dde4f0) :
         is-arctic ? (dark-mode ? #1e3740 : #dceff4) :
-        dark-mode ? #1d2d3f : #deebf4;
+        dark-mode ? #28354a : #deebf4;
     out property <color> surface-active:
         is-party ? (dark-mode ? #294423 : #d7ebc4) :
         is-space ? (dark-mode ? #1e3461 : #d7e3fb) :
@@ -475,7 +491,7 @@ export global VxTheme {
         is-amber ? (dark-mode ? #26190d : #f3e8d8) :
         is-noir ? (dark-mode ? #131823 : #ebeff6) :
         is-arctic ? (dark-mode ? #13252c : #ebf5f8) :
-        dark-mode ? #122131 : #ebf4fa;
+        dark-mode ? #18222f : #ebf4fa;
     out property <color> speaking-row-bg:
         is-party ? (dark-mode ? #18351b : #def2d2) :
         is-space ? (dark-mode ? #162b4a : #e1ebff) :
@@ -568,6 +584,34 @@ export global VxTheme {
     out property <length> radius-pill:    999px;
     out property <length> gutter:
         16px * ui-scale;
+
+    // ── Typography scale ──
+    // Tokenized so legibility/density tune in one place. Nudged up from the
+    // legacy 9–11px norm for a cleaner, more modern read with real hierarchy.
+    out property <length> font-display: 22px;   // hero / page titles
+    out property <length> font-title:   17px;   // view & dialog titles
+    out property <length> font-heading: 14px;   // card / section headers
+    out property <length> font-body:    13px;   // default body text
+    out property <length> font-label:   12px;   // labels, controls
+    out property <length> font-caption: 11px;   // meta, secondary
+    out property <length> font-micro:    10px;  // tiny meta — use sparingly
+    out property <int> weight-regular:  400;
+    out property <int> weight-medium:   500;
+    out property <int> weight-semibold: 600;
+    out property <int> weight-bold:     700;
+
+    // ── Motion ──
+    // Cheap, GPU-light transitions only (color / opacity / small offsets).
+    // Short by design — responsive feel without redraw churn.
+    out property <duration> dur-fast: 90ms;
+    out property <duration> dur-base: 150ms;
+    out property <duration> dur-slow: 240ms;
+
+    // ── Lean depth ──
+    // Elevation faked with a 1px top edge-highlight + crisp border instead of
+    // GPU drop shadows. `edge-highlight` lifts a surface; `edge-shadow` grounds it.
+    out property <color> edge-highlight: dark-mode ? #ffffff14 : #ffffffd8;
+    out property <color> edge-shadow:    dark-mode ? #00000038 : #1f2a3512;
 
     // ── Theme-specific component styling ──
     // Button border width — heavier for boxy themes

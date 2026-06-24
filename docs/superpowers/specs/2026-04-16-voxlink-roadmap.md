@@ -1,6 +1,6 @@
 # Voxlink Roadmap — April 2026
 
-**Status:** Supersedes `docs/roadmap-2026-03.md` (which referenced v0.9.0 as next milestone; current is v0.10.4).
+**Status:** Supersedes `docs/roadmap-2026-03.md` (which referenced v0.9.0 as next milestone). **Current shipping version: v0.12.0** — see `CHANGELOG.md` for the v0.11 → v0.12 deltas. The audit-driven sweep (waves 1–9) landed the entire P0/P1 short-list plus Group DMs end-to-end, server-side read state, the limits framework, and a perf pass over the audio relay + SQLite hot paths.
 
 ## Goal
 
@@ -14,7 +14,7 @@ Grow Voxlink into a Discord-class platform while preserving its defining trait: 
 4. **Server authority, client responsiveness.** Permissions, rate limits, and validation live on the server. UI is optimistic where safe.
 5. **Compileable progress.** Small milestones, zero-warnings, passing tests at every commit.
 
-## Current posture (v0.10.4)
+## Current posture (v0.12.0)
 
 **Done:** voice (rooms/spaces/channels/PTT/ducking/soundboard/priority speaker/whisper), social (friends/DMs/group DMs/mentions/status/idle/blocks/nicknames), chat (threads/reactions/pins/search/forwarding/attachments/spoilers/markdown), accounts (email/pw/tokens), moderation (roles/ban/kick/timeout/audit/ban-mgmt), organization (categories/Ctrl+K/unread/per-channel notifs/invites), desktop (screen share, hotkeys, themes, auto-update, tray).
 
@@ -47,9 +47,13 @@ Grow Voxlink into a Discord-class platform while preserving its defining trait: 
 
 Four themed minor releases, in order. Each is scoped so it ships independently and is shippable in weeks, not months.
 
-### v0.11 — Visual Communication
+### v0.11 — Visual Communication **(shipped)**
 
 **Theme:** See each other, react with personality, show what you're doing.
+**Shipped subset:** attachments + inline image preview, OpenGraph link previews
+(opt-in), rich presence (opt-in, allowlist-gated), unread separator, change-email
+in account settings. Custom emojis + animated stickers were deferred — see
+CHANGELOG.md v0.11 for details.
 
 **Features:**
 - Screen share polish (zoom, fit, pop-out, pause when hidden, separate transport lane)
@@ -72,27 +76,34 @@ Four themed minor releases, in order. Each is scoped so it ships independently a
 
 ---
 
-### v0.12 — Server Identity
+### v0.12 — Correctness, Durability & Personal-Safety **(shipped)**
 
-**Theme:** Make spaces feel like *places* with culture, not group chats.
+The originally-planned v0.12 ("Server Identity" with full roles + video calling)
+deferred to v0.13+ when a workspace-wide audit surfaced a stack of P0/P1
+correctness, durability, and personal-safety gaps that needed to land first.
+Themed: **finish the v0.11 product surface before adding new ones**.
 
-**Features:**
-- Full role + permissions matrix (20+ granular permissions)
-- Channel permission overrides per role
-- Welcome screen + rules screen for new members
+**Shipped:**
+- Opus FEC decode bug; rustls 0.23 CryptoProvider; server SIGTERM; SQLite pragmas (FK + busy_timeout + synchronous=NORMAL); Argon2id with legacy SHA-256 auto-rehash; DeleteAccount password gate; ChangePassword/ChangeEmail/RevokeAllSessions rate-limit; Login/CreateAccount clear stale peer state.
+- **Block/Unblock UI** (server was 100% paid for in v0.11; this exposes it).
+- **Threads inline composer + transitive reply walk.**
+- **Group DMs end-to-end** — creation flow with multi-select friend picker, group thread list, send-routing, quick-switcher coverage.
+- **Persistence holes closed:** reactions, moderation timeouts, channel categories, status presets all survive restart now. DisplayNameChanged broadcasts to all surfaces. mention_count populated.
+- **Server-side read state with multi-device sync** via new `user_read_state` table + `MarkChannelRead`/`ReadStateSnapshot` protocol.
+- **Limits framework:** `max_spaces_per_user`, `max_channels_per_space`, `max_members_per_space`.
+- **Perf:** audio relay shares one `Bytes` across recipients; `prepare_cached` everywhere; friend-snapshot N+1 → batched IN-query; periodic WAL checkpoint + expired-timeout sweep.
+- **Forwarding fidelity:** attachments + link_url preserved. **Attachment GC:** orphan blobs cascade-delete with their last message.
+- **BanList shows display names via JOIN.**
+- **Quick switcher** spans saved spaces + channels + 1:1 DMs + group DMs.
+- **Send-failure outbox** with tick-loop retry.
+
+**Deferred to v0.13+:**
+- Full role + permissions matrix (20+ granular permissions) and channel permission overrides per role
+- Welcome screen + rules screen + onboarding flow
 - Announcement channels (broadcast-only, subscribable across spaces)
-- Member onboarding flow (read rules → assign default role → enter space)
-- Server discovery opt-in (public listing of spaces that want growth)
+- Server discovery opt-in (the `is_public` column exists; UX surface deferred)
 - Space banner + icon + description upload
 - **Video calling** (≤8 peers, HW-accelerated encode via VideoToolbox/NVENC/VAAPI)
-
-**Efficiency budget:**
-- Video off by default per call — only encode/decode when explicitly enabled
-- Permissions resolved once at join, cached as bitmask per channel (no per-message checks)
-- Idle RAM regression ≤ 5 MB (permission cache)
-- Video call RAM: ≤ 100 MB per peer when active, 0 when off
-
-**Out of scope:** forum channels (defer to v0.13 if demand), webhooks, bot API.
 
 ---
 

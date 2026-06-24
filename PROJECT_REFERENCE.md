@@ -32,10 +32,12 @@ sudo systemctl stop voxlink        # Stop
 - **UI**: Slint 1.15 (native desktop)
 - **Audio**: cpal 0.15, audiopus (Opus codec), 48kHz mono, 20ms frames
 - **Networking**: tokio 1.50, tungstenite (WebSocket), tokio UDP
-- **Auth**: sha2 (salted SHA-256 password hashing)
-- **Version**: 0.8.0
-- **Tests**: 338 (unit + integration + stress)
-- **Warnings**: 0
+- **Auth**: argon2 password hashing (legacy salted SHA-256 auto-rehashed on login)
+- **Persistence**: rusqlite with WAL + foreign_keys + busy_timeout + synchronous=NORMAL; statements use prepare_cached
+- **TLS**: rustls 0.23 (ring); CryptoProvider installed at server startup
+- **Version**: 0.12.0
+- **Tests**: ~372 (60 server bin + 312 across other crates + integration); cargo check is warning-free
+- **Local clippy**: ~62 warnings across the workspace (concentrated in `integration_tests` and `app_desktop`); strict gate not yet enforced
 
 ## Workspace Crates
 
@@ -109,7 +111,9 @@ cargo build --release -p app_desktop           # Build client
 cargo build --release -p signaling_server      # Build server
 ```
 
-## Feature Summary (v0.8.0)
+## Feature Summary (v0.12.0)
+
+Cumulative across v0.8 → v0.12. New since v0.8 is noted inline.
 
 **Voice & Audio**
 - Create/join rooms by code, open mic + push-to-talk, mute/deafen, per-peer volume
@@ -134,14 +138,33 @@ cargo build --release -p signaling_server      # Build server
 
 **Chat**
 - Send/edit/delete/react/pin/search, typing indicators, markdown
-- Message threads (reply chains), message forwarding
+- Message threads (reply chains) with **inline reply composer + transitive walk** (v0.12)
+- Message forwarding **preserves attachment + link_url** (v0.12)
 - Spoiler tags, compact chat density
-- File attachments (1MB cap)
+- File attachments (8 MiB cap, server-wide storage cap, MIME allow-list) — **inline image preview** (v0.11)
+- **OpenGraph link previews** (v0.11, opt-in `VOXLINK_LINK_PREVIEWS`)
+- **Unread "NEW" separator** at first unread message (v0.11)
+- **Reactions persist across server restart** (v0.12); attachment blobs **cascade-delete** when their last referencing message is removed (v0.12)
 
 **Moderation**
 - Kick/ban/timeout/server-mute, role management (Owner/Admin/Mod/Member)
-- Ban management UI with unban
+- **Mods+ can pin and delete any message** (v0.12)
+- **Timeouts persist + survive reconnects + gate voice relay** (v0.12)
+- Ban management UI with unban; **BanList shows display names** (v0.12)
 - Audit log, user notes (local-only)
+
+**Reliability & security**
+- **Opus FEC decode bug fixed** (v0.12) — single biggest audio-quality win
+- **rustls 0.23 CryptoProvider installed** at server startup (v0.12) — fixes TLS
+- **Server handles SIGTERM** (v0.12) — `systemctl stop` now triggers graceful shutdown
+- **SQLite pragmas hardened** at open (v0.12): WAL + foreign_keys + busy_timeout + synchronous=NORMAL
+- **Argon2id password hashing** with auto-rehash from legacy SHA-256 on login (v0.12)
+- **DeleteAccount requires current password + per-IP auth rate limit** (v0.12); ChangePassword/ChangeEmail/RevokeAllSessions also rate-limited
+- **Login + CreateAccount clear stale per-connection state** before adopting the new identity (v0.12)
+- **5-minute WAL checkpoint + expired-timeout sweep** (v0.12)
+- **Server-side read state with multi-device sync** (v0.12) via `MarkChannelRead`/`ReadStateSnapshot`
+- **Send-failure outbox** (v0.12) — messages auto-queue and retry every ~2s
+- **Limits framework** (v0.12): `max_spaces_per_user`, `max_channels_per_space`, `max_members_per_space`
 
 **Desktop**
 - Screen share with adaptive quality
@@ -151,6 +174,12 @@ cargo build --release -p signaling_server      # Build server
 - Auto-reconnect, device hotplug recovery
 - Performance panel with audio metrics
 - Auto-update checker
+- **Rich presence** (v0.11, opt-in + per-app allowlist)
+- **Account settings panel** with change-email (v0.11)
+- **Block/Unblock UI** in member context menu (v0.12)
+- **Group DM creation flow** with inline multi-select friend picker (v0.12)
+- **Quick switcher** spans spaces, channels, 1:1 DMs, and group DMs (v0.12)
+- ~300 ms cold startup after keychain hardening (v0.11)
 
 ## DB Tables
 
@@ -170,5 +199,11 @@ cargo build --release -p signaling_server      # Build server
 | `group_conversations` | Group DM metadata |
 | `group_members` | Group DM membership |
 | `group_messages` | Group DM message history |
-| `attachments` | File attachment blobs (1MB cap) |
+| `attachments` | File attachment blobs (8 MiB per-file cap; server-wide storage cap) |
 | `space_nicknames` | Per-space display name overrides |
+| `message_reactions` (v0.12) | Per-(message, emoji, user_name) reaction rows |
+| `space_timeouts` (v0.12) | Active moderation timeouts (survive reconnects) |
+| `user_read_state` (v0.12) | Per-(user, channel) last-read watermark for multi-device sync |
+| `automod_filters` | Banned-word filters per space |
+| `scheduled_events` / `event_interests` | Scheduled-event metadata + RSVPs |
+| `scheduled_messages` | Time-deferred chat messages |

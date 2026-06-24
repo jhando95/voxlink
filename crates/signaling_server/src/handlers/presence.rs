@@ -36,7 +36,7 @@ pub async fn handle_watch_friend_presence(state: &State, peer_id: &str, user_ids
     for user_id in watched {
         presences.push(describe_user_presence(state, &user_id).await);
     }
-    send_to(&peer, &SignalMessage::FriendPresenceSnapshot { presences }).await;
+    send_to(&peer, &SignalMessage::FriendPresenceSnapshot { presences });
 }
 
 pub async fn notify_watchers_for_peer(state: &State, peer_id: &str) {
@@ -65,8 +65,7 @@ pub async fn notify_watchers_for_user(state: &State, user_id: &str) {
             &SignalMessage::FriendPresenceChanged {
                 presence: presence.clone(),
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -179,6 +178,9 @@ pub async fn handle_set_status_preset(state: &State, peer_id: &str, preset: User
         let Some(peer) = s.peers.get(peer_id) else {
             return;
         };
+        // Persist the preset on the Peer so member-info snapshots reflect the
+        // user's chosen status after reconnect.
+        *peer.status_preset.lock().await = preset;
         let space_id = peer.space_id.lock().await.clone();
         let member_id = peer_id.to_string();
         (space_id, member_id)

@@ -532,6 +532,7 @@ fn signal_message_round_trip_direct_message_selected() {
             forwarded_from: None,
             attachment_name: None,
             attachment_size: None,
+            attachment_id: None,
             link_url: None,
         }],
     };
@@ -869,6 +870,7 @@ fn text_message_data_with_forwarded_from() {
         forwarded_from: Some("general".into()),
         attachment_name: None,
         attachment_size: None,
+        attachment_id: None,
         link_url: None,
     };
     let json = serde_json::to_string(&msg).unwrap();
@@ -1296,5 +1298,133 @@ fn audio_quality_report_round_trips() {
             assert_eq!(jitter_buffer_ms, 40);
         }
         other => panic!("wrong variant after round-trip: {other:?}"),
+    }
+}
+
+// ─── Attachments (file/image sharing) ───
+
+#[test]
+fn text_message_data_without_attachment_id_defaults_to_none() {
+    // A message persisted before attachments existed must still deserialize.
+    let json = r#"{
+        "sender_id":"u1","sender_name":"Ann","content":"hi",
+        "timestamp":100,"message_id":"m1"
+    }"#;
+    let msg: TextMessageData = serde_json::from_str(json).unwrap();
+    assert_eq!(msg.attachment_id, None);
+    assert_eq!(msg.attachment_name, None);
+}
+
+#[test]
+fn text_message_data_round_trips_with_attachment() {
+    let msg = TextMessageData {
+        sender_id: "u1".into(),
+        sender_name: "Ann".into(),
+        content: "look".into(),
+        timestamp: 1,
+        message_id: "m1".into(),
+        edited: false,
+        reactions: vec![],
+        reply_to_message_id: None,
+        reply_to_sender_name: None,
+        reply_preview: None,
+        pinned: false,
+        forwarded_from: None,
+        attachment_name: Some("cat.png".into()),
+        attachment_size: Some(2048),
+        attachment_id: Some("att_abc".into()),
+        link_url: None,
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    let back: TextMessageData = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.attachment_id.as_deref(), Some("att_abc"));
+    assert_eq!(back.attachment_name.as_deref(), Some("cat.png"));
+    assert_eq!(back.attachment_size, Some(2048));
+}
+
+#[test]
+fn signal_message_round_trip_upload_attachment() {
+    let msg = SignalMessage::UploadAttachment {
+        channel_id: "c1".into(),
+        file_name: "cat.png".into(),
+        mime: "image/png".into(),
+        caption: "look at this".into(),
+        data_b64: crate::b64::encode(&[1, 2, 3, 4]),
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    let back: SignalMessage = serde_json::from_str(&json).unwrap();
+    match back {
+        SignalMessage::UploadAttachment {
+            channel_id,
+            file_name,
+            mime,
+            caption,
+            data_b64,
+        } => {
+            assert_eq!(channel_id, "c1");
+            assert_eq!(file_name, "cat.png");
+            assert_eq!(mime, "image/png");
+            assert_eq!(caption, "look at this");
+            assert_eq!(crate::b64::decode(&data_b64).unwrap(), vec![1, 2, 3, 4]);
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
+#[test]
+fn signal_message_round_trip_request_and_data_attachment() {
+    let req = SignalMessage::RequestAttachment {
+        attachment_id: "att_1".into(),
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    let back: SignalMessage = serde_json::from_str(&json).unwrap();
+    assert!(
+        matches!(back, SignalMessage::RequestAttachment { ref attachment_id } if attachment_id == "att_1")
+    );
+
+    let data = SignalMessage::AttachmentData {
+        attachment_id: "att_1".into(),
+        file_name: "cat.png".into(),
+        mime: "image/png".into(),
+        data_b64: crate::b64::encode(&[9, 8, 7]),
+    };
+    let json = serde_json::to_string(&data).unwrap();
+    let back: SignalMessage = serde_json::from_str(&json).unwrap();
+    match back {
+        SignalMessage::AttachmentData { data_b64, .. } => {
+            assert_eq!(crate::b64::decode(&data_b64).unwrap(), vec![9, 8, 7]);
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
+#[test]
+fn new_attachment_variants_have_distinct_indices_and_names() {
+    let variants = [
+        SignalMessage::UploadAttachment {
+            channel_id: String::new(),
+            file_name: String::new(),
+            mime: String::new(),
+            caption: String::new(),
+            data_b64: String::new(),
+        },
+        SignalMessage::RequestAttachment {
+            attachment_id: String::new(),
+        },
+        SignalMessage::AttachmentData {
+            attachment_id: String::new(),
+            file_name: String::new(),
+            mime: String::new(),
+            data_b64: String::new(),
+        },
+    ];
+    let mut indices = std::collections::HashSet::new();
+    for v in &variants {
+        let idx = v.variant_index();
+        assert!(indices.insert(idx), "duplicate variant_index {idx}");
+        assert!(
+            idx < SignalMessage::VARIANT_NAMES.len(),
+            "variant_index {idx} out of VARIANT_NAMES bounds"
+        );
     }
 }

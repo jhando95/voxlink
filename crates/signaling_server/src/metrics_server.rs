@@ -23,6 +23,15 @@ pub(crate) struct ServerMetrics {
     pub(crate) udp_send_failures_total: AtomicU64,
     pub(crate) udp_invalid_packets_total: AtomicU64,
     pub(crate) udp_rate_limited_total: AtomicU64,
+    /// Media-lane (audio + screen) frames dropped because a peer's per-peer
+    /// outbound queue was full. Lossy by design.
+    pub(crate) ws_frames_dropped_lossy_total: AtomicU64,
+    /// Signaling messages that arrived after a peer's reliable lane filled.
+    /// Pairs with `ws_overflow_disconnects_total`.
+    pub(crate) ws_frames_dropped_overflow_total: AtomicU64,
+    /// Peers force-disconnected because the reliable signaling lane filled
+    /// or the drain task's sink errored. Indicates broken/malicious clients.
+    pub(crate) ws_overflow_disconnects_total: AtomicU64,
     /// One counter per SignalMessage variant, indexed by
     /// `SignalMessage::variant_index()`. Array size is
     /// `shared_types::SIGNAL_MESSAGE_VARIANT_COUNT` (= 201).
@@ -59,6 +68,9 @@ impl Default for ServerMetrics {
             udp_send_failures_total: AtomicU64::new(0),
             udp_invalid_packets_total: AtomicU64::new(0),
             udp_rate_limited_total: AtomicU64::new(0),
+            ws_frames_dropped_lossy_total: AtomicU64::new(0),
+            ws_frames_dropped_overflow_total: AtomicU64::new(0),
+            ws_overflow_disconnects_total: AtomicU64::new(0),
             per_message_counters: std::array::from_fn(|_| AtomicU64::new(0)),
             signaling_dispatch_latency: Histogram::new(
                 "voxlink_signaling_dispatch_seconds",
@@ -246,6 +258,22 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
         metrics.udp_send_failures_total.load(Ordering::Relaxed),
         metrics.udp_invalid_packets_total.load(Ordering::Relaxed),
         metrics.udp_rate_limited_total.load(Ordering::Relaxed),
+    ));
+    out.push_str(&format!(
+        concat!(
+            "# HELP voxlink_ws_frames_dropped_lossy_total Media frames (audio/screen) dropped because a peer's outbound queue was full\n",
+            "# TYPE voxlink_ws_frames_dropped_lossy_total counter\n",
+            "voxlink_ws_frames_dropped_lossy_total {}\n",
+            "# HELP voxlink_ws_frames_dropped_overflow_total Signaling messages dropped because a peer's reliable outbound queue overflowed (followed by disconnect)\n",
+            "# TYPE voxlink_ws_frames_dropped_overflow_total counter\n",
+            "voxlink_ws_frames_dropped_overflow_total {}\n",
+            "# HELP voxlink_ws_overflow_disconnects_total Peers force-disconnected because their reliable signaling lane filled or their write sink errored\n",
+            "# TYPE voxlink_ws_overflow_disconnects_total counter\n",
+            "voxlink_ws_overflow_disconnects_total {}\n",
+        ),
+        metrics.ws_frames_dropped_lossy_total.load(Ordering::Relaxed),
+        metrics.ws_frames_dropped_overflow_total.load(Ordering::Relaxed),
+        metrics.ws_overflow_disconnects_total.load(Ordering::Relaxed),
     ));
     out.push_str(&format!(
         concat!(

@@ -181,7 +181,7 @@ Audio pipeline: cpal capture → high-pass filter → noise gate → AGC → de-
 
 ## Stats
 
-- **Version**: 0.10.4
+- **Version**: 0.11.0
 - **Tests**: 355+ (zero warnings)
 - **Crates**: 11
 - **Client binary**: 32 MB

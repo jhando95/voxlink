@@ -81,8 +81,10 @@ fn prepare_text_channel_open(
         if let Some(space) = state.space.as_mut() {
             space.selected_text_channel_id = Some(channel_id.to_string());
             space.unread_text_channels.remove(channel_id);
+            space.mentioned_text_channels.remove(channel_id);
         }
         state.active_direct_message_user_id = None;
+        state.active_group_dm_id = None;
         state.current_view = AppView::TextChat;
     }
 
@@ -202,6 +204,7 @@ pub fn setup_close_direct_message(
 
 pub fn setup_send_text_message(
     window: &MainWindow,
+    _state: &std::rc::Rc<std::cell::RefCell<shared_types::AppState>>,
     network: &Arc<TokioMutex<net_control::NetworkClient>>,
     rt_handle: &tokio::runtime::Handle,
 ) {
@@ -319,7 +322,8 @@ pub fn setup_send_text_message(
             value => Some(value),
         };
         let is_direct_message = w.get_chat_is_direct_message();
-        if content.is_empty() || target_id.is_empty() {
+        let group_id_active = w.get_chat_group_id().to_string();
+        if content.is_empty() || (target_id.is_empty() && group_id_active.is_empty()) {
             return;
         }
         w.set_chat_input(slint::SharedString::default());
@@ -333,16 +337,23 @@ pub fn setup_send_text_message(
             .await
             {
                 Ok(net) => {
-                    let res = if is_direct_message {
+                    let res = if !group_id_active.is_empty() {
+                        net.send_signal(&SignalMessage::SendGroupMessage {
+                            group_id: group_id_active,
+                            content: content.clone(),
+                            reply_to_message_id,
+                        })
+                        .await
+                    } else if is_direct_message {
                         net.send_signal(&SignalMessage::SendDirectMessage {
-                            user_id: target_id,
+                            user_id: target_id.clone(),
                             content: content.clone(),
                             reply_to_message_id,
                         })
                         .await
                     } else {
                         net.send_signal(&SignalMessage::SendTextMessage {
-                            channel_id: target_id,
+                            channel_id: target_id.clone(),
                             content: content.clone(),
                             reply_to_message_id,
                         })
@@ -359,14 +370,106 @@ pub fn setup_send_text_message(
                 }
             };
             if !ok {
-                // Restore the message so the user doesn't lose it
+                // Enqueue the message for the existing tick-loop retry path.
+                // Group DMs aren't represented in PendingMessage yet, so for
+                // them we fall back to restoring the draft into the composer.
+                let queueable = !target_id.is_empty();
                 if let Some(w) = window_weak2.upgrade() {
-                    w.set_chat_input(content.into());
-                    crate::helpers::show_toast(&w, "Failed to send message", 3);
+                    if queueable {
+                        // Use a Slint property as a one-way Send-safe channel back
+                        // to the UI thread; the tick loop drains it into state.pending_messages.
+                        let serialized = format!(
+                            "{}\u{1f}{}\u{1f}{}",
+                            if is_direct_message { "dm" } else { "ch" },
+                            target_id,
+                            content
+                        );
+                        let prev = w.get_pending_outbox_drop_in().to_string();
+                        let combined = if prev.is_empty() {
+                            serialized
+                        } else {
+                            format!("{prev}\u{1e}{serialized}")
+                        };
+                        w.set_pending_outbox_drop_in(combined.into());
+                        crate::helpers::show_toast(
+                            &w,
+                            "Message queued — will retry once you're reconnected",
+                            2,
+                        );
+                    } else {
+                        w.set_chat_input(content.into());
+                        crate::helpers::show_toast(&w, "Failed to send message", 3);
+                    }
                 }
             }
         });
     });
+}
+
+pub fn setup_attachments(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    // Attach a local file (by path) and upload it into the active text channel.
+    {
+        let window_weak = window.as_weak();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_attach_file(move || {
+            let Some(w) = window_weak.upgrade() else {
+                return;
+            };
+            let channel_id = w.get_chat_channel_id().to_string();
+            if channel_id.is_empty() {
+                crate::helpers::show_toast(&w, "Open a text channel first", 2);
+                return;
+            }
+            // Native file picker (modal). Returns None if the user cancels.
+            let Some(path) = rfd::FileDialog::new()
+                .set_title("Attach a file")
+                .pick_file()
+            else {
+                return;
+            };
+            let msg = match crate::attachment::build_upload_attachment(&path, &channel_id, "") {
+                Ok(m) => m,
+                Err(e) => {
+                    crate::helpers::show_toast(&w, &e, 3);
+                    return;
+                }
+            };
+            let network = network.clone();
+            let window_weak2 = w.as_weak();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                if net.send_signal(&msg).await.is_err() {
+                    if let Some(w) = window_weak2.upgrade() {
+                        crate::helpers::show_toast(&w, "Failed to upload attachment", 3);
+                    }
+                }
+            });
+        });
+    }
+
+    // Fetch a received attachment's bytes from the server (saved on arrival).
+    {
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_download_attachment(move |attachment_id| {
+            if attachment_id.is_empty() {
+                return;
+            }
+            let network = network.clone();
+            let id = attachment_id.to_string();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::RequestAttachment { attachment_id: id })
+                    .await;
+            });
+        });
+    }
 }
 
 pub fn setup_chat_typing_activity(
@@ -638,6 +741,156 @@ pub fn setup_close_thread(window: &MainWindow) {
     window.on_close_thread(move || {});
 }
 
+pub fn setup_group_dm(
+    window: &MainWindow,
+    state: &std::rc::Rc<std::cell::RefCell<shared_types::AppState>>,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    // toggle-new-group-dm-friend: flip user_id membership in the selection model.
+    {
+        let weak = window.as_weak();
+        window.on_toggle_new_group_dm_friend(move |user_id| {
+            let Some(w) = weak.upgrade() else { return };
+            let uid = user_id.to_string();
+            if uid.is_empty() {
+                return;
+            }
+            // Read the current selection model and rebuild it with uid toggled.
+            let model = w.get_new_group_dm_selection();
+            let mut items: Vec<slint::SharedString> = (0..model.row_count())
+                .filter_map(|i| model.row_data(i))
+                .collect();
+            if let Some(pos) = items.iter().position(|s| s.as_str() == uid) {
+                items.remove(pos);
+            } else {
+                items.push(uid.into());
+            }
+            w.set_new_group_dm_selection(
+                std::rc::Rc::new(slint::VecModel::from(items)).into(),
+            );
+        });
+    }
+
+    // create-group-dm: collect selection, send CreateGroupDM, reset selection.
+    {
+        let weak = window.as_weak();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_create_group_dm(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let model = w.get_new_group_dm_selection();
+            let user_ids: Vec<String> = (0..model.row_count())
+                .filter_map(|i| model.row_data(i))
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if user_ids.len() < 2 {
+                crate::helpers::show_toast(
+                    &w,
+                    "Pick at least 2 friends to start a group",
+                    2,
+                );
+                return;
+            }
+            // Clear the selection now that we've snapshotted it.
+            w.set_new_group_dm_selection(
+                std::rc::Rc::new(slint::VecModel::<slint::SharedString>::from(Vec::new())).into(),
+            );
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::CreateGroupDM {
+                        user_ids,
+                        name: None,
+                    })
+                    .await;
+            });
+        });
+    }
+
+    // open-group-dm: tell the server we want this group, update local state.
+    {
+        let weak = window.as_weak();
+        let state = state.clone();
+        let network = network.clone();
+        let rt_handle = rt_handle.clone();
+        window.on_open_group_dm(move |group_id| {
+            let Some(w) = weak.upgrade() else { return };
+            let group_id = group_id.to_string();
+            if group_id.is_empty() {
+                return;
+            }
+            // Mark the group active so send-text routes through SendGroupMessage.
+            {
+                let mut s = state.borrow_mut();
+                s.active_group_dm_id = Some(group_id.clone());
+                s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+                // Clear unread on the group thread.
+                if let Some(g) = s
+                    .group_dm_threads
+                    .iter_mut()
+                    .find(|g| g.group_id == group_id)
+                {
+                    g.unread_count = 0;
+                }
+            }
+            w.set_chat_group_id(group_id.clone().into());
+            let network = network.clone();
+            rt_handle.spawn(async move {
+                let net = network.lock().await;
+                let _ = net
+                    .send_signal(&SignalMessage::SelectGroupDM { group_id })
+                    .await;
+            });
+        });
+    }
+}
+
+pub fn setup_send_thread_reply(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    let weak = window.as_weak();
+    window.on_send_thread_reply(move |parent_message_id, text| {
+        let Some(w) = weak.upgrade() else { return };
+        let parent_message_id = parent_message_id.to_string();
+        let text = text.to_string().trim().to_string();
+        if parent_message_id.is_empty() || text.is_empty() {
+            return;
+        }
+        let channel_id = w.get_chat_channel_id().to_string();
+        if channel_id.is_empty() {
+            return;
+        }
+        // Send a regular SendTextMessage with reply_to_message_id pointing at the
+        // thread root. The server collects all messages with reply_to == root as the
+        // thread; clients render them in the thread panel.
+        let sender_name = w.get_user_name().to_string();
+        let user_id_opt = {
+            let any: Option<String> = None;
+            any
+        };
+        let _ = sender_name;
+        let _ = user_id_opt;
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::SendTextMessage {
+                    channel_id,
+                    content: text,
+                    reply_to_message_id: Some(parent_message_id),
+                })
+                .await;
+        });
+    });
+}
+
 pub fn setup_forward_message(
     window: &MainWindow,
     state: &std::rc::Rc<std::cell::RefCell<shared_types::AppState>>,
@@ -769,29 +1022,36 @@ pub fn setup_mention_input_changed(
         match query {
             Some(partial) => {
                 let lower = partial.to_lowercase();
+                // @everyone + @here as top-of-list suggestions when the partial
+                // is empty or prefixes one of them. Server already handles the
+                // broadcast side via content_lower.contains("@everyone"/"@here").
+                let mut suggestions: Vec<String> = Vec::new();
+                for sentinel in ["everyone", "here"] {
+                    if lower.is_empty() || sentinel.starts_with(&lower) {
+                        suggestions.push(sentinel.to_string());
+                    }
+                }
                 // Gather member names from space state
-                let members: Vec<String> = {
+                {
                     let app = state.borrow();
                     if let Some(space) = &app.space {
-                        space
-                            .members
-                            .iter()
-                            .filter(|m| {
-                                let name_lower = m.name.to_lowercase();
-                                lower.is_empty() || name_lower.starts_with(&lower)
-                            })
-                            .take(8)
-                            .map(|m| m.name.clone())
-                            .collect()
-                    } else {
-                        Vec::new()
+                        for m in space.members.iter() {
+                            if suggestions.len() >= 8 {
+                                break;
+                            }
+                            let name_lower = m.name.to_lowercase();
+                            if lower.is_empty() || name_lower.starts_with(&lower) {
+                                suggestions.push(m.name.clone());
+                            }
+                        }
                     }
                 };
-                if members.is_empty() {
+                if suggestions.is_empty() {
                     w.set_mention_popup_visible(false);
                     return;
                 }
-                let model: Vec<SharedString> = members
+                suggestions.truncate(8);
+                let model: Vec<SharedString> = suggestions
                     .iter()
                     .map(|n| SharedString::from(n.as_str()))
                     .collect();

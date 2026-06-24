@@ -820,6 +820,26 @@ pub fn setup_quick_switcher(
 
             let mut items: Vec<ui_shell::ChannelData> = Vec::new();
 
+            // Add saved spaces — lets you hop to a different community without
+            // leaving the keyboard. Filter by both the space name and its invite
+            // code so power users with several saved spaces can disambiguate.
+            let cfg = config_store::load_config();
+            for sp in &cfg.saved_spaces {
+                let matches_query = q.is_empty()
+                    || sp.name.to_lowercase().contains(&q)
+                    || sp.invite_code.to_lowercase().contains(&q);
+                if !matches_query {
+                    continue;
+                }
+                items.push(ui_shell::ChannelData {
+                    id: sp.invite_code.clone().into(),
+                    name: sp.name.clone().into(),
+                    status: "space".into(),
+                    category: "Spaces".into(),
+                    ..Default::default()
+                });
+            }
+
             // Add space channels (text and voice)
             if let Some(space) = &state.space {
                 for ch in &space.channels {
@@ -850,6 +870,23 @@ pub fn setup_quick_switcher(
                     id: dm.user_id.clone().into(),
                     name: dm.user_name.clone().into(),
                     status: "dm".into(),
+                    ..Default::default()
+                });
+            }
+
+            // Add group DM threads
+            for group in &state.group_dm_threads {
+                if !q.is_empty() && !group.name.to_lowercase().contains(&q) {
+                    continue;
+                }
+                items.push(ui_shell::ChannelData {
+                    id: group.group_id.clone().into(),
+                    name: if group.name.is_empty() {
+                        format!("Group ({} people)", group.members.len()).into()
+                    } else {
+                        group.name.clone().into()
+                    },
+                    status: "group".into(),
                     ..Default::default()
                 });
             }
@@ -891,7 +928,52 @@ pub fn setup_quick_switcher(
                 })
             };
 
-            if is_dm {
+            // Saved-space invite codes are stored under cfg.saved_spaces.
+            let is_space_invite = {
+                let cfg = config_store::load_config();
+                cfg.saved_spaces
+                    .iter()
+                    .any(|sp| sp.invite_code == item_id_str)
+            };
+
+            // Group DM ids share the namespace with channel ids — disambiguate
+            // by checking the in-memory group_dm_threads list.
+            let is_group = {
+                let state = state_ref.borrow();
+                state
+                    .group_dm_threads
+                    .iter()
+                    .any(|g| g.group_id == item_id_str)
+            };
+
+            if is_space_invite {
+                let network = network.clone();
+                let invite = item_id_str.clone();
+                let user_name = w.get_user_name().to_string();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = net
+                        .send_signal(&shared_types::SignalMessage::JoinSpace {
+                            invite_code: invite,
+                            user_name,
+                        })
+                        .await;
+                });
+            } else if is_group {
+                // Select the group DM and route into chat.
+                w.set_chat_group_id(item_id_str.clone().into());
+                let network = network.clone();
+                let id = item_id_str.clone();
+                rt_handle.spawn(async move {
+                    let net = network.lock().await;
+                    let _ = net
+                        .send_signal(&shared_types::SignalMessage::SelectGroupDM {
+                            group_id: id,
+                        })
+                        .await;
+                });
+                w.set_current_view(5);
+            } else if is_dm {
                 // Navigate to DM view
                 let network = network.clone();
                 let id = item_id_str.clone();
@@ -998,6 +1080,52 @@ pub fn setup_toggle_streamer_mode(window: &MainWindow) {
             let _ = config_store::save_config(&cfg);
         });
     });
+}
+
+/// Rich presence: opt-in foreground-app broadcaster. Wires the enable toggle and
+/// the comma-separated allowlist editor, updating both the live shared state
+/// (read by the poll task) and the persisted config.
+pub fn setup_rich_presence(window: &MainWindow, state: &crate::presence::PresenceState) {
+    // Enable / disable toggle.
+    {
+        let window_weak = window.as_weak();
+        let enabled = state.enabled.clone();
+        window.on_toggle_rich_presence(move || {
+            let Some(w) = window_weak.upgrade() else {
+                return;
+            };
+            let new_val = !w.get_rich_presence_enabled();
+            w.set_rich_presence_enabled(new_val);
+            enabled.store(new_val, std::sync::atomic::Ordering::Relaxed);
+            helpers::spawn_config_save(move || {
+                let mut cfg = config_store::load_config();
+                cfg.rich_presence_enabled = new_val;
+                let _ = config_store::save_config(&cfg);
+            });
+        });
+    }
+
+    // Allowlist editor (comma-separated text, normalized on save).
+    {
+        let window_weak = window.as_weak();
+        let allowlist = state.allowlist.clone();
+        window.on_set_rich_presence_allowlist(move |text| {
+            let Some(w) = window_weak.upgrade() else {
+                return;
+            };
+            let parsed = crate::presence::parse_allowlist(text.as_str());
+            // Echo the normalized form back into the field.
+            w.set_rich_presence_allowlist(crate::presence::join_allowlist(&parsed).into());
+            if let Ok(mut guard) = allowlist.lock() {
+                *guard = parsed.clone();
+            }
+            helpers::spawn_config_save(move || {
+                let mut cfg = config_store::load_config();
+                cfg.rich_presence_allowlist = parsed;
+                let _ = config_store::save_config(&cfg);
+            });
+        });
+    }
 }
 
 pub fn setup_toggle_desktop_notifications(window: &MainWindow) {
@@ -1258,12 +1386,15 @@ pub fn setup_delete_account(
 ) {
     let network = network.clone();
     let rt = rt_handle.clone();
-    window.on_delete_account(move || {
+    window.on_delete_account(move |current_password| {
         let net = network.clone();
+        let pw = current_password.to_string();
         rt.spawn(async move {
             let net = net.lock().await;
             let _ = net
-                .send_signal(&shared_types::SignalMessage::DeleteAccount)
+                .send_signal(&shared_types::SignalMessage::DeleteAccount {
+                    current_password: pw,
+                })
                 .await;
         });
     });
@@ -1308,6 +1439,7 @@ pub fn setup_toggle_category_collapse(
                 &cfg.user_notes,
                 &cfg.channel_notification_overrides,
                 &cfg.favorite_channels,
+                &cfg.blocked_users,
             );
         }
     });
@@ -1394,6 +1526,7 @@ pub fn setup_set_channel_notification(
                 &cfg.user_notes,
                 &cfg.channel_notification_overrides,
                 &cfg.favorite_channels,
+                &cfg.blocked_users,
             );
         }
     });
@@ -1429,6 +1562,42 @@ pub fn setup_change_password(
                 .send_signal(&shared_types::SignalMessage::ChangePassword {
                     current_password,
                     new_password,
+                })
+                .await;
+        });
+    });
+}
+
+pub fn setup_change_email(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt = rt_handle.clone();
+    let window_weak = window.as_weak();
+    window.on_change_email(move |current_password, new_email| {
+        let current_password = current_password.to_string();
+        let new_email = new_email.trim().to_string();
+        if current_password.is_empty() || new_email.is_empty() {
+            if let Some(w) = window_weak.upgrade() {
+                helpers::show_toast(&w, "Password and new email are required", 3);
+            }
+            return;
+        }
+        if !new_email.contains('@') {
+            if let Some(w) = window_weak.upgrade() {
+                helpers::show_toast(&w, "Enter a valid email address", 3);
+            }
+            return;
+        }
+        let net = network.clone();
+        rt.spawn(async move {
+            let net = net.lock().await;
+            let _ = net
+                .send_signal(&shared_types::SignalMessage::ChangeEmail {
+                    current_password,
+                    new_email,
                 })
                 .await;
         });
@@ -1554,6 +1723,7 @@ pub fn setup_toggle_favorite_channel(
                 &cfg.user_notes,
                 &cfg.channel_notification_overrides,
                 &cfg.favorite_channels,
+                &cfg.blocked_users,
             );
         }
     });

@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use futures_util::SinkExt;
 use tokio::net::UdpSocket;
-use tokio_tungstenite::tungstenite::Message;
 use shared_types::{
     MAX_SCREEN_FRAME_SIZE, MAX_UDP_MEDIA_PAYLOAD_SIZE, MAX_UDP_SCREEN_CHUNK_SIZE,
     MEDIA_PACKET_SCREEN, MEDIA_PACKET_SCREEN_CHUNK, SCREEN_CHUNK_METADATA_LEN,
@@ -109,7 +107,9 @@ pub(crate) async fn send_screen_frame_to_peers(
     frame: &[u8],
     udp_frame_ok: bool,
 ) {
-    let send_timeout = std::time::Duration::from_millis(300);
+    // Materialize the WS-fallback frame once so each recipient gets a cheap
+    // refcount-bump clone (no per-peer Vec copy).
+    let ws_shared = tokio_tungstenite::tungstenite::Bytes::copy_from_slice(frame);
     for peer in peers {
         if udp_frame_ok {
             let udp_addr = peer.udp_addr.read().ok().and_then(|addr| *addr);
@@ -123,16 +123,7 @@ pub(crate) async fn send_screen_frame_to_peers(
                 }
             }
         }
-
-        let frame_clone = frame.to_vec();
-        let peer_id_dbg = peer.id.clone();
-        let fut = async {
-            let mut tx = peer.tx.lock().await;
-            if let Err(e) = tx.send(Message::Binary(frame_clone.into())).await {
-                log::debug!("Screen frame send failed for peer {peer_id_dbg}: {e}");
-            }
-        };
-        let _ = tokio::time::timeout(send_timeout, fut).await;
+        crate::outbound::try_send_media(&peer, ws_shared.clone(), metrics);
     }
 }
 
@@ -151,7 +142,7 @@ pub(crate) async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &s
             let msg = SignalMessage::Error {
                 message: "Screen share frame too large, reduce quality".into(),
             };
-            send_to(peer, &msg).await;
+            send_to(peer, &msg);
         }
         return;
     }
@@ -321,8 +312,8 @@ pub(crate) async fn relay_screen_udp(
         .screen_frames_out_total
         .fetch_add(room_peers_buf.len() as u64, Ordering::Relaxed);
 
-    let send_timeout = std::time::Duration::from_millis(300);
     let udp_frame_ok = data.len() <= MAX_UDP_SCREEN_CHUNK_SIZE;
+    let ws_shared = tokio_tungstenite::tungstenite::Bytes::copy_from_slice(frame);
     for peer in room_peers_buf.iter() {
         let udp_addr = if udp_frame_ok {
             peer.udp_addr.read().ok().and_then(|addr| *addr)
@@ -335,12 +326,7 @@ pub(crate) async fn relay_screen_udp(
             }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {
-            let frame_clone = frame.to_vec();
-            let fut = async {
-                let mut tx = peer.tx.lock().await;
-                let _ = tx.send(Message::Binary(frame_clone.into())).await;
-            };
-            let _ = tokio::time::timeout(send_timeout, fut).await;
+            crate::outbound::try_send_media(peer, ws_shared.clone(), metrics);
         }
     }
 }

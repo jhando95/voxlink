@@ -63,7 +63,7 @@ pub(crate) async fn handle_set_space_public(state: &State, peer_id: &str, is_pub
         for (_, p) in s.peers.iter() {
             let uid = p.user_id.lock().await.clone().unwrap_or_default();
             if uid == *mid {
-                send_to(p, &SignalMessage::SpacePublicChanged { is_public }).await;
+                send_to(p, &SignalMessage::SpacePublicChanged { is_public });
             }
         }
     }
@@ -106,7 +106,7 @@ pub(crate) async fn handle_browse_public_spaces(state: &State, peer_id: &str, db
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
         drop(s);
-        send_to(&p, &SignalMessage::PublicSpaceList { spaces }).await;
+        send_to(&p, &SignalMessage::PublicSpaceList { spaces });
     }
 }
 
@@ -177,7 +177,7 @@ pub(crate) async fn handle_set_channel_topic(
 
     // Also send to the setter
     if let Some(peer) = state.read().await.peers.get(peer_id) {
-        send_to(peer, &notify).await;
+        send_to(peer, &notify);
     }
 
     let _ = crate::handlers::space::append_audit_entry(
@@ -199,6 +199,7 @@ pub(crate) async fn handle_channel_setting(
     peer_id: &str,
     channel_id: String,
     setting: ChannelSetting,
+    db: &crate::types::Db,
 ) {
     let Some((space_id, _, actor_role)) = crate::handlers::space::peer_space_role(state, peer_id).await
     else {
@@ -234,6 +235,14 @@ pub(crate) async fn handle_channel_setting(
             }
             ChannelSetting::Category(ref cat) => {
                 channel.category = cat.chars().take(32).collect();
+                let cat_persist = channel.category.clone();
+                if let Some(db) = db {
+                    let db = db.clone();
+                    let cid = channel_id.clone();
+                    tokio::task::spawn_blocking(move || {
+                        db.set_channel_category(&cid, &cat_persist);
+                    });
+                }
                 SignalMessage::ChannelCategoryChanged {
                     channel_id: channel_id.clone(),
                     category: channel.category.clone(),
@@ -279,7 +288,7 @@ pub(crate) async fn handle_channel_setting(
             .collect();
         drop(s);
         for peer in members {
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
     }
 }
@@ -341,7 +350,7 @@ pub(crate) async fn handle_set_priority_speaker(
             .collect();
         drop(s);
         for peer in peers {
-            send_to(&peer, &notify).await;
+            send_to(&peer, &notify);
         }
     }
 }

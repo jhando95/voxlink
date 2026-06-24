@@ -250,7 +250,7 @@ pub(crate) async fn handle_signal(
             message_id,
             emoji,
         } => {
-            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji)
+            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji, db)
                 .await;
         }
         SignalMessage::ReactToDirectMessage {
@@ -259,7 +259,7 @@ pub(crate) async fn handle_signal(
             emoji,
         } => {
             handlers::chat::handle_react_to_direct_message(
-                state, peer_id, user_id, message_id, emoji,
+                state, peer_id, user_id, message_id, emoji, db,
             )
             .await;
         }
@@ -316,6 +316,7 @@ pub(crate) async fn handle_signal(
                 peer_id,
                 channel_id,
                 ChannelSetting::UserLimit(user_limit),
+                db,
             )
             .await;
         }
@@ -328,6 +329,7 @@ pub(crate) async fn handle_signal(
                 peer_id,
                 channel_id,
                 ChannelSetting::SlowMode(slow_mode_secs),
+                db,
             )
             .await;
         }
@@ -340,11 +342,12 @@ pub(crate) async fn handle_signal(
                 peer_id,
                 channel_id,
                 ChannelSetting::Category(category),
+                db,
             )
             .await;
         }
         SignalMessage::SetChannelStatus { channel_id, status } => {
-            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status))
+            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status), db)
                 .await;
         }
         SignalMessage::SetChannelPermissions {
@@ -359,7 +362,7 @@ pub(crate) async fn handle_signal(
             };
             let role_str = min_role.to_lowercase();
             let cid = channel_id.clone();
-            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role)).await;
+            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role), db).await;
             // Persist min_role to DB
             if let Some(ref db) = db {
                 let db = db.clone();
@@ -384,6 +387,7 @@ pub(crate) async fn handle_signal(
                 peer_id,
                 channel_id,
                 ChannelSetting::AutoDelete(auto_delete_hours),
+                db,
             )
             .await;
             // Persist to DB
@@ -531,6 +535,13 @@ pub(crate) async fn handle_signal(
             )
             .await;
         }
+        SignalMessage::ChangeEmail {
+            current_password,
+            new_email,
+        } => {
+            handlers::auth::handle_change_email(state, peer_id, current_password, new_email, db)
+                .await;
+        }
         SignalMessage::RevokeAllSessions => {
             handlers::auth::handle_revoke_all_sessions(state, peer_id, db).await;
         }
@@ -607,9 +618,73 @@ pub(crate) async fn handle_signal(
         SignalMessage::SetDisplayName { name } => {
             handlers::account::handle_set_display_name(state, peer_id, name, db).await;
         }
-        SignalMessage::DeleteAccount => {
-            handlers::account::handle_delete_account(state, peer_id, db).await;
+        SignalMessage::DeleteAccount { current_password } => {
+            handlers::account::handle_delete_account(state, peer_id, current_password, db).await;
         }
+        SignalMessage::MarkChannelRead {
+            channel_id,
+            message_id,
+        } => {
+            handlers::read_state::handle_mark_channel_read(
+                state,
+                peer_id,
+                channel_id,
+                message_id,
+                db,
+            )
+            .await;
+        }
+        // Server-emitted; ignore if a client ever echoes it back.
+        SignalMessage::ReadStateSnapshot { .. } => {}
+
+        // ─── v0.13: custom role management API ───
+        SignalMessage::CreateRole {
+            name,
+            color,
+            permissions,
+            position,
+        } => {
+            handlers::roles::handle_create_role(
+                state, peer_id, name, color, permissions, position, db,
+            )
+            .await;
+        }
+        SignalMessage::UpdateRole {
+            role_id,
+            name,
+            color,
+            permissions,
+            position,
+        } => {
+            handlers::roles::handle_update_role(
+                state, peer_id, role_id, name, color, permissions, position, db,
+            )
+            .await;
+        }
+        SignalMessage::DeleteRole { role_id } => {
+            handlers::roles::handle_delete_role(state, peer_id, role_id, db).await;
+        }
+        SignalMessage::AssignRoleToMember { user_id, role_id } => {
+            handlers::roles::handle_assign_role_to_member(
+                state, peer_id, user_id, role_id, db,
+            )
+            .await;
+        }
+        SignalMessage::UnassignRoleFromMember { user_id, role_id } => {
+            handlers::roles::handle_unassign_role_from_member(
+                state, peer_id, user_id, role_id, db,
+            )
+            .await;
+        }
+        SignalMessage::RequestRoleList => {
+            handlers::roles::handle_request_role_list(state, peer_id, db).await;
+        }
+        // Server-emitted; ignore on echo.
+        SignalMessage::RoleListSnapshot { .. }
+        | SignalMessage::RoleCreated { .. }
+        | SignalMessage::RoleUpdated { .. }
+        | SignalMessage::RoleDeleted { .. }
+        | SignalMessage::MemberRolesChanged { .. } => {}
         // Server discovery
         SignalMessage::SetSpacePublic { is_public } => {
             handlers::channel_settings::handle_set_space_public(state, peer_id, is_public, db).await;
@@ -649,6 +724,22 @@ pub(crate) async fn handle_signal(
             metrics
                 .client_jitter_buffer_seconds
                 .observe(jitter_buffer_ms as f64 / 1000.0);
+        }
+        SignalMessage::UploadAttachment {
+            channel_id,
+            file_name,
+            mime,
+            caption,
+            data_b64,
+        } => {
+            handlers::attachments::handle_upload_attachment(
+                state, peer_id, channel_id, file_name, mime, caption, data_b64, db,
+            )
+            .await;
+        }
+        SignalMessage::RequestAttachment { attachment_id } => {
+            handlers::attachments::handle_request_attachment(state, peer_id, attachment_id, db)
+                .await;
         }
         other => {
             log::debug!(

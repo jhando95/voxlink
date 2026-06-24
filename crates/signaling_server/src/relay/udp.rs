@@ -18,7 +18,7 @@ pub(crate) async fn handle_request_udp(state: &State, peer_id: &str) {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id).cloned() {
             drop(s);
-            crate::send_to(&peer, &SignalMessage::UdpUnavailable).await;
+            crate::send_to(&peer, &SignalMessage::UdpUnavailable);
         }
         return;
     }
@@ -44,8 +44,7 @@ pub(crate) async fn handle_request_udp(state: &State, peer_id: &str) {
                 token: token_hex,
                 port: udp_port,
             },
-        )
-        .await;
+        );
         log::info!("UDP session created for peer {peer_id} on port {udp_port}");
     }
 }

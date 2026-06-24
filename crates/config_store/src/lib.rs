@@ -149,6 +149,14 @@ pub struct AppConfig {
     /// Whether the first-run welcome screen has been dismissed. Once true, the welcome card is hidden.
     #[serde(default)]
     pub first_run_completed: bool,
+    /// Opt-in: broadcast the foreground app as activity (e.g. "Playing Helldivers 2").
+    /// Off by default — rich presence costs nothing unless the user enables it.
+    #[serde(default)]
+    pub rich_presence_enabled: bool,
+    /// Apps the user permits broadcasting via rich presence. Empty = never broadcast
+    /// (prevents accidentally leaking an app the user didn't intend to share).
+    #[serde(default)]
+    pub rich_presence_allowlist: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +301,8 @@ impl Default for AppConfig {
             favorite_channels: Vec::new(),
             recent_reactions: Vec::new(),
             first_run_completed: false,
+            rich_presence_enabled: false,
+            rich_presence_allowlist: Vec::new(),
         }
     }
 }
@@ -642,6 +652,8 @@ mod tests {
             favorite_channels: Vec::new(),
             recent_reactions: Vec::new(),
             first_run_completed: false,
+            rich_presence_enabled: false,
+            rich_presence_allowlist: Vec::new(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
@@ -702,6 +714,43 @@ mod tests {
         assert!(config.screen_share_widget_y.is_none());
         assert!(config.favorite_friends.is_empty());
         assert!(config.saved_servers.is_empty());
+    }
+
+    #[test]
+    fn rich_presence_defaults_and_backward_compat() {
+        // Default: opt-in feature is OFF and the allowlist is empty
+        // (empty allowlist = never broadcast, per the privacy design).
+        let config = AppConfig::default();
+        assert!(!config.rich_presence_enabled);
+        assert!(config.rich_presence_allowlist.is_empty());
+
+        // Older config JSON without the fields decodes to those same defaults.
+        let json = r#"{
+            "input_device": null,
+            "output_device": null,
+            "push_to_talk_key": null,
+            "open_mic_sensitivity": 0.5,
+            "mic_mode": "open_mic",
+            "user_name": "OldUser",
+            "server_address": "ws://localhost:9090"
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.rich_presence_enabled);
+        assert!(config.rich_presence_allowlist.is_empty());
+
+        // Round-trip preserves an enabled toggle and a populated allowlist.
+        let config = AppConfig {
+            rich_presence_enabled: true,
+            rich_presence_allowlist: vec!["Helldivers 2".into(), "Spotify".into()],
+            ..AppConfig::default()
+        };
+        let decoded: AppConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert!(decoded.rich_presence_enabled);
+        assert_eq!(
+            decoded.rich_presence_allowlist,
+            vec!["Helldivers 2".to_string(), "Spotify".to_string()]
+        );
     }
 
     #[test]

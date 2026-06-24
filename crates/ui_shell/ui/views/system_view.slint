@@ -89,7 +89,7 @@ export component SystemView inherits Rectangle {
                         Text {
                             text: "Keep the UI light, the audio fast, and the network honest without burying everyday actions.";
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
@@ -142,7 +142,7 @@ export component SystemView inherits Rectangle {
                                     ? "Resume the live room, tweak audio, or keep the friend pop-out nearby."
                                     : "Audio controls, friend presence, and session shortcuts live here.";
                                 color: VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             HorizontalLayout {
@@ -382,7 +382,7 @@ export component SystemView inherits Rectangle {
                             if root.direct-message-threads.length == 0 : Text {
                                 text: "Open a direct message from any friend card and it will stay here for quick return trips.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             for thread in root.direct-message-threads : Rectangle {
@@ -427,21 +427,21 @@ export component SystemView inherits Rectangle {
                                             Text {
                                                 text: thread.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
                                             }
                                             Text {
                                                 text: thread.meta;
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                                 vertical-alignment: center;
                                             }
                                         }
                                         Text {
                                             text: thread.preview;
                                             color: VxTheme.text-secondary;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             overflow: elide;
                                         }
                                     }
@@ -481,7 +481,7 @@ export component SystemView inherits Rectangle {
                             Text {
                                 text: "Rust core, Slint shell, no embedded browser runtime.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             VxStatusPill {
@@ -500,7 +500,7 @@ export component SystemView inherits Rectangle {
                             Text {
                                 text: "Low idle usage, clean redraw behavior, and stable audio throughput stay ahead of decorative effects.";
                                 color: VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             VxStatusPill {
@@ -519,7 +519,7 @@ export component SystemView inherits Rectangle {
                             Text {
                                 text: "You can add friends with their Voxlink username.";
                                 color: VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             VerticalLayout {
@@ -588,13 +588,13 @@ export component SystemView inherits Rectangle {
                                 Text {
                                     text: "No friends yet";
                                     color: VxTheme.text-secondary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                 }
                                 Text {
                                     text: "Add a friend to get started.";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                 }
                             }
                             if root.favorite-friends.length > 0 : VerticalLayout {
@@ -637,20 +637,20 @@ export component SystemView inherits Rectangle {
                                             Text {
                                                 text: friend.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
                                             }
                                             Text {
                                                 text: friend.detail;
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                                 overflow: elide;
                                             }
                                             if !friend.is-online && friend.last-seen != "" : Text {
                                                 text: friend.last-seen;
                                                 color: VxTheme.text-muted;
-                                                font-size: 8px;
+                                                font-size: 10px;
                                             }
                                         }
                                         VxStatusPill {
@@ -680,7 +680,7 @@ export component SystemView inherits Rectangle {
                             if root.incoming-friend-requests.length == 0 && root.outgoing-friend-requests.length == 0 : Text {
                                 text: "No pending requests right now. Add people from any member list and they will land here.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             if root.incoming-friend-requests.length > 0 : VerticalLayout {
@@ -709,14 +709,14 @@ export component SystemView inherits Rectangle {
                                             Text {
                                                 text: request.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
                                             }
                                             Text {
                                                 text: request.detail;
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                                 overflow: elide;
                                             }
                                         }
@@ -763,14 +763,14 @@ export component SystemView inherits Rectangle {
                                             Text {
                                                 text: request.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
                                             }
                                             Text {
                                                 text: request.detail;
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                                 overflow: elide;
                                             }
                                         }
@@ -810,7 +810,7 @@ export component SystemView inherits Rectangle {
                                         ? "Add people from " + root.current-space-name + " and keep them in a tiny always-on-top window. It only updates when friend or presence state changes."
                                         : "Open a tiny always-on-top friends window. It stays idle until you add someone.");
                                 color: VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                             HorizontalLayout {
@@ -852,7 +852,7 @@ export component SystemView inherits Rectangle {
                                 ? "Resume the live room, jump to settings, or keep the friend pop-out nearby."
                                 : "Jump to settings or keep the friend pop-out nearby without leaving the control deck.";
                             color: VxTheme.text-secondary;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         if root.room-code != "" : VxButton {
@@ -1019,7 +1019,7 @@ export component SystemView inherits Rectangle {
                         if root.direct-message-threads.length == 0 : Text {
                             text: "Recent direct messages will appear here.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                         for thread in root.direct-message-threads : Rectangle {
                             border-radius: VxTheme.radius-card;
@@ -1070,7 +1070,7 @@ export component SystemView inherits Rectangle {
                                         Text {
                                             text: thread.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 11px;
+                                            font-size: 12px;
                                             font-weight: thread.unread-count > 0 ? 800 : 700;
                                         }
                                         if thread.unread-count > 0 : Rectangle {
@@ -1081,7 +1081,7 @@ export component SystemView inherits Rectangle {
                                             Text {
                                                 text: thread.unread-count;
                                                 color: VxTheme.text-inverse;
-                                                font-size: 8px;
+                                                font-size: 10px;
                                                 font-weight: 700;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
@@ -1091,7 +1091,7 @@ export component SystemView inherits Rectangle {
                                     Text {
                                         text: thread.preview;
                                         color: VxTheme.text-secondary;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                         overflow: elide;
                                     }
                                 }
@@ -1108,7 +1108,7 @@ export component SystemView inherits Rectangle {
                         Text {
                             text: "You can add friends with their Voxlink username.";
                             color: VxTheme.text-secondary;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
@@ -1177,13 +1177,13 @@ export component SystemView inherits Rectangle {
                             Text {
                                 text: "No friends yet";
                                 color: VxTheme.text-secondary;
-                                font-size: 11px;
+                                font-size: 12px;
                                 font-weight: 600;
                             }
                             Text {
                                 text: "Add a friend to get started.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                             }
                         }
                         if root.favorite-friends.length > 0 : VerticalLayout {
@@ -1233,19 +1233,19 @@ export component SystemView inherits Rectangle {
                                         Text {
                                             text: friend.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 11px;
+                                            font-size: 12px;
                                             font-weight: 700;
                                         }
                                         Text {
                                             text: friend.detail;
                                             color: friend.is-in-voice ? VxTheme.speaking-border :
                                                    friend.is-online ? VxTheme.accent : VxTheme.text-muted;
-                                            font-size: 9px;
+                                            font-size: 11px;
                                         }
                                         if !friend.is-online && friend.last-seen != "" : Text {
                                             text: friend.last-seen;
                                             color: VxTheme.text-muted;
-                                            font-size: 8px;
+                                            font-size: 10px;
                                         }
                                     }
 
@@ -1273,7 +1273,7 @@ export component SystemView inherits Rectangle {
                         if root.incoming-friend-requests.length == 0 && root.outgoing-friend-requests.length == 0 : Text {
                             text: "No pending requests right now.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                         }
                         if root.incoming-friend-requests.length > 0 : VerticalLayout {
                             spacing: 8px;
@@ -1288,13 +1288,13 @@ export component SystemView inherits Rectangle {
                                     Text {
                                         text: request.name;
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 700;
                                     }
                                     Text {
                                         text: request.detail;
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1331,13 +1331,13 @@ export component SystemView inherits Rectangle {
                                     Text {
                                         text: request.name;
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 700;
                                     }
                                     Text {
                                         text: request.detail;
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                     VxButton {
                                         label: "Cancel request";
@@ -1371,7 +1371,7 @@ export component SystemView inherits Rectangle {
                                     ? "Add people from " + root.current-space-name + " and keep them in a tiny always-on-top window."
                                     : "Open a tiny always-on-top friends window. It stays idle until you add someone.");
                             color: VxTheme.text-secondary;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
@@ -1413,7 +1413,7 @@ export component SystemView inherits Rectangle {
 
                         if root.startup-phases.length == 0 : Text {
                             text: "(no startup data)";
-                            font-size: 12px;
+                            font-size: 13px;
                             color: VxTheme.text-muted;
                         }
 
@@ -1421,13 +1421,13 @@ export component SystemView inherits Rectangle {
                             spacing: 12px;
                             Text {
                                 text: phase.name;
-                                font-size: 12px;
+                                font-size: 13px;
                                 color: VxTheme.text-primary;
                                 horizontal-stretch: 1;
                             }
                             Text {
                                 text: phase.ms + " ms";
-                                font-size: 12px;
+                                font-size: 13px;
                                 color: VxTheme.text-muted;
                                 horizontal-alignment: right;
                             }

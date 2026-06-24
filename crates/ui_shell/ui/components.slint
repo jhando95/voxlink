@@ -104,31 +104,24 @@ export component VxButton inherits Rectangle {
                   root.soft ? VxTheme.border-strong : VxTheme.border-subtle;
     border-width: root.ghost ? 0px : VxTheme.btn-border-width;
 
-    animate background { duration: 90ms; easing: ease-out; }
-    animate border-color { duration: 90ms; easing: ease-out; }
+    animate background { duration: VxTheme.dur-fast; easing: ease-out; }
+    animate border-color { duration: VxTheme.dur-fast; easing: ease-out; }
 
+    // Lean depth: a single 1px top edge-highlight (no glossy gradient sheen).
     Rectangle {
         width: parent.width;
         height: 1px;
-        background: root.accent || root.danger
-            ? #ffffff36
-            : VxTheme.accent-subtle;
-        opacity: root.ghost ? 0 : 1;
+        background: root.accent || root.danger ? #ffffff30 : VxTheme.edge-highlight;
+        opacity: root.ghost || !root.enabled ? 0 : 1;
     }
 
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: @linear-gradient(180deg, #ffffff18 0%, transparent 42%, #00000012 100%);
-        opacity: root.ghost || !root.enabled ? 0 : (root.accent || root.danger ? 1.0 : 0.68);
-    }
-
+    // ...grounded by a hairline bottom edge.
     Rectangle {
         y: parent.height - 1px;
         width: parent.width;
         height: 1px;
         background: root.ghost ? transparent :
-            (root.accent || root.danger ? #00000022 : VxTheme.border-subtle.transparentize(0.55));
+            (root.accent || root.danger ? #00000022 : VxTheme.edge-shadow);
         opacity: root.enabled ? 1.0 : 0.45;
     }
 
@@ -186,8 +179,8 @@ export component VxButton inherits Rectangle {
             color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
                    !root.enabled ? VxTheme.text-muted :
                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.text-primary;
-            font-size: (root.small ? 11px : 13px) * VxTheme.s;
-            font-weight: root.accent || root.danger ? 700 : 600;
+            font-size: (root.small ? VxTheme.font-caption : VxTheme.font-body) * VxTheme.s;
+            font-weight: root.accent || root.danger ? VxTheme.weight-bold : VxTheme.weight-semibold;
             letter-spacing: VxTheme.btn-uppercase ? 1.0px : (root.small ? 0.1px : 0.15px);
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -196,34 +189,17 @@ export component VxButton inherits Rectangle {
 }
 
 export component VxCard inherits Rectangle {
+    // Clean, near-flat surface (one subtle top lift in dark mode) — modern and
+    // lean: no stacked decorative gradients/glows to render.
     background: @linear-gradient(180deg,
-        VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.03 : 0.01) 0%,
-        VxTheme.bg-card 46%,
-        VxTheme.bg-soft.transparentize(VxTheme.dark-mode ? 0.40 : 0.18) 100%);
+        VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.025 : 0.0) 0%,
+        VxTheme.bg-card 100%);
     border-radius: VxTheme.radius-card;
     border-color: VxTheme.card-border;
     border-width: VxTheme.btn-border-width;
     clip: true;
 
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: @linear-gradient(125deg,
-            VxTheme.accent-subtle.transparentize(0.12) 0%,
-            transparent 36%,
-            transparent 70%,
-            VxTheme.header-accent-right.transparentize(0.94) 100%);
-        opacity: VxTheme.dark-mode ? 1.0 : 0.72;
-    }
-
-    Rectangle {
-        x: parent.width - parent.width * 0.32;
-        width: parent.width * 0.32;
-        height: parent.height * 0.34;
-        background: @linear-gradient(180deg, VxTheme.accent-glow 0%, transparent 100%);
-        opacity: VxTheme.dark-mode ? 0.55 : 0.38;
-    }
-
+    // Lean depth: a 1px inner top edge-highlight (no drop shadows, no glows).
     Rectangle {
         x: 1px;
         y: 1px;
@@ -231,17 +207,17 @@ export component VxCard inherits Rectangle {
         height: parent.height - 2px;
         border-radius: VxTheme.radius-card;
         background: transparent;
-        border-color: VxTheme.dark-mode ? #ffffff06 : #ffffffb8;
+        border-color: VxTheme.edge-highlight;
         border-width: 1px;
-        opacity: 0.65;
+        opacity: 0.6;
     }
 
-    // Default accent bar
+    // Subtle accent top-bar — the Voxlink signature.
     Rectangle {
         width: parent.width;
         height: VxTheme.card-accent-height;
         background: @linear-gradient(90deg, transparent 0%, VxTheme.accent-border 20%, transparent 100%);
-        opacity: 0.9;
+        opacity: 0.7;
     }
 
     // ── Party/360: Blade-style double accent stripe ──

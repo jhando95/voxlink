@@ -2,12 +2,14 @@
 // Users see only the Slint GUI window, not a terminal.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod attachment;
 mod automation;
 mod callbacks;
 mod crash_report;
 mod direct_messages;
 mod friends;
 mod helpers;
+mod presence;
 mod screen_share;
 mod signal_handler;
 mod startup_timer;
@@ -40,9 +42,13 @@ fn main() {
         std::process::exit(exit_code);
     }
 
-    config_store::migrate_legacy_auth_token();
+    // Keychain access can block for tens of seconds on ad-hoc-signed / dev builds
+    // (and can stall on a locked keychain), so keep it OFF the startup critical path.
+    // The one-time legacy-token migration runs in the background; first-run state is
+    // derived from the persisted account email rather than a blocking keychain read.
+    std::thread::spawn(config_store::migrate_legacy_auth_token);
     let config = config_store::load_config();
-    let has_saved_auth = config_store::has_auth_token();
+    let has_saved_auth = config.account_email.is_some();
     timer.phase("config load");
     let is_dark = config.dark_mode.unwrap_or(true);
     let theme_preset = helpers::theme_preset_index(&config.theme_preset);
@@ -284,6 +290,20 @@ fn main() {
     } else {
         log::info!("Auto-connect disabled by environment");
     }
+
+    // Rich presence (opt-in, default off): broadcast the foreground app as
+    // activity. The poll task idles cheaply until enabled; the settings UI
+    // flips the shared toggle/allowlist at runtime.
+    window.set_rich_presence_enabled(config.rich_presence_enabled);
+    window.set_rich_presence_allowlist(
+        presence::join_allowlist(&config.rich_presence_allowlist).into(),
+    );
+    let presence_state = presence::PresenceState::new(
+        config.rich_presence_enabled,
+        config.rich_presence_allowlist.clone(),
+    );
+    callbacks::setup_rich_presence(&window, &presence_state);
+    presence::spawn_poll_task(&rt_handle, network.clone(), presence_state);
 
     // Start the event loop timer
     tick_loop::start(
@@ -934,7 +954,6 @@ fn auto_connect(
             .map(|space| space.invite_code.clone())
     });
     let user_name = config.user_name.clone();
-    let auth_token = config_store::load_auth_token();
 
     if server_addr.is_empty() {
         return;
@@ -954,6 +973,11 @@ fn auto_connect(
                     w.set_status_text("Connected".into());
                 }
 
+                // Read the secure token here (off the main thread) so a slow/blocking
+                // keychain never stalls startup.
+                let auth_token = tokio::task::spawn_blocking(config_store::load_auth_token)
+                    .await
+                    .unwrap_or(None);
                 let _ = net
                     .send_signal(&shared_types::SignalMessage::Authenticate {
                         token: auth_token,

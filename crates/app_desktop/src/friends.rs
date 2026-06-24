@@ -53,6 +53,7 @@ pub fn sync_ui(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
             &cfg.user_notes,
             &cfg.channel_notification_overrides,
             &cfg.favorite_channels,
+            &cfg.blocked_users,
         );
     }
     ui_shell::set_friend_counts(window, &app.favorite_friends);

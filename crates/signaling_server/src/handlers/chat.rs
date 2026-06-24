@@ -49,7 +49,7 @@ pub async fn clear_direct_typing_for_peer(state: &State, peer_id: &str) {
         is_typing: false,
     };
     for recipient in peers_for_user(state, &target_user_id).await {
-        send_to(&recipient, &notify).await;
+        send_to(&recipient, &notify);
     }
 }
 
@@ -104,8 +104,7 @@ pub async fn handle_select_text_channel(state: &State, peer_id: &str, channel_id
                 channel_name,
                 history,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -148,7 +147,7 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                 .find_user_by_id(&target_for_db)?
                 .map(|user| user.display_name)
                 .unwrap_or_else(|| "Friend".into());
-            let history = db
+            let mut history: Vec<shared_types::TextMessageData> = db
                 .load_direct_messages_between(&current_for_db, &target_for_db, MAX_DIRECT_MESSAGES)?
                 .into_iter()
                 .map(|row| shared_types::TextMessageData {
@@ -166,9 +165,39 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    attachment_id: None,
                     link_url: None,
                 })
                 .collect();
+            // Stitch any persisted DM reactions back onto the loaded history.
+            // direct_messages keys on the lower user_id first, so use the
+            // canonical order the table itself enforces.
+            let (low, high) = if current_for_db < target_for_db {
+                (current_for_db.as_str(), target_for_db.as_str())
+            } else {
+                (target_for_db.as_str(), current_for_db.as_str())
+            };
+            if let Ok(reactions) = db.load_dm_reactions_for_pair(low, high) {
+                let mut by_id: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::with_capacity(history.len());
+                for (i, m) in history.iter().enumerate() {
+                    by_id.insert(m.message_id.clone(), i);
+                }
+                for (mid, emoji, user_name) in reactions {
+                    let Some(pos) = by_id.get(&mid).copied() else { continue };
+                    let Some(msg) = history.get_mut(pos) else { continue };
+                    if let Some(r) = msg.reactions.iter_mut().find(|r| r.emoji == emoji) {
+                        if !r.users.contains(&user_name) {
+                            r.users.push(user_name);
+                        }
+                    } else {
+                        msg.reactions.push(shared_types::ReactionData {
+                            emoji,
+                            users: vec![user_name],
+                        });
+                    }
+                }
+            }
             Ok((target_name, history))
         },
     )
@@ -185,8 +214,7 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                         user_name: target_name,
                         history,
                     },
-                )
-                .await;
+                );
             }
         }
         Err(message) => {
@@ -295,7 +323,7 @@ pub async fn handle_set_direct_typing(
             is_typing: false,
         };
         for recipient in peers_for_user(state, &previous_target).await {
-            send_to(&recipient, &notify).await;
+            send_to(&recipient, &notify);
         }
     }
 
@@ -305,7 +333,7 @@ pub async fn handle_set_direct_typing(
         is_typing: true,
     };
     for recipient in peers_for_user(state, &target_user_id).await {
-        send_to(&recipient, &notify).await;
+        send_to(&recipient, &notify);
     }
 }
 
@@ -347,8 +375,7 @@ pub async fn handle_send_text_message(
                     &SignalMessage::Error {
                         message: "You are timed out and cannot send messages".into(),
                     },
-                )
-                .await;
+                );
                 return;
             }
         }
@@ -386,8 +413,7 @@ pub async fn handle_send_text_message(
                         &SignalMessage::Error {
                             message: "You don't have permission to use this channel".into(),
                         },
-                    )
-                    .await;
+                    );
                 }
                 return;
             }
@@ -442,8 +468,7 @@ pub async fn handle_send_text_message(
                                         "Slow mode: wait {remaining}s before sending another message"
                                     ),
                                 },
-                            )
-                            .await;
+                            );
                         }
                         return;
                     }
@@ -516,6 +541,7 @@ pub async fn handle_send_text_message(
         forwarded_from: None,
         attachment_name: None,
         attachment_size: None,
+        attachment_id: None,
         link_url,
     };
 
@@ -558,6 +584,9 @@ pub async fn handle_send_text_message(
                 reply_preview,
                 pinned: false,
                 link_url: persist_link_url,
+                attachment_id: None,
+                attachment_name: None,
+                attachment_size: None,
             }) {
                 log::error!("Failed to persist message: {e}");
             }
@@ -600,7 +629,7 @@ pub async fn handle_send_text_message(
             .collect();
         drop(s);
         for peer in &members {
-            send_to(peer, &notify).await;
+            send_to(peer, &notify);
         }
 
         // Send MentionNotification to mentioned users who are not the sender
@@ -638,10 +667,50 @@ pub async fn handle_send_text_message(
                             sender_name: msg_data.sender_name.clone(),
                             preview: preview.clone(),
                         },
-                    )
-                    .await;
+                    );
                 }
             }
+        }
+    }
+
+    // Opt-in OpenGraph link preview: fetch in the background (never delays the
+    // message) and push a LinkPreviewReady to the channel's members when ready.
+    if crate::link_preview::previews_enabled() {
+        if let Some(url) = msg_data.link_url.clone() {
+            let state = state.clone();
+            let preview_channel = channel_id.clone();
+            let preview_message = message_id.clone();
+            let preview_space = space_id.clone();
+            tokio::spawn(async move {
+                let fetched =
+                    tokio::task::spawn_blocking(move || crate::link_preview::fetch_link_preview(&url))
+                        .await
+                        .ok()
+                        .flatten();
+                let Some(data) = fetched else {
+                    return;
+                };
+                let notify = SignalMessage::LinkPreviewReady {
+                    channel_id: preview_channel,
+                    message_id: preview_message,
+                    preview: shared_types::LinkPreview {
+                        title: data.title.unwrap_or_default(),
+                        description: data.description.unwrap_or_default(),
+                    },
+                };
+                let s = state.read().await;
+                if let Some(space) = s.spaces.get(&preview_space) {
+                    let members: Vec<_> = space
+                        .member_ids
+                        .iter()
+                        .filter_map(|id| s.peers.get(id).cloned())
+                        .collect();
+                    drop(s);
+                    for peer in &members {
+                        send_to(peer, &notify);
+                    }
+                }
+            });
         }
     }
 }
@@ -745,6 +814,7 @@ pub async fn handle_send_direct_message(
                 forwarded_from: None,
                 attachment_name: None,
                 attachment_size: None,
+                attachment_id: None,
                 link_url: None,
             })
         })
@@ -779,7 +849,7 @@ pub async fn handle_send_direct_message(
                 message: message.clone(),
             };
             for recipient in peers_for_user(state, &current_user_id).await {
-                send_to(&recipient, &sender_notify).await;
+                send_to(&recipient, &sender_notify);
             }
 
             let target_notify = SignalMessage::DirectMessage {
@@ -787,7 +857,7 @@ pub async fn handle_send_direct_message(
                 message,
             };
             for recipient in peers_for_user(state, &target_user_id).await {
-                send_to(&recipient, &target_notify).await;
+                send_to(&recipient, &target_notify);
             }
         }
         Err(message) => {
@@ -930,7 +1000,7 @@ pub async fn handle_edit_direct_message(
                 new_content: new_content.clone(),
             };
             for recipient in peers_for_user(state, &current_user_id).await {
-                send_to(&recipient, &sender_notify).await;
+                send_to(&recipient, &sender_notify);
             }
 
             let target_notify = SignalMessage::DirectMessageEdited {
@@ -939,7 +1009,7 @@ pub async fn handle_edit_direct_message(
                 new_content,
             };
             for recipient in peers_for_user(state, &target_user_id).await {
-                send_to(&recipient, &target_notify).await;
+                send_to(&recipient, &target_notify);
             }
         }
         Ok(false) => {
@@ -971,12 +1041,22 @@ pub async fn handle_pin_message(
 
     let ok = {
         let mut s = state.write().await;
+        // Look up actor's role within this space (Moderator+ can pin any message).
+        let actor_role = if let Some(sp) = s.spaces.get(&space_id) {
+            sp.member_roles
+                .get(&owner_identity)
+                .copied()
+                .unwrap_or(shared_types::SpaceRole::Member)
+        } else {
+            shared_types::SpaceRole::Member
+        };
+        let is_mod_or_above = actor_role.has_at_least(shared_types::SpaceRole::Moderator);
         if let Some(space) = s.spaces.get_mut(&space_id) {
             let is_owner = space.owner_id == owner_identity;
             if let Some(messages) = space.text_messages.get_mut(&channel_id) {
                 if let Some(message) = messages.iter_mut().find(|msg| msg.message_id == message_id)
                 {
-                    if message.sender_id == owner_identity || is_owner {
+                    if message.sender_id == owner_identity || is_owner || is_mod_or_above {
                         message.pinned = pinned;
                         true
                     } else {
@@ -1033,14 +1113,23 @@ pub async fn handle_delete_text_message(
     };
     let Some(space_id) = space_id else { return };
 
-    // Check ownership: sender can delete own, space owner can delete any
+    // Check ownership: sender can delete own, space owner + moderators+ can delete any.
     let ok = {
         let mut s = state.write().await;
+        let actor_role = if let Some(sp) = s.spaces.get(&space_id) {
+            sp.member_roles
+                .get(&owner_identity)
+                .copied()
+                .unwrap_or(shared_types::SpaceRole::Member)
+        } else {
+            shared_types::SpaceRole::Member
+        };
+        let is_mod_or_above = actor_role.has_at_least(shared_types::SpaceRole::Moderator);
         if let Some(space) = s.spaces.get_mut(&space_id) {
             let is_owner = space.owner_id == owner_identity;
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(pos) = msgs.iter().position(|m| m.message_id == message_id) {
-                    if msgs[pos].sender_id == owner_identity || is_owner {
+                    if msgs[pos].sender_id == owner_identity || is_owner || is_mod_or_above {
                         msgs.remove(pos);
                         true
                     } else {
@@ -1129,7 +1218,7 @@ pub async fn handle_delete_direct_message(
                 message_id: message_id.clone(),
             };
             for recipient in peers_for_user(state, &current_user_id).await {
-                send_to(&recipient, &sender_notify).await;
+                send_to(&recipient, &sender_notify);
             }
 
             let target_notify = SignalMessage::DirectMessageDeleted {
@@ -1137,7 +1226,7 @@ pub async fn handle_delete_direct_message(
                 message_id,
             };
             for recipient in peers_for_user(state, &target_user_id).await {
-                send_to(&recipient, &target_notify).await;
+                send_to(&recipient, &target_notify);
             }
         }
         Ok(false) => {
@@ -1157,6 +1246,7 @@ pub async fn handle_react_to_message(
     channel_id: String,
     message_id: String,
     emoji: String,
+    db: &crate::types::Db,
 ) {
     let emoji = emoji.trim().to_string();
     if emoji.is_empty() || emoji.len() > 16 {
@@ -1180,31 +1270,51 @@ pub async fn handle_react_to_message(
     };
     let Some(user_name) = user_name else { return };
 
-    // Update in-memory
-    {
+    // Update in-memory and decide whether this is an add or remove (toggle).
+    let toggle = {
         let mut s = state.write().await;
+        let mut toggle: Option<bool> = None; // Some(true)=added, Some(false)=removed
         if let Some(space) = s.spaces.get_mut(&space_id) {
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(msg) = msgs.iter_mut().find(|m| m.message_id == message_id) {
-                    // Toggle: add if not present, remove if already reacted
                     if let Some(reaction) = msg.reactions.iter_mut().find(|r| r.emoji == emoji) {
                         if let Some(pos) = reaction.users.iter().position(|u| u == &user_name) {
                             reaction.users.remove(pos);
                             if reaction.users.is_empty() {
                                 msg.reactions.retain(|r| r.emoji != emoji);
                             }
+                            toggle = Some(false);
                         } else {
                             reaction.users.push(user_name.clone());
+                            toggle = Some(true);
                         }
                     } else {
                         msg.reactions.push(ReactionData {
                             emoji: emoji.clone(),
                             users: vec![user_name.clone()],
                         });
+                        toggle = Some(true);
                     }
                 }
             }
         }
+        toggle
+    };
+
+    // Persist the change so reactions survive server restart.
+    if let (Some(added), Some(db)) = (toggle, db) {
+        let db = db.clone();
+        let mid = message_id.clone();
+        let em = emoji.clone();
+        let un = user_name.clone();
+        let now = crate::now_epoch_secs() as i64;
+        tokio::task::spawn_blocking(move || {
+            if added {
+                db.add_reaction(&mid, &em, &un, now);
+            } else {
+                db.remove_reaction(&mid, &em, &un);
+            }
+        });
     }
 
     let notify = SignalMessage::MessageReaction {
@@ -1224,6 +1334,7 @@ pub async fn handle_react_to_direct_message(
     target_user_id: String,
     message_id: String,
     emoji: String,
+    db: &crate::types::Db,
 ) {
     let emoji = emoji.trim().to_string();
     if emoji.is_empty() || emoji.len() > 16 {
@@ -1241,6 +1352,37 @@ pub async fn handle_react_to_direct_message(
     };
     let Some(user_name) = user_name else { return };
 
+    // Toggle-persist: if the user already has this exact reaction, remove it;
+    // otherwise add it. Unlike text-channel reactions where we mutate in-memory
+    // state, DMs aren't kept in memory — the DB IS the authoritative state.
+    if let Some(db) = db.as_ref() {
+        let db = db.clone();
+        let mid = message_id.clone();
+        let em = emoji.clone();
+        let un = user_name.clone();
+        let now = crate::now_epoch_secs() as i64;
+        let _ = tokio::task::spawn_blocking(move || {
+            // Probe for existing row to choose add vs remove.
+            let existed = if let Ok(conn) = db.lock_conn() {
+                conn.query_row(
+                    "SELECT 1 FROM dm_reactions WHERE message_id = ?1 AND emoji = ?2 AND user_name = ?3",
+                    rusqlite::params![mid, em, un],
+                    |_| Ok(1i32),
+                )
+                .ok()
+                .is_some()
+            } else {
+                false
+            };
+            if existed {
+                db.remove_dm_reaction(&mid, &em, &un);
+            } else {
+                db.add_dm_reaction(&mid, &em, &un, now);
+            }
+        })
+        .await;
+    }
+
     // Notify the target user
     let target_notify = SignalMessage::DirectMessageReaction {
         user_id: current_user_id.clone(),
@@ -1249,7 +1391,7 @@ pub async fn handle_react_to_direct_message(
         user_name: user_name.clone(),
     };
     for recipient in peers_for_user(state, &target_user_id).await {
-        send_to(&recipient, &target_notify).await;
+        send_to(&recipient, &target_notify);
     }
 
     // Notify the sender (self) so all their devices update
@@ -1260,7 +1402,7 @@ pub async fn handle_react_to_direct_message(
         user_name,
     };
     for recipient in peers_for_user(state, &current_user_id).await {
-        send_to(&recipient, &self_notify).await;
+        send_to(&recipient, &self_notify);
     }
 }
 
@@ -1438,6 +1580,7 @@ pub async fn handle_search_messages(
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    attachment_id: None,
                     link_url: None,
                 })
                 .collect();
@@ -1445,7 +1588,7 @@ pub async fn handle_search_messages(
                 channel_id,
                 messages,
             };
-            send_to(&peer, &resp).await;
+            send_to(&peer, &resp);
         }
         _ => {
             send_error(state, peer_id, "Search failed").await;
@@ -1504,8 +1647,7 @@ pub async fn handle_search_space_messages(
                 &SignalMessage::SpaceSearchResults {
                     results: Vec::new(),
                 },
-            )
-            .await;
+            );
         }
         return;
     }
@@ -1548,11 +1690,12 @@ pub async fn handle_search_space_messages(
                         forwarded_from: None,
                         attachment_name: None,
                         attachment_size: None,
+                        attachment_id: None,
                         link_url: None,
                     },
                 })
                 .collect();
-            send_to(&peer, &SignalMessage::SpaceSearchResults { results }).await;
+            send_to(&peer, &SignalMessage::SpaceSearchResults { results });
         }
         _ => {
             send_error(state, peer_id, "Search failed").await;
@@ -1618,7 +1761,7 @@ pub async fn handle_create_group_dm(
             };
             for member_id in &all_members {
                 for peer in peers_for_user(state, member_id).await {
-                    send_to(&peer, &notify).await;
+                    send_to(&peer, &notify);
                 }
             }
         }
@@ -1671,6 +1814,7 @@ pub async fn handle_select_group_dm(state: &State, peer_id: &str, group_id: Stri
                     forwarded_from: None,
                     attachment_name: None,
                     attachment_size: None,
+                    attachment_id: None,
                     link_url: None,
                 })
                 .collect();
@@ -1683,8 +1827,7 @@ pub async fn handle_select_group_dm(state: &State, peer_id: &str, group_id: Stri
                         members,
                         history: msgs,
                     },
-                )
-                .await;
+                );
             }
         }
         Err(msg) => {
@@ -1773,6 +1916,7 @@ pub async fn handle_send_group_message(
                 forwarded_from: None,
                 attachment_name: None,
                 attachment_size: None,
+                attachment_id: None,
                 link_url: None,
             };
             let notify = SignalMessage::GroupMessage {
@@ -1790,7 +1934,7 @@ pub async fn handle_send_group_message(
                     {
                         continue;
                     }
-                    send_to(&peer, &notify).await;
+                    send_to(&peer, &notify);
                 }
             }
         }
@@ -1820,7 +1964,9 @@ pub async fn handle_get_thread(
         return;
     };
 
-    // Collect reply chain from in-memory messages
+    // Collect the full reply chain (root + direct replies + replies-to-replies …)
+    // via transitive closure over reply_to_message_id, so deep threads return
+    // every descendant, not just the first generation.
     let thread_messages = {
         let s = state.read().await;
         let Some(space) = s.spaces.get(&space_id) else {
@@ -1831,17 +1977,32 @@ pub async fn handle_get_thread(
             send_error(state, peer_id, "Channel not found").await;
             return;
         };
-        // Find all messages that form the reply chain
         let mut thread = Vec::new();
-        // First, find the root message
         if let Some(root) = msgs.iter().find(|m| m.message_id == message_id) {
             thread.push(root.clone());
         }
-        // Then find all messages that reply to this message (direct replies)
-        for msg in msgs.iter() {
-            if msg.reply_to_message_id.as_deref() == Some(message_id.as_str()) {
-                thread.push(msg.clone());
+        // BFS frontier of message ids whose children we still need to collect.
+        let mut frontier: std::collections::HashSet<String> = std::collections::HashSet::new();
+        frontier.insert(message_id.clone());
+        let mut included: std::collections::HashSet<String> = std::collections::HashSet::new();
+        included.insert(message_id.clone());
+        let mut grew = true;
+        while grew {
+            grew = false;
+            let mut next_frontier: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for msg in msgs.iter() {
+                let parent = match msg.reply_to_message_id.as_deref() {
+                    Some(p) => p,
+                    None => continue,
+                };
+                if frontier.contains(parent) && !included.contains(&msg.message_id) {
+                    thread.push(msg.clone());
+                    included.insert(msg.message_id.clone());
+                    next_frontier.insert(msg.message_id.clone());
+                    grew = true;
+                }
             }
+            frontier = next_frontier;
         }
         thread.sort_by_key(|m| m.timestamp);
         thread
@@ -1855,8 +2016,7 @@ pub async fn handle_get_thread(
                 root_message_id: message_id,
                 messages: thread_messages,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -1937,15 +2097,20 @@ pub async fn handle_forward_message(
             .as_secs(),
         message_id: new_message_id.clone(),
         edited: false,
+        // Reactions are intentionally NOT copied — they belong to the original
+        // message context, not the forwarded copy.
         reactions: Vec::new(),
         reply_to_message_id: None,
         reply_to_sender_name: None,
         reply_preview: None,
         pinned: false,
         forwarded_from: Some(format!("#{source_channel_name}")),
-        attachment_name: None,
-        attachment_size: None,
-        link_url: None,
+        // Preserve attachment + link metadata so image-only forwards aren't blank.
+        // Blob bytes are content-addressed by attachment_id, so no copy is needed.
+        attachment_name: source_msg.attachment_name,
+        attachment_size: source_msg.attachment_size,
+        attachment_id: source_msg.attachment_id,
+        link_url: source_msg.link_url,
     };
 
     // Store in memory
@@ -1986,6 +2151,9 @@ pub async fn handle_forward_message(
                 reply_preview: None,
                 pinned: false,
                 link_url: None,
+                attachment_id: None,
+                attachment_name: None,
+                attachment_size: None,
             }) {
                 log::error!("Failed to persist forwarded message: {e}");
             }

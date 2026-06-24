@@ -47,8 +47,7 @@ async fn remove_member_from_space(
         &SignalMessage::Kicked {
             reason: reason.to_string(),
         },
-    )
-    .await;
+    );
 
     broadcast_to_space(
         state,
@@ -335,6 +334,7 @@ pub async fn handle_ban_member(state: &State, peer_id: &str, member_id: String, 
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs() as i64,
+                user_name: String::new(),
             })
         })
         .await;
@@ -462,7 +462,7 @@ pub async fn handle_list_bans(state: &State, peer_id: &str, db: &Db) {
                 .into_iter()
                 .map(|b| shared_types::BanInfo {
                     user_id: b.user_id,
-                    user_name: String::new(),
+                    user_name: b.user_name,
                     banned_at: b.banned_at as u64,
                 })
                 .collect();
@@ -471,7 +471,7 @@ pub async fn handle_list_bans(state: &State, peer_id: &str, db: &Db) {
                 s.peers.get(peer_id).cloned()
             };
             if let Some(peer) = peer {
-                send_to(&peer, &SignalMessage::BanList { bans: ban_infos }).await;
+                send_to(&peer, &SignalMessage::BanList { bans: ban_infos });
             }
         }
         Err(msg) => {
@@ -518,7 +518,7 @@ pub async fn handle_block_user(state: &State, peer_id: &str, user_id: String, db
                 s.peers.get(peer_id).cloned()
             };
             if let Some(peer) = peer {
-                send_to(&peer, &SignalMessage::UserBlocked { user_id }).await;
+                send_to(&peer, &SignalMessage::UserBlocked { user_id });
             }
         }
         Err(msg) => {
@@ -566,7 +566,7 @@ pub async fn handle_unblock_user(state: &State, peer_id: &str, user_id: String, 
                 s.peers.get(peer_id).cloned()
             };
             if let Some(peer) = peer {
-                send_to(&peer, &SignalMessage::UserUnblocked { user_id }).await;
+                send_to(&peer, &SignalMessage::UserUnblocked { user_id });
             }
         }
         Err(msg) => {
@@ -718,7 +718,7 @@ pub async fn handle_list_automod_words(state: &State, peer_id: &str, db: &Db) {
                 s.peers.get(peer_id).cloned()
             };
             if let Some(peer) = peer {
-                send_to(&peer, &SignalMessage::AutomodWordList { words }).await;
+                send_to(&peer, &SignalMessage::AutomodWordList { words });
             }
         }
         Err(msg) => {

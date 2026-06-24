@@ -34,3 +34,53 @@ pub fn extract_first_url(content: &str) -> Option<String> {
     }
     None
 }
+
+/// Clean display host for a URL, e.g. "https://www.example.com/p?x=1" -> "example.com".
+/// Strips scheme, userinfo, port, and a leading "www.". Only http(s) URLs.
+pub fn extract_url_host(url: &str) -> Option<String> {
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    // Drop any "user:pass@" prefix, then the ":port" suffix.
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let host = host_port.split(':').next().unwrap_or("");
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+#[cfg(test)]
+mod url_host_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_clean_host() {
+        assert_eq!(
+            extract_url_host("https://www.example.com/path?x=1").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            extract_url_host("http://example.com").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            extract_url_host("https://sub.example.com:8080/x").as_deref(),
+            Some("sub.example.com")
+        );
+        assert_eq!(
+            extract_url_host("https://user:pw@host.com/x").as_deref(),
+            Some("host.com")
+        );
+    }
+
+    #[test]
+    fn rejects_non_http_or_hostless() {
+        assert_eq!(extract_url_host("ftp://example.com"), None);
+        assert_eq!(extract_url_host("not a url"), None);
+        assert_eq!(extract_url_host("https://"), None);
+    }
+}

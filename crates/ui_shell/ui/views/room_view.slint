@@ -160,14 +160,14 @@ export component RoomView inherits Rectangle {
                         if root.in-space-channel && root.current-space-name != "" : Text {
                             text: "· " + root.current-space-name;
                             color: VxTheme.text-muted;
-                            font-size: 11px;
+                            font-size: 12px;
                             vertical-alignment: center;
                         }
                     }
                     if root.channel-topic != "" : Text {
                         text: root.channel-topic;
                         color: VxTheme.text-muted;
-                        font-size: 10px;
+                        font-size: 12px;
                         overflow: elide;
                     }
                 }
@@ -210,14 +210,14 @@ export component RoomView inherits Rectangle {
                         Text {
                             text: "REC";
                             color: VxTheme.danger;
-                            font-size: 10px;
+                            font-size: 12px;
                             font-weight: 800;
                             vertical-alignment: center;
                         }
                         Text {
                             text: root.recording-user;
                             color: VxTheme.text-secondary;
-                            font-size: 10px;
+                            font-size: 12px;
                             font-weight: 600;
                             vertical-alignment: center;
                         }
@@ -244,7 +244,7 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: root.participants.length + "";
                         color: VxTheme.text-secondary;
-                        font-size: 11px;
+                        font-size: 12px;
                         font-weight: 700;
                         vertical-alignment: center;
                     }
@@ -312,7 +312,7 @@ export component RoomView inherits Rectangle {
                             height: parent.height;
                             text: "Preparing screen share…";
                             color: VxTheme.text-muted;
-                            font-size: 12px;
+                            font-size: 13px;
                             font-weight: 700;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -330,7 +330,7 @@ export component RoomView inherits Rectangle {
                         share-label := Text {
                             text: root.screen-share-owner-name + " is sharing";
                             color: VxTheme.success;
-                            font-size: 10px;
+                            font-size: 12px;
                             font-weight: 700;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -377,7 +377,7 @@ export component RoomView inherits Rectangle {
                                     width: parent.width;
                                     text: p.id == "self" ? "You" : p.name;
                                     color: p.is-speaking ? VxTheme.success : VxTheme.text-secondary;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     font-weight: p.is-speaking ? 800 : 600;
                                     horizontal-alignment: center;
                                     overflow: elide;
@@ -451,7 +451,7 @@ export component RoomView inherits Rectangle {
                                         ? "You’re live in the channel. The stage will fill as people join."
                                         : "Your room is ready. Copy the code or wait for others to drop in.";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                     horizontal-alignment: center;
                                 }
@@ -613,7 +613,7 @@ export component RoomView inherits Rectangle {
                                                 VxTheme.is-arctic ? "LIVE" :
                                                 "LIVE";
                                             color: VxTheme.text-inverse;
-                                            font-size: 8px;
+                                            font-size: 10px;
                                             font-weight: 800;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -737,7 +737,7 @@ export component RoomView inherits Rectangle {
                                     preview-badge := Text {
                                         text: "POP-OUT PREVIEW";
                                         color: VxTheme.text-primary;
-                                        font-size: 8px;
+                                        font-size: 10px;
                                         font-weight: 800;
                                         letter-spacing: 0.8px;
                                         horizontal-alignment: center;
@@ -752,7 +752,7 @@ export component RoomView inherits Rectangle {
                                     height: parent.height;
                                     text: "Separate window active";
                                     color: VxTheme.success;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -765,7 +765,7 @@ export component RoomView inherits Rectangle {
                                 Text {
                                     text: root.screen-share-source-label != "" ? root.screen-share-source-label : "Preparing pop-out preview";
                                     color: VxTheme.text-primary;
-                                    font-size: 11px;
+                                    font-size: 12px;
                                     font-weight: 700;
                                     overflow: elide;
                                 }
@@ -773,7 +773,7 @@ export component RoomView inherits Rectangle {
                                 Text {
                                     text: root.screen-share-quality-label != "" ? root.screen-share-quality-label : "Share quality pending";
                                     color: VxTheme.text-secondary;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     font-weight: 600;
                                     overflow: elide;
                                 }
@@ -781,7 +781,7 @@ export component RoomView inherits Rectangle {
                                 Text {
                                     text: root.screen-share-source-detail != "" ? root.screen-share-source-detail : "Your live self-view now stays in its own movable window outside the room.";
                                     color: VxTheme.text-muted;
-                                    font-size: 9px;
+                                    font-size: 11px;
                                     wrap: word-wrap;
                                     max-height: 28px;
                                     overflow: elide;
@@ -821,7 +821,7 @@ export component RoomView inherits Rectangle {
                         Text {
                             text: "Shape one voice lane locally. These changes only affect what you hear.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
 
@@ -834,7 +834,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: "Volume";
                                 color: VxTheme.text-secondary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 46px;
                                 vertical-alignment: center;
@@ -852,7 +852,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: Math.round(root.selected-peer-volume * 100) + "%";
                                 color: VxTheme.text-primary;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 700;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -872,7 +872,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: "Bass";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 46px;
                                 vertical-alignment: center;
@@ -890,7 +890,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-bass - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-bass - 0.5) * 12) : Math.round((root.selected-peer-bass - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -907,7 +907,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: "Mid";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 46px;
                                 vertical-alignment: center;
@@ -925,7 +925,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-mid - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-mid - 0.5) * 12) : Math.round((root.selected-peer-mid - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -942,7 +942,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: "Treble";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 46px;
                                 vertical-alignment: center;
@@ -960,7 +960,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: (Math.round((root.selected-peer-treble - 0.5) * 12) >= 0 ? "+" + Math.round((root.selected-peer-treble - 0.5) * 12) : Math.round((root.selected-peer-treble - 0.5) * 12)) + "dB";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -979,7 +979,7 @@ export component RoomView inherits Rectangle {
                             Text {
                                 text: "Pan";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 46px;
                                 vertical-alignment: center;
@@ -1002,7 +1002,7 @@ export component RoomView inherits Rectangle {
                                         "R" + Math.round((root.selected-peer-pan - 0.5) * 200);
                                 }
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 font-weight: 600;
                                 min-width: 32px;
                                 horizontal-alignment: right;
@@ -1073,7 +1073,7 @@ export component RoomView inherits Rectangle {
                         Text {
                             text: "Sharing stays lazy until you start. Pick a source and quality preset that fits the moment.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
 
@@ -1093,7 +1093,7 @@ export component RoomView inherits Rectangle {
                                 Text {
                                     text: "No sources — click Refresh";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     horizontal-alignment: center;
                                 }
                             }
@@ -1179,7 +1179,7 @@ export component RoomView inherits Rectangle {
                            root.ping-ms < 0 ? VxTheme.text-muted :
                            root.ping-ms < 100 ? VxTheme.success :
                            root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
-                    font-size: 10px;
+                    font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
@@ -1189,7 +1189,7 @@ export component RoomView inherits Rectangle {
                     text: root.ping-ms + "ms";
                     color: root.ping-ms < 100 ? VxTheme.text-muted :
                            root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
-                    font-size: 10px;
+                    font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
@@ -1217,7 +1217,7 @@ export component RoomView inherits Rectangle {
                     proto-text := Text {
                         text: root.udp-active ? "UDP" : "WS";
                         color: root.udp-active ? VxTheme.success : VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         font-weight: 800;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -1236,7 +1236,7 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: root.dropped-frames + " dropped";
                         color: VxTheme.warning;
-                        font-size: 9px;
+                        font-size: 11px;
                         font-weight: 600;
                         vertical-alignment: center;
                     }
@@ -1254,7 +1254,7 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: "\u{2191}" + root.bandwidth-up-kbps + "  \u{2193}" + root.bandwidth-down-kbps + " kbps";
                         color: VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         font-weight: 600;
                         vertical-alignment: center;
                     }
@@ -1272,7 +1272,7 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: root.session-data-mb + " MB" + (root.est-data-per-hour != "" ? "  \u{b7}  " + root.est-data-per-hour : "");
                         color: VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         font-weight: 600;
                         vertical-alignment: center;
                     }
@@ -1318,7 +1318,7 @@ export component RoomView inherits Rectangle {
                     Text {
                         text: "SFX";
                         color: VxTheme.text-muted;
-                        font-size: 9px;
+                        font-size: 11px;
                         font-weight: 700;
                         vertical-alignment: center;
                     }

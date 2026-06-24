@@ -1,6 +1,6 @@
 [package]
 name = "app_desktop"
-version = "0.10.4"
+version = "0.13.0"
 edition = "2021"
 description = "Voxlink - Voice without limits"
 
@@ -31,3 +31,6 @@ xcap = { version = "0.9.1", default-features = false, features = ["image"] }
 rand = { workspace = true }
 tray-icon = "0.21"
 i-slint-backend-winit = "1.15.1"
+# Native file picker for attachment uploads. On Linux this pulls GTK3 by default;
+# switch to `default-features = false, features = ["xdg-portal", "tokio"]` to avoid it.
+rfd = "0.15"

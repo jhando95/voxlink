@@ -746,6 +746,8 @@ pub fn start(
 
             // --- Retry pending messages every ~2s ---
             if tick.is_multiple_of(80) {
+                drain_outbox_drop_in(&state, &w);
+                drain_pending_mark_read(&network, &rt_handle, &w);
                 retry_pending_messages(&state, &network, &rt_handle, &w);
             }
 
@@ -1250,20 +1252,26 @@ fn update_ping(
     perf: &Rc<RefCell<perf_metrics::PerfCollector>>,
 ) {
     if let Ok(net) = network.try_lock() {
-        // Read last ping result
         let ms = net.ping_ms();
-        if ms >= 0 {
-            w.set_ping_ms(ms);
-        }
-        // Update perf collector atomics for the perf panel
         let udp = net.is_udp_active();
+        // Perf collector atomics always update — the perf panel samples them
+        // when it is visible.
         let p = perf.borrow();
         p.ping_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
         p.udp_active
             .store(udp, std::sync::atomic::Ordering::Relaxed);
         drop(p);
-        w.set_udp_active(udp);
-        // Send next ping
+        // Only push to Slint properties when a view that actually shows them is
+        // open (Room=1 has the transport badge, System=3 has the perf panel).
+        // Avoids Slint property-diff churn every ~3s while idle on other views.
+        let view = w.get_current_view();
+        if view == 1 || view == 3 {
+            if ms >= 0 {
+                w.set_ping_ms(ms);
+            }
+            w.set_udp_active(udp);
+        }
+        // Send next ping (keeps RTT fresh for adaptive bitrate regardless of view).
         let network = network.clone();
         rt_handle.spawn(async move {
             network.lock().await.send_ping().await;
@@ -1322,6 +1330,91 @@ fn send_audio_quality_report(
 }
 
 // ─── Message Retry Queue ───
+
+/// Drain the `pending-mark-read` Slint property and fire `MarkChannelRead`
+/// signals to the server. Runs on the UI thread; the network send is spawned.
+fn drain_pending_mark_read(
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+    w: &MainWindow,
+) {
+    let raw = w.get_pending_mark_read().to_string();
+    if raw.is_empty() {
+        return;
+    }
+    w.set_pending_mark_read(slint::SharedString::default());
+    // De-dup by channel — keep the last seen message_id, drop earlier marks
+    // for the same channel (we only need the highest watermark).
+    let mut latest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for record in raw.split('\u{1e}') {
+        let mut parts = record.splitn(2, '\u{1f}');
+        let channel_id = match parts.next() {
+            Some(v) if !v.is_empty() => v.to_string(),
+            _ => continue,
+        };
+        let message_id = match parts.next() {
+            Some(v) if !v.is_empty() => v.to_string(),
+            _ => continue,
+        };
+        latest.insert(channel_id, message_id);
+    }
+    if latest.is_empty() {
+        return;
+    }
+    let network = network.clone();
+    rt_handle.spawn(async move {
+        let net = network.lock().await;
+        for (channel_id, message_id) in latest {
+            let _ = net
+                .send_signal(&SignalMessage::MarkChannelRead {
+                    channel_id,
+                    message_id,
+                })
+                .await;
+        }
+    });
+}
+
+/// Pull anything async send-failure tasks have stuffed into the
+/// `pending-outbox-drop-in` Slint property (a Send-safe back-channel) into the
+/// real `AppState.pending_messages` queue. Runs on the UI thread; no locks.
+fn drain_outbox_drop_in(state: &Rc<RefCell<shared_types::AppState>>, w: &MainWindow) {
+    let raw = w.get_pending_outbox_drop_in().to_string();
+    if raw.is_empty() {
+        return;
+    }
+    w.set_pending_outbox_drop_in(slint::SharedString::default());
+    let queued_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut s = state.borrow_mut();
+    for record in raw.split('\u{1e}') {
+        let mut parts = record.splitn(3, '\u{1f}');
+        let kind = match parts.next() {
+            Some(v) => v,
+            None => continue,
+        };
+        let target = match parts.next() {
+            Some(v) => v.to_string(),
+            None => continue,
+        };
+        let content = match parts.next() {
+            Some(v) => v.to_string(),
+            None => continue,
+        };
+        if target.is_empty() || content.is_empty() {
+            continue;
+        }
+        s.pending_messages.push(shared_types::PendingMessage {
+            channel_id: target,
+            content,
+            is_direct: kind == "dm",
+            retry_count: 0,
+            queued_at,
+        });
+    }
+}
 
 fn retry_pending_messages(
     state: &Rc<RefCell<shared_types::AppState>>,

@@ -29,8 +29,7 @@ pub async fn send_friend_snapshot_to_peer(state: &State, peer_id: &str, db: &Db)
             incoming_requests,
             outgoing_requests,
         },
-    )
-    .await;
+    );
 }
 
 pub async fn notify_friend_snapshot_for_user(state: &State, user_id: &str, db: &Db) {
@@ -49,8 +48,7 @@ pub async fn notify_friend_snapshot_for_user(state: &State, user_id: &str, db: &
                 incoming_requests: incoming_requests.clone(),
                 outgoing_requests: outgoing_requests.clone(),
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -359,6 +357,30 @@ fn load_snapshot_rows(
     let incoming_rows = db.load_incoming_friend_requests(user_id)?;
     let outgoing_rows = db.load_outgoing_friend_requests(user_id)?;
 
+    // Collect every other-user id we'll need a display name for, then resolve
+    // them all in one query instead of one per row (was N+1 — a friend list of
+    // 50 hit the DB 50 times).
+    let other_user_ids: Vec<String> = friendships
+        .iter()
+        .map(|f| {
+            if f.user_low_id == user_id {
+                f.user_high_id.clone()
+            } else {
+                f.user_low_id.clone()
+            }
+        })
+        .chain(incoming_rows.iter().map(|r| r.requester_id.clone()))
+        .chain(outgoing_rows.iter().map(|r| r.addressee_id.clone()))
+        .collect();
+    let id_refs: Vec<&str> = other_user_ids.iter().map(|s| s.as_str()).collect();
+    let names = db.find_user_names_by_ids(&id_refs)?;
+    let resolve = |id: &str| -> String {
+        names
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "Unknown user".into())
+    };
+
     let mut friends = Vec::with_capacity(friendships.len());
     for friendship in friendships {
         let other_user_id = if friendship.user_low_id == user_id {
@@ -366,10 +388,7 @@ fn load_snapshot_rows(
         } else {
             friendship.user_low_id
         };
-        let name = db
-            .find_user_by_id(&other_user_id)?
-            .map(|user| user.display_name)
-            .unwrap_or_else(|| "Unknown user".into());
+        let name = resolve(&other_user_id);
         friends.push(FavoriteFriend {
             user_id: other_user_id,
             name,
@@ -379,10 +398,7 @@ fn load_snapshot_rows(
 
     let mut incoming_requests = Vec::with_capacity(incoming_rows.len());
     for request in incoming_rows {
-        let name = db
-            .find_user_by_id(&request.requester_id)?
-            .map(|user| user.display_name)
-            .unwrap_or_else(|| "Unknown user".into());
+        let name = resolve(&request.requester_id);
         incoming_requests.push(FriendRequest {
             user_id: request.requester_id,
             name,
@@ -392,10 +408,7 @@ fn load_snapshot_rows(
 
     let mut outgoing_requests = Vec::with_capacity(outgoing_rows.len());
     for request in outgoing_rows {
-        let name = db
-            .find_user_by_id(&request.addressee_id)?
-            .map(|user| user.display_name)
-            .unwrap_or_else(|| "Unknown user".into());
+        let name = resolve(&request.addressee_id);
         outgoing_requests.push(FriendRequest {
             user_id: request.addressee_id,
             name,

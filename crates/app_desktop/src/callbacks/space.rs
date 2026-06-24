@@ -194,6 +194,7 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
                     &cfg.user_notes,
                     &cfg.channel_notification_overrides,
                     &cfg.favorite_channels,
+                &cfg.blocked_users,
                 );
             }
         }
@@ -238,7 +239,7 @@ pub fn setup_leave_space(
             let mut s = state.borrow_mut();
             s.room = Default::default();
             s.space = None;
-            s.active_direct_message_user_id = None;
+            s.active_direct_message_user_id = None; s.active_group_dm_id = None;
             s.direct_typing_users.clear();
             s.current_view = AppView::Home;
         }
@@ -414,6 +415,62 @@ pub fn setup_ban_member(
             let net = network.lock().await;
             let _ = net
                 .send_signal(&SignalMessage::BanMember { member_id })
+                .await;
+        });
+    });
+}
+
+pub fn setup_block_user(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_block_user(move |user_id| {
+        let user_id = user_id.to_string();
+        if user_id.is_empty() {
+            return;
+        }
+        // Optimistically persist locally so the UI flips immediately.
+        let mut cfg = config_store::load_config();
+        if !cfg.blocked_users.iter().any(|u| u.as_str() == user_id.as_str()) {
+            cfg.blocked_users.push(user_id.clone());
+            let _ = config_store::save_config(&cfg);
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::BlockUser { user_id })
+                .await;
+        });
+    });
+}
+
+pub fn setup_unblock_user(
+    window: &MainWindow,
+    network: &Arc<TokioMutex<net_control::NetworkClient>>,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let network = network.clone();
+    let rt_handle = rt_handle.clone();
+    window.on_unblock_user(move |user_id| {
+        let user_id = user_id.to_string();
+        if user_id.is_empty() {
+            return;
+        }
+        let mut cfg = config_store::load_config();
+        let before = cfg.blocked_users.len();
+        cfg.blocked_users.retain(|u| u.as_str() != user_id.as_str());
+        if cfg.blocked_users.len() != before {
+            let _ = config_store::save_config(&cfg);
+        }
+        let network = network.clone();
+        rt_handle.spawn(async move {
+            let net = network.lock().await;
+            let _ = net
+                .send_signal(&SignalMessage::UnblockUser { user_id })
                 .await;
         });
     });

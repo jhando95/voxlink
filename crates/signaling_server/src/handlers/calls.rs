@@ -18,8 +18,7 @@ pub(crate) async fn handle_call_user(state: &State, caller_peer_id: &str, target
                     room_key: String::new(),
                     reason: "not_authenticated".into(),
                 },
-            )
-            .await;
+            );
             return;
         }
     };
@@ -47,8 +46,7 @@ pub(crate) async fn handle_call_user(state: &State, caller_peer_id: &str, target
                     caller_name,
                     room_key,
                 },
-            )
-            .await;
+            );
         }
         None => {
             send_to(
@@ -57,8 +55,7 @@ pub(crate) async fn handle_call_user(state: &State, caller_peer_id: &str, target
                     room_key,
                     reason: "offline".into(),
                 },
-            )
-            .await;
+            );
         }
     }
 }
@@ -104,8 +101,7 @@ pub(crate) async fn handle_accept_call(state: &State, peer_id: &str, room_key: S
                 room_key,
                 reason: "caller_disconnected".into(),
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -149,7 +145,6 @@ pub(crate) async fn handle_decline_call(state: &State, peer_id: &str, room_key: 
                 room_key,
                 reason: "declined".into(),
             },
-        )
-        .await;
+        );
     }
 }

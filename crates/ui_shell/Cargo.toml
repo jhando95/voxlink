@@ -1,6 +1,6 @@
 [package]
 name = "ui_shell"
-version = "0.10.4"
+version = "0.13.0"
 edition = "2021"
 build = "build.rs"
 
@@ -8,6 +8,8 @@ build = "build.rs"
 slint = { workspace = true }
 shared_types = { path = "../shared_types" }
 log = { workspace = true }
+# Decode chat image attachments for inline preview. Minimal format set on purpose.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [build-dependencies]
 slint-build = "1.9"

@@ -886,7 +886,21 @@ impl AudioEngine {
                 'cb: {
                     data.fill(0.0);
                     // data is interleaved stereo: [L0, R0, L1, R1, ...]
-                    let stereo_frames = data.len() / 2;
+                    let stereo_frames_raw = data.len() / 2;
+                    // Cap to scratch capacity. cpal can occasionally hand us a callback
+                    // longer than the configured buffer; saturating avoids a release-mode
+                    // panic on the out-of-range slice. Truncates output to the cap (rare).
+                    let stereo_frames = stereo_frames_raw.min(scratch.len());
+                    if stereo_frames < stereo_frames_raw {
+                        static WARNED: std::sync::atomic::AtomicBool =
+                            std::sync::atomic::AtomicBool::new(false);
+                        if !WARNED.swap(true, Ordering::Relaxed) {
+                            log::warn!(
+                                "playback callback exceeded scratch ({stereo_frames_raw} > {}); truncating",
+                                scratch.len()
+                            );
+                        }
+                    }
 
                     // Mix feedback tone into both channels equally (mono → stereo)
                     // feedback_playback provides mono — mix into a temp mono buf, then spread
@@ -945,14 +959,8 @@ impl AudioEngine {
                         }
                     }
 
-                    // Scratch buffer pre-allocated at init for max size — no resize needed.
-                    // Debug-assert to catch unexpected oversized callbacks.
-                    debug_assert!(
-                        scratch.len() >= stereo_frames,
-                        "scratch buffer too small: {} < {}",
-                        scratch.len(),
-                        stereo_frames
-                    );
+                    // Scratch buffer pre-allocated at init for max size; stereo_frames
+                    // was already capped to scratch.len() above, so all slices below are safe.
 
                     for (peer_idx, peer) in local_peers.iter().enumerate() {
                         if !peer.is_ready() {
@@ -1183,7 +1191,10 @@ impl AudioEngine {
 
         let packet = OpusPacket::try_from(encoded_data).ok()?;
         let output = MutSignals::try_from(&mut out[..]).ok()?;
-        match decoder.decode(Some(packet), output, true) {
+        // Normal in-order decode: fec=false. Passing true here makes Opus decode the
+        // *previous* frame's FEC payload (recovering a packet we never lost) instead
+        // of the current audio. PLC + true-FEC gap recovery happens in the Err arm.
+        match decoder.decode(Some(packet), output, false) {
             Ok(n) => Some(n),
             Err(e) => {
                 log::warn!("Opus decode error from {sender_id}: {e}, attempting PLC");

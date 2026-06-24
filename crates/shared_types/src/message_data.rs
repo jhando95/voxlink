@@ -37,6 +37,10 @@ pub struct TextMessageData {
     pub attachment_name: Option<String>,
     #[serde(default)]
     pub attachment_size: Option<u32>,
+    /// Server-assigned id of a stored file/image attachment, if any.
+    /// Clients fetch the bytes on demand via `RequestAttachment`.
+    #[serde(default)]
+    pub attachment_id: Option<String>,
     /// First URL found in message content (for link preview card)
     #[serde(default)]
     pub link_url: Option<String>,
@@ -46,6 +50,15 @@ pub struct TextMessageData {
 pub struct ReactionData {
     pub emoji: String,
     pub users: Vec<String>,
+}
+
+/// OpenGraph-style preview for the first link in a message. Delivered separately
+/// (after an async server-side fetch) via `LinkPreviewReady`, not stored on the
+/// message itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPreview {
+    pub title: String,
+    pub description: String,
 }
 
 /// A search result from space-wide search, including the originating channel.

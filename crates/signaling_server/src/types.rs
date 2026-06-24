@@ -5,16 +5,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{Mutex, RwLock};
-use tokio_tungstenite::tungstenite::Message;
+use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 
-use crate::tls::ServerStream;
+use crate::outbound::OutboundFrame;
 use crate::LIMITS;
 
 // ─── Types ───
-
-pub(crate) type Tx =
-    futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<ServerStream>, Message>;
 
 pub(crate) struct Peer {
     pub id: String,
@@ -33,7 +29,16 @@ pub(crate) struct Peer {
     pub status: Mutex<String>,
     /// Activity status text (e.g. "Playing Valorant"), empty if none
     pub activity: Mutex<String>,
-    pub tx: Mutex<Tx>,
+    /// Reliable outbound lane (JSON signaling). Bounded; senders treat Full as
+    /// "peer is misbehaving" and trigger disconnect via `disconnect.notify_one()`.
+    pub signaling_tx: mpsc::Sender<OutboundFrame>,
+    /// Lossy outbound lane (audio + screen frames). Bounded; senders drop the
+    /// frame on Full (next frame is ~20ms away).
+    pub media_tx: mpsc::Sender<OutboundFrame>,
+    /// Signaled by the drain task (when its sink errors) or by senders that
+    /// hit a full signaling lane. The connection rx loop selects on this and
+    /// breaks to run handle_disconnect.
+    pub disconnect: Arc<Notify>,
     pub space_id: Mutex<Option<String>>,
     pub typing_channel_id: Mutex<Option<String>>,
     pub typing_dm_user_id: Mutex<Option<String>>,
@@ -64,6 +69,9 @@ pub(crate) struct Peer {
     /// Cache of user_ids that have blocked this peer. Updated on auth + block/unblock.
     /// Uses std::sync::RwLock for lock-free reads in the audio relay hot path.
     pub blocked_by: std::sync::RwLock<HashSet<String>>,
+    /// User-selected status preset (Online / Idle / DnD / Invisible).
+    /// Read by member-info builders so a member's chosen preset survives reconnects.
+    pub status_preset: Mutex<shared_types::UserStatus>,
 }
 
 impl Peer {
@@ -160,6 +168,10 @@ pub(crate) struct ServerState {
     /// Per-IP auth rate limit: IP -> (attempt_count, window_start).
     /// Limits login/register to 5 attempts per 60 seconds per IP.
     pub auth_attempts: HashMap<IpAddr, (u32, Instant)>,
+    /// Per-account login-attempt counter: lowercased email -> (failure_count, window_start).
+    /// Prevents a multi-IP attacker from grinding one specific account's password
+    /// even after passing the per-IP gate.
+    pub login_failures_per_email: HashMap<String, (u32, Instant)>,
 }
 
 impl ServerState {
@@ -178,6 +190,7 @@ impl ServerState {
             join_failures: HashMap::new(),
             udp_sessions: HashMap::new(),
             auth_attempts: HashMap::new(),
+            login_failures_per_email: HashMap::new(),
         }
     }
 

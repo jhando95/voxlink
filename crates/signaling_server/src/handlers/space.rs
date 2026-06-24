@@ -123,7 +123,7 @@ async fn send_audit_log_snapshot_to_peer(state: &State, space_id: &str, peer: &A
         Vec::new()
     };
 
-    send_to(peer, &SignalMessage::SpaceAuditLogSnapshot { entries }).await;
+    send_to(peer, &SignalMessage::SpaceAuditLogSnapshot { entries });
 }
 
 pub async fn peer_space_role(state: &State, peer_id: &str) -> Option<(String, String, SpaceRole)> {
@@ -275,7 +275,7 @@ pub async fn append_audit_entry(
         entry: entry.clone(),
     };
     for peer in recipients {
-        send_to(&peer, &notify).await;
+        send_to(&peer, &notify);
     }
 
     Some(entry)
@@ -297,7 +297,7 @@ pub async fn broadcast_to_space(
             .collect();
         drop(s);
         for peer in members {
-            send_to(&peer, msg).await;
+            send_to(&peer, msg);
         }
     }
 }
@@ -319,6 +319,30 @@ pub async fn handle_create_space(
     }
 
     let owner_id = stable_peer_id(state, peer_id).await;
+    // Cap per-owner space creation. Counted from in-memory state so newly
+    // created spaces register immediately; the count is small enough that a
+    // full scan is fine even at max_spaces_per_user * (active users).
+    {
+        let owned: u32 = state
+            .read()
+            .await
+            .spaces
+            .values()
+            .filter(|sp| sp.owner_id == owner_id)
+            .count() as u32;
+        if owned >= crate::LIMITS.max_spaces_per_user {
+            send_error(
+                state,
+                peer_id,
+                &format!(
+                    "You have reached the max of {} spaces; delete one before creating another",
+                    crate::LIMITS.max_spaces_per_user
+                ),
+            )
+            .await;
+            return;
+        }
+    }
     let mut s = state.write().await;
 
     let space_id = s.alloc_space_id();
@@ -417,8 +441,7 @@ pub async fn handle_create_space(
                 space: space_info,
                 channels,
             },
-        )
-        .await;
+        );
     } else {
         drop(s);
     }
@@ -454,6 +477,7 @@ pub async fn handle_create_space(
                 min_role: None,
                 position: None,
                 auto_delete_hours: None,
+                category: None,
             }) {
                 log::error!("Failed to persist channel: {e}");
             }
@@ -561,7 +585,7 @@ pub async fn handle_join_space(
     if let Some(ref db) = db {
         let db_clone = db.clone();
         let sid = space_id.clone();
-        let cid = check_id;
+        let cid = check_id.clone();
         let banned =
             tokio::task::spawn_blocking(move || db_clone.is_banned(&sid, &cid).unwrap_or(false))
                 .await
@@ -569,6 +593,24 @@ pub async fn handle_join_space(
         if banned {
             send_error(state, peer_id, "You are banned from this space").await;
             return;
+        }
+    }
+
+    // Restore active moderation timeout (so reconnects can't shed one).
+    if let Some(ref db) = db {
+        let db_clone = db.clone();
+        let sid = space_id.clone();
+        let cid = check_id.clone();
+        let now = crate::now_epoch_secs() as i64;
+        let active = tokio::task::spawn_blocking(move || db_clone.load_active_timeout(&sid, &cid, now))
+            .await
+            .unwrap_or(None);
+        if let Some(until_epoch) = active {
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id) {
+                peer.timeout_until
+                    .store(until_epoch as u64, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 
@@ -656,6 +698,16 @@ pub async fn handle_join_space(
                 space.member_ids.retain(|id| id != stale);
             }
             if !space.member_ids.contains(&peer_id.to_string()) {
+                if space.member_ids.len() as u32 >= crate::LIMITS.max_members_per_space {
+                    drop(s);
+                    send_error(
+                        state,
+                        peer_id,
+                        "This space is full — try again later or contact an admin",
+                    )
+                    .await;
+                    return;
+                }
                 space.member_ids.push(peer_id.to_string());
             }
         }
@@ -723,6 +775,7 @@ pub async fn handle_join_space(
                     })
                     .map(|ch| (Some(ch.id.clone()), Some(ch.name.clone())))
                     .unwrap_or((None, None));
+                let preset = *p.status_preset.lock().await;
                 members.push(MemberInfo {
                     id: mid.clone(),
                     user_id: Some(stable_id.clone()),
@@ -733,7 +786,7 @@ pub async fn handle_join_space(
                     status: p.status.lock().await.clone(),
                     bio: String::new(),
                     nickname: None,
-                    status_preset: shared_types::UserStatus::Online,
+                    status_preset: preset,
                     role_color: role_color_for_identity(space, &stable_id),
                     activity: p.activity.lock().await.clone(),
                 });
@@ -748,6 +801,7 @@ pub async fn handle_join_space(
                 .await
                 .clone()
                 .unwrap_or_else(|| peer_id.to_string());
+            let preset = *p.status_preset.lock().await;
             Some(MemberInfo {
                 id: peer_id.to_string(),
                 user_id: Some(user_id.clone()),
@@ -758,7 +812,7 @@ pub async fn handle_join_space(
                 status: p.status.lock().await.clone(),
                 bio: String::new(),
                 nickname: None,
-                status_preset: shared_types::UserStatus::Online,
+                status_preset: preset,
                 role_color: role_color_for_identity(space, &user_id),
                 activity: p.activity.lock().await.clone(),
             })
@@ -791,8 +845,7 @@ pub async fn handle_join_space(
                 members,
                 welcome_message,
             },
-        )
-        .await;
+        );
         send_audit_log_snapshot_to_peer(state, &space_id, &peer).await;
     }
 
@@ -913,7 +966,7 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
         }
         *peer.space_id.lock().await = None;
         peer.set_room_code(None).await;
-        send_to(peer, &SignalMessage::SpaceDeleted).await;
+        send_to(peer, &SignalMessage::SpaceDeleted);
     }
 
     // Persist deletion
@@ -1051,7 +1104,7 @@ pub async fn handle_set_member_role(
         role,
     };
     for peer in recipients {
-        send_to(&peer, &notify).await;
+        send_to(&peer, &notify);
     }
 
     let detail = format!(

@@ -33,6 +33,7 @@ pub fn handle_space_created(
         selected_text_channel_id: remembered_text_channel(space, channels),
         self_role: space.self_role,
         unread_text_channels: Default::default(),
+        mentioned_text_channels: Default::default(),
         typing_users: Default::default(),
         typing_ticks: Default::default(),
     };
@@ -40,7 +41,7 @@ pub fn handle_space_created(
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
-        s.active_direct_message_user_id = None;
+        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = AppView::Space;
     }
@@ -103,6 +104,7 @@ pub fn handle_space_joined(
         previous_active_channel_id,
         previous_selected_text_channel_id,
         previous_unread_text_channels,
+        previous_mentioned_text_channels,
         previous_typing_users,
         previous_typing_ticks,
     ) = {
@@ -111,6 +113,7 @@ pub fn handle_space_joined(
             active_channel_id,
             selected_text_channel_id,
             unread_text_channels,
+            mentioned_text_channels,
             typing_users,
             typing_ticks,
         ) = s
@@ -122,6 +125,7 @@ pub fn handle_space_joined(
                     current_space.active_channel_id.clone(),
                     current_space.selected_text_channel_id.clone(),
                     current_space.unread_text_channels.clone(),
+                    current_space.mentioned_text_channels.clone(),
                     current_space.typing_users.clone(),
                     current_space.typing_ticks.clone(),
                 )
@@ -133,6 +137,7 @@ pub fn handle_space_joined(
             active_channel_id,
             selected_text_channel_id,
             unread_text_channels,
+            mentioned_text_channels,
             typing_users,
             typing_ticks,
         )
@@ -187,6 +192,11 @@ pub fn handle_space_joined(
         } else {
             Default::default()
         },
+        mentioned_text_channels: if same_space_refresh {
+            previous_mentioned_text_channels
+        } else {
+            Default::default()
+        },
         typing_users: if same_space_refresh {
             previous_typing_users
         } else {
@@ -202,7 +212,7 @@ pub fn handle_space_joined(
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
-        s.active_direct_message_user_id = None;
+        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = next_view;
     }
@@ -317,7 +327,7 @@ pub fn handle_space_deleted(
         let mut s = state.borrow_mut();
         s.room = Default::default();
         s.space = None;
-        s.active_direct_message_user_id = None;
+        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = AppView::Home;
     }

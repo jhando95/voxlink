@@ -70,8 +70,7 @@ pub(crate) async fn handle_schedule_message(
                 content,
                 send_at,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -128,8 +127,7 @@ pub(crate) async fn handle_cancel_scheduled_message(
         send_to(
             &p,
             &SignalMessage::ScheduledMessageCancelled { schedule_id },
-        )
-        .await;
+        );
     }
 }
 
@@ -170,6 +168,6 @@ pub(crate) async fn handle_set_welcome_message(state: &State, peer_id: &str, mes
     }
     let msg = SignalMessage::WelcomeMessageChanged { message };
     for p in &peers_map {
-        send_to(p, &msg).await;
+        send_to(p, &msg);
     }
 }

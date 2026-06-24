@@ -49,8 +49,7 @@ pub async fn handle_authenticate(
                     token: String::new(),
                     user_id: peer_id.to_string(),
                 },
-            )
-            .await;
+            );
         }
         return true;
     };
@@ -141,9 +140,9 @@ pub async fn handle_authenticate(
                             token: token_to_send,
                             user_id,
                         },
-                    )
-                    .await;
+                    );
                     send_friend_snapshot_to_peer(state, peer_id, db).await;
+                super::read_state::send_snapshot_to_peer(state, peer_id, db).await;
                 }
                 log::info!("Peer {peer_id} authenticated (restored identity)");
                 return true;
@@ -220,8 +219,7 @@ pub async fn handle_authenticate(
                 token: new_token,
                 user_id,
             },
-        )
-        .await;
+        );
         send_friend_snapshot_to_peer(state, peer_id, db).await;
     }
 
@@ -242,7 +240,7 @@ fn hash_password(password: &str) -> Result<String, String> {
 }
 
 /// Verify a password against an argon2 or legacy SHA-256 hash.
-fn verify_password(password: &str, stored: &str) -> bool {
+pub(crate) fn verify_password(password: &str, stored: &str) -> bool {
     // Try argon2 first (new format starts with "$argon2")
     if stored.starts_with("$argon2") {
         let Ok(parsed) = PasswordHash::new(stored) else {
@@ -282,8 +280,119 @@ fn legacy_verify_sha256(password: &str, stored: &str) -> bool {
 const AUTH_RATE_LIMIT: u32 = 5;
 const AUTH_RATE_WINDOW_SECS: u64 = 60;
 
+/// Per-account login lockout: after this many failed attempts within
+/// LOGIN_ACCOUNT_LOCK_WINDOW_SECS, the email is locked out for the rest of
+/// the window. Tracks attempts whether the email exists or not, so unknown
+/// emails can't be used as a probing oracle.
+const LOGIN_ACCOUNT_FAIL_LIMIT: u32 = 10;
+const LOGIN_ACCOUNT_LOCK_WINDOW_SECS: u64 = 900; // 15 minutes
+
+async fn check_login_account_lock(state: &State, email: &str) -> bool {
+    let s = state.read().await;
+    let Some(&(count, started)) = s.login_failures_per_email.get(email) else {
+        return true;
+    };
+    let in_window = started.elapsed().as_secs() < LOGIN_ACCOUNT_LOCK_WINDOW_SECS;
+    if in_window && count >= LOGIN_ACCOUNT_FAIL_LIMIT {
+        return false;
+    }
+    true
+}
+
+async fn record_login_failure_for_email(state: &State, email: &str) {
+    let mut s = state.write().await;
+    let now = std::time::Instant::now();
+    // Opportunistic prune: keep the map bounded.
+    s.login_failures_per_email
+        .retain(|_, (_, started)| started.elapsed().as_secs() < LOGIN_ACCOUNT_LOCK_WINDOW_SECS);
+    let entry = s
+        .login_failures_per_email
+        .entry(email.to_string())
+        .or_insert((0, now));
+    if entry.1.elapsed().as_secs() >= LOGIN_ACCOUNT_LOCK_WINDOW_SECS {
+        // Window expired — start a fresh count.
+        *entry = (1, now);
+    } else {
+        entry.0 += 1;
+    }
+}
+
+async fn clear_login_failures_for_email(state: &State, email: &str) {
+    let mut s = state.write().await;
+    s.login_failures_per_email.remove(email);
+}
+
+/// Reset transient per-connection state (room, space, mute/deafen, typing,
+/// whisper, blocked-by cache) when a peer switches identities via Login or
+/// CreateAccount. Without this, signing into a different account on the same
+/// WebSocket leaks the previous user's room membership + flags into the new
+/// session — and the audit log + ban check resolve against the wrong user_id.
+async fn clear_session_state_on_identity_switch(state: &State, peer_id: &str) {
+    let s = state.read().await;
+    let peer = match s.peers.get(peer_id).cloned() {
+        Some(p) => p,
+        None => return,
+    };
+    drop(s);
+    // Drop room membership (so the peer doesn't continue receiving relayed audio).
+    peer.set_room_code(None).await;
+    *peer.space_id.lock().await = None;
+    *peer.typing_channel_id.lock().await = None;
+    *peer.typing_dm_user_id.lock().await = None;
+    peer.is_muted.store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.is_deafened.store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.is_server_deafened
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.is_priority_speaker
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.timeout_until
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut w) = peer.whisper_targets.write() {
+        w.clear();
+    }
+    if let Ok(mut b) = peer.blocked_by.write() {
+        b.clear();
+    };
+}
+
+/// Lightweight email shape check. Not RFC-5322 perfect, but rejects the obvious
+/// junk a `contains('@')` test waves through (no local part, no dot in domain,
+/// embedded whitespace/control bytes, leading/trailing dots).
+fn is_valid_email(email: &str) -> bool {
+    if email.is_empty() || email.len() > 254 {
+        return false;
+    }
+    if email.contains(char::is_whitespace) || email.bytes().any(|b| b < 0x20) {
+        return false;
+    }
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || local.len() > 64 || local.starts_with('.') || local.ends_with('.') {
+        return false;
+    }
+    if local.contains("..") {
+        return false;
+    }
+    if domain.len() < 3 || !domain.contains('.') {
+        return false;
+    }
+    if domain.starts_with('.') || domain.ends_with('.') || domain.contains("..") {
+        return false;
+    }
+    if domain.contains('@') {
+        return false;
+    }
+    // No bare dotless top-level domains, and the TLD must be at least 2 chars.
+    let tld = domain.rsplit('.').next().unwrap_or("");
+    if tld.len() < 2 {
+        return false;
+    }
+    true
+}
+
 /// Check if auth attempt is allowed for this peer's IP. Returns false if rate limited.
-async fn check_auth_rate_limit(state: &State, peer_id: &str) -> bool {
+pub(crate) async fn check_auth_rate_limit(state: &State, peer_id: &str) -> bool {
     let ip = {
         let s = state.read().await;
         match s.peers.get(peer_id) {
@@ -326,7 +435,7 @@ pub async fn handle_create_account(
     let display_name = display_name.trim().to_string();
 
     // Validate inputs
-    if email.is_empty() || !email.contains('@') || email.len() > 254 {
+    if !is_valid_email(&email) {
         send_auth_error(state, peer_id, "Invalid email address").await;
         return;
     }
@@ -377,6 +486,9 @@ pub async fn handle_create_account(
 
     match result {
         Ok(Ok(Ok(()))) => {
+            // Drop any leftover room/space membership from a prior identity on
+            // the same WebSocket before adopting the new user_id.
+            clear_session_state_on_identity_switch(state, peer_id).await;
             // Set peer identity
             {
                 let s = state.read().await;
@@ -388,7 +500,7 @@ pub async fn handle_create_account(
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id).cloned() {
                 drop(s);
-                send_to(&peer, &SignalMessage::AccountCreated { token, user_id }).await;
+                send_to(&peer, &SignalMessage::AccountCreated { token, user_id });
             }
             log::info!("Account created for peer {peer_id} (email: {email})");
         }
@@ -415,6 +527,19 @@ pub async fn handle_login(state: &State, peer_id: &str, email: String, password:
 
     if email.is_empty() || password.is_empty() {
         send_auth_error(state, peer_id, "Email and password are required").await;
+        return;
+    }
+
+    // Per-account lockout: 10 failures in 15 minutes locks that email out
+    // until the window expires, even from a fresh IP. Pairs with the per-IP
+    // gate to cover the case of a multi-IP attacker grinding one account.
+    if !check_login_account_lock(state, &email).await {
+        send_auth_error(
+            state,
+            peer_id,
+            "This account is temporarily locked due to too many failed logins. Try again later.",
+        )
+        .await;
         return;
     }
 
@@ -451,13 +576,49 @@ pub async fn handle_login(state: &State, peer_id: &str, email: String, password:
     };
 
     let Some((user, password_hash)) = found else {
+        // Run a verify against a known-bad Argon2id hash so the unknown-email
+        // path takes ~the same time as the wrong-password path. Without this,
+        // timing alone reveals whether an email is registered.
+        const DUMMY_ARGON2_HASH: &str =
+            "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$wAjB/QGNgU8sCgsAaB7m0fX0c5/JzN/+r0YwYsqWmcs";
+        let pw = password.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            // We don't care about the result — only that the CPU work happened.
+            let _ = verify_password(&pw, DUMMY_ARGON2_HASH);
+        })
+        .await;
+        // Count the failure under the supplied email so unknown emails also
+        // contribute toward lockout (no enumeration oracle).
+        record_login_failure_for_email(state, &email).await;
         send_auth_error(state, peer_id, "Invalid email or password").await;
         return;
     };
 
     if !verify_password(&password, &password_hash) {
+        record_login_failure_for_email(state, &email).await;
         send_auth_error(state, peer_id, "Invalid email or password").await;
         return;
+    }
+
+    // Success — reset the per-account failure counter.
+    clear_login_failures_for_email(state, &email).await;
+
+    // If the stored hash is legacy SHA-256, transparently re-hash with Argon2id so
+    // the next login uses the modern verifier. Best-effort: a re-hash failure here
+    // must not block the user from logging in.
+    if !password_hash.starts_with("$argon2") {
+        if let Ok(new_hash) = hash_password(&password) {
+            let db_clone = db_ref.clone();
+            let uid_for_rehash = user.user_id.clone();
+            let _ = tokio::time::timeout(
+                crate::DB_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    db_clone.update_password_hash(&uid_for_rehash, &new_hash)
+                }),
+            )
+            .await;
+            log::info!("Rehashed legacy SHA-256 password to Argon2id for user {}", user.user_id);
+        }
     }
 
     // Rotate token on login
@@ -474,6 +635,10 @@ pub async fn handle_login(state: &State, peer_id: &str, email: String, password:
         }),
     )
     .await;
+
+    // Drop any leftover room/space membership from a prior identity on the same
+    // WebSocket before adopting the new user_id.
+    clear_session_state_on_identity_switch(state, peer_id).await;
 
     // Set peer identity
     {
@@ -494,9 +659,9 @@ pub async fn handle_login(state: &State, peer_id: &str, email: String, password:
                 user_id: user.user_id,
                 display_name: user.display_name,
             },
-        )
-        .await;
+        );
         send_friend_snapshot_to_peer(state, peer_id, db).await;
+        super::read_state::send_snapshot_to_peer(state, peer_id, db).await;
     }
     log::info!("Peer {peer_id} logged in via email ({email})");
 }
@@ -532,7 +697,7 @@ pub async fn handle_logout(state: &State, peer_id: &str, db: &Db) {
     let s = state.read().await;
     if let Some(peer) = s.peers.get(peer_id).cloned() {
         drop(s);
-        send_to(&peer, &SignalMessage::LoggedOut).await;
+        send_to(&peer, &SignalMessage::LoggedOut);
     }
     log::info!("Peer {peer_id} logged out");
 }
@@ -544,6 +709,11 @@ pub async fn handle_change_password(
     new_password: String,
     db: &Db,
 ) {
+    // Reuse the per-IP auth rate limit to bound credential-flipping attempts.
+    if !check_auth_rate_limit(state, peer_id).await {
+        send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
+        return;
+    }
     if new_password.len() < 6 {
         send_auth_error(state, peer_id, "New password must be at least 6 characters").await;
         return;
@@ -615,7 +785,7 @@ pub async fn handle_change_password(
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id).cloned() {
                 drop(s);
-                send_to(&peer, &SignalMessage::PasswordChanged).await;
+                send_to(&peer, &SignalMessage::PasswordChanged);
             }
             log::info!("Password changed for user {uid}");
         }
@@ -626,6 +796,10 @@ pub async fn handle_change_password(
 }
 
 pub async fn handle_revoke_all_sessions(state: &State, peer_id: &str, db: &Db) {
+    if !check_auth_rate_limit(state, peer_id).await {
+        send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
+        return;
+    }
     let user_id = {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id) {
@@ -689,15 +863,91 @@ pub async fn handle_revoke_all_sessions(state: &State, peer_id: &str, db: &Db) {
                         token: new_token,
                         user_id: uid.clone(),
                     },
-                )
-                .await;
-                send_to(&peer, &SignalMessage::AllSessionsRevoked).await;
+                );
+                send_to(&peer, &SignalMessage::AllSessionsRevoked);
             }
             log::info!("All sessions revoked for user {uid}");
         }
         _ => {
             send_auth_error(state, peer_id, "Failed to revoke sessions").await;
         }
+    }
+}
+
+pub async fn handle_change_email(
+    state: &State,
+    peer_id: &str,
+    current_password: String,
+    new_email: String,
+    db: &Db,
+) {
+    if !check_auth_rate_limit(state, peer_id).await {
+        send_auth_error(state, peer_id, "Too many attempts. Try again in a minute.").await;
+        return;
+    }
+    let new_email = new_email.trim().to_lowercase();
+    if !is_valid_email(&new_email) {
+        send_auth_error(state, peer_id, "Invalid email address").await;
+        return;
+    }
+
+    let user_id = {
+        let s = state.read().await;
+        match s.peers.get(peer_id) {
+            Some(peer) => peer.user_id.lock().await.clone(),
+            None => None,
+        }
+    };
+    let Some(uid) = user_id else {
+        send_auth_error(state, peer_id, "Not logged in").await;
+        return;
+    };
+    let Some(ref db_ref) = db else {
+        send_auth_error(state, peer_id, "Account system unavailable").await;
+        return;
+    };
+
+    // Verify the current password before allowing the change.
+    let db_clone = db_ref.clone();
+    let uid_clone = uid.clone();
+    let stored_hash = match tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.get_password_hash(&uid_clone)),
+    )
+    .await
+    {
+        Ok(Ok(Ok(Some(h)))) => h,
+        _ => {
+            send_auth_error(state, peer_id, "Email change failed").await;
+            return;
+        }
+    };
+    if !verify_password(&current_password, &stored_hash) {
+        send_auth_error(state, peer_id, "Current password is incorrect").await;
+        return;
+    }
+
+    // Update the email (DB enforces uniqueness via the idx_users_email index).
+    let db_clone = db_ref.clone();
+    let uid_clone = uid.clone();
+    let email_for_db = new_email.clone();
+    let result = tokio::time::timeout(
+        crate::DB_TIMEOUT,
+        tokio::task::spawn_blocking(move || db_clone.update_user_email(&uid_clone, &email_for_db)),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(Ok(()))) => {
+            let s = state.read().await;
+            if let Some(peer) = s.peers.get(peer_id).cloned() {
+                drop(s);
+                send_to(&peer, &SignalMessage::EmailChanged { email: new_email });
+            }
+            log::info!("Email changed for user {uid}");
+        }
+        Ok(Ok(Err(e))) => send_auth_error(state, peer_id, &e).await,
+        _ => send_auth_error(state, peer_id, "Email change failed").await,
     }
 }
 
@@ -710,8 +960,7 @@ async fn send_auth_error(state: &State, peer_id: &str, message: &str) {
             &SignalMessage::AuthError {
                 message: message.to_string(),
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -762,6 +1011,34 @@ mod tests {
     fn test_verify_malformed_hash() {
         assert!(!verify_password("test", "no_colon"));
         assert!(!verify_password("test", ""));
+    }
+
+    #[test]
+    fn email_validator_accepts_well_formed_and_rejects_obvious_junk() {
+        assert!(is_valid_email("alice@example.com"));
+        assert!(is_valid_email("alice.smith+tag@example.co.uk"));
+
+        // Empty / oversize
+        assert!(!is_valid_email(""));
+        let huge = format!("{}@example.com", "a".repeat(250));
+        assert!(!is_valid_email(&huge));
+
+        // Structural
+        assert!(!is_valid_email("noatsign.example.com"));
+        assert!(!is_valid_email("@example.com"));
+        assert!(!is_valid_email("alice@"));
+        assert!(!is_valid_email("alice@nodot"));
+        assert!(!is_valid_email("alice@example."));
+        assert!(!is_valid_email("alice@example.c")); // 1-char TLD
+
+        // Embedded whitespace / control characters
+        assert!(!is_valid_email("ali ce@example.com"));
+        assert!(!is_valid_email("alice@example.com\n"));
+
+        // Double dots / leading dot
+        assert!(!is_valid_email(".alice@example.com"));
+        assert!(!is_valid_email("alice..smith@example.com"));
+        assert!(!is_valid_email("alice@example..com"));
     }
 
     #[test]

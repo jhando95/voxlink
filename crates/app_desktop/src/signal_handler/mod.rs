@@ -277,6 +277,61 @@ pub fn process_signals(
                 message,
             } => {
                 chat::handle_text_message(w, state, channel_id, message);
+                // Auto-fetch image attachments so they preview inline.
+                if let (Some(id), Some(name)) =
+                    (message.attachment_id.as_ref(), message.attachment_name.as_ref())
+                {
+                    if shared_types::attachment::is_image_filename(name) {
+                        let net = ctx.network.clone();
+                        let id = id.clone();
+                        ctx.rt_handle.spawn(async move {
+                            let _ = net
+                                .lock()
+                                .await
+                                .send_signal(&SignalMessage::RequestAttachment {
+                                    attachment_id: id,
+                                })
+                                .await;
+                        });
+                    }
+                }
+            }
+            SignalMessage::AttachmentData {
+                attachment_id,
+                file_name,
+                data_b64,
+                ..
+            } => match shared_types::b64::decode(data_b64) {
+                Some(bytes) => {
+                    // Images render inline; everything else saves to disk.
+                    let decoded = if shared_types::attachment::is_image_filename(file_name) {
+                        ui_shell::decode_image_bytes(&bytes)
+                    } else {
+                        None
+                    };
+                    if let Some(img) = decoded {
+                        chat::set_attachment_image(w, attachment_id, img);
+                    } else {
+                        match crate::attachment::save_downloaded(file_name, &bytes) {
+                            Ok(path) => crate::helpers::show_toast(
+                                w,
+                                &format!("Saved {}", path.display()),
+                                1,
+                            ),
+                            Err(e) => {
+                                crate::helpers::show_toast(w, &format!("Save failed: {e}"), 3)
+                            }
+                        }
+                    }
+                }
+                None => crate::helpers::show_toast(w, "Attachment download was corrupt", 3),
+            },
+            SignalMessage::LinkPreviewReady {
+                message_id,
+                preview,
+                ..
+            } => {
+                chat::set_link_preview(w, message_id, &preview.title, &preview.description);
             }
             SignalMessage::DirectMessage { user_id, message } => {
                 chat::handle_direct_message(w, state, user_id, message);
@@ -394,7 +449,7 @@ pub fn process_signals(
                     let mut s = state.borrow_mut();
                     s.room = Default::default();
                     s.space = None;
-                    s.active_direct_message_user_id = None;
+                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
                     s.direct_typing_users.clear();
                     s.current_view = shared_types::AppView::Home;
                 }
@@ -560,14 +615,29 @@ pub fn process_signals(
             SignalMessage::MemberTimeoutExpired { member_id } => {
                 log::info!("Timeout expired for {member_id}");
             }
-            // v0.8.0: Block/Unblock acknowledgments
+            // v0.8.0: Block/Unblock acknowledgments. Sync the local blocked list with
+            // the server's view so the UI reflects state changes that originated elsewhere
+            // (e.g. another device).
             SignalMessage::UserBlocked { user_id } => {
                 log::info!("Blocked user: {user_id}");
+                let mut cfg = config_store::load_config();
+                if !cfg.blocked_users.iter().any(|u| u.as_str() == user_id.as_str()) {
+                    cfg.blocked_users.push(user_id.clone());
+                    let _ = config_store::save_config(&cfg);
+                }
+                crate::friends::sync_ui(w, state);
                 w.set_status_text("Blocked user".to_string().into());
                 crate::helpers::show_toast(w, "User blocked", 1);
             }
             SignalMessage::UserUnblocked { user_id } => {
                 log::info!("Unblocked user: {user_id}");
+                let mut cfg = config_store::load_config();
+                let before = cfg.blocked_users.len();
+                cfg.blocked_users.retain(|u| u.as_str() != user_id.as_str());
+                if cfg.blocked_users.len() != before {
+                    let _ = config_store::save_config(&cfg);
+                }
+                crate::friends::sync_ui(w, state);
                 w.set_status_text("Unblocked user".to_string().into());
                 crate::helpers::show_toast(w, "User unblocked", 1);
             }
@@ -582,11 +652,21 @@ pub fn process_signals(
             }
             // v0.8.0: Mention notifications
             SignalMessage::MentionNotification {
-                channel_id: _,
+                channel_id,
                 channel_name,
                 sender_name,
                 preview,
             } => {
+                // Bump the per-channel mention badge unless the user is already
+                // looking at that channel (in which case it has been read).
+                let viewing = w.get_current_view() == ui_shell::view_to_index(AppView::TextChat)
+                    && w.get_chat_channel_id().as_str() == channel_id.as_str();
+                if !viewing {
+                    let mut s = state.borrow_mut();
+                    if let Some(space) = s.space.as_mut() {
+                        *space.mentioned_text_channels.entry(channel_id.clone()).or_insert(0) += 1;
+                    }
+                }
                 if w.get_notifications_enabled() && w.get_status_preset() != 2 {
                     crate::helpers::send_notification(
                         &format!("{sender_name} in #{channel_name}"),
@@ -598,20 +678,76 @@ pub fn process_signals(
             SignalMessage::GroupDMCreated {
                 group_id,
                 name,
-                members: _,
+                members,
             } => {
                 log::info!("Group DM created: {name} ({group_id})");
+                // Track the new group locally so it shows up in the home view list.
+                {
+                    let mut s = state.borrow_mut();
+                    if !s.group_dm_threads.iter().any(|g| g.group_id == *group_id) {
+                        s.group_dm_threads.push(shared_types::GroupDMThread {
+                            group_id: group_id.clone(),
+                            name: name.clone(),
+                            members: members.clone(),
+                            last_message_preview: String::new(),
+                            last_message_at: 0,
+                            unread_count: 0,
+                        });
+                    }
+                }
+                ui_shell::set_group_dm_threads(w, &state.borrow().group_dm_threads);
                 w.set_status_text(format!("Group created: {name}").into());
+                // Auto-select the new group so the user lands in its chat.
+                {
+                    let mut s = state.borrow_mut();
+                    s.active_group_dm_id = Some(group_id.clone());
+                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+                    s.current_view = AppView::TextChat;
+                }
+                w.set_chat_group_id(group_id.clone().into());
+                w.set_chat_channel_name(name.clone().into());
+                w.set_chat_is_direct_message(true);
+                w.set_chat_context_subtitle("Group message".into());
+                w.set_chat_channel_id(slint::SharedString::default());
+                w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
             }
             SignalMessage::GroupDMSelected {
-                group_id: _,
+                group_id,
                 name,
-                members: _,
+                members,
                 history,
             } => {
                 let my_name = w.get_user_name().to_string();
                 let self_user_id = state.borrow().self_user_id.clone();
-                w.set_chat_channel_name(name.into());
+                // Upsert the thread metadata in local state.
+                {
+                    let mut s = state.borrow_mut();
+                    if let Some(g) = s
+                        .group_dm_threads
+                        .iter_mut()
+                        .find(|g| g.group_id == *group_id)
+                    {
+                        g.name = name.clone();
+                        g.members = members.clone();
+                        g.unread_count = 0;
+                    } else {
+                        s.group_dm_threads.push(shared_types::GroupDMThread {
+                            group_id: group_id.clone(),
+                            name: name.clone(),
+                            members: members.clone(),
+                            last_message_preview: String::new(),
+                            last_message_at: 0,
+                            unread_count: 0,
+                        });
+                    }
+                    s.active_group_dm_id = Some(group_id.clone());
+                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+                    s.current_view = AppView::TextChat;
+                }
+                ui_shell::set_group_dm_threads(w, &state.borrow().group_dm_threads);
+                w.set_chat_group_id(group_id.clone().into());
+                w.set_chat_channel_id(slint::SharedString::default());
+                w.set_chat_channel_name(name.clone().into());
                 w.set_chat_is_direct_message(true);
                 w.set_chat_context_subtitle("Group message".into());
                 ui_shell::set_chat_messages_for_identity(
@@ -623,22 +759,45 @@ pub fn process_signals(
                 w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
             }
             SignalMessage::GroupMessage {
-                group_id: _,
+                group_id,
                 message,
             } => {
                 let my_name = w.get_user_name().to_string();
                 let self_user_id = state.borrow().self_user_id.clone();
-                let chat_msg = ui_shell::text_msg_to_chat_msg_for_identity(
-                    message,
-                    self_user_id.as_deref(),
-                    &my_name,
-                );
-                let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
-                if let Some(model) = messages
-                    .as_any()
-                    .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+                let is_active = state
+                    .borrow()
+                    .active_group_dm_id
+                    .as_deref()
+                    == Some(group_id.as_str());
+                // Update thread preview + bump unread when the group isn't open.
                 {
-                    model.push(chat_msg);
+                    let mut s = state.borrow_mut();
+                    if let Some(g) = s
+                        .group_dm_threads
+                        .iter_mut()
+                        .find(|g| g.group_id == *group_id)
+                    {
+                        g.last_message_preview = message.content.chars().take(80).collect();
+                        g.last_message_at = message.timestamp;
+                        if !is_active {
+                            g.unread_count += 1;
+                        }
+                    }
+                }
+                ui_shell::set_group_dm_threads(w, &state.borrow().group_dm_threads);
+                if is_active {
+                    let chat_msg = ui_shell::text_msg_to_chat_msg_for_identity(
+                        message,
+                        self_user_id.as_deref(),
+                        &my_name,
+                    );
+                    let messages: slint::ModelRc<ui_shell::ChatMessage> = w.get_chat_messages();
+                    if let Some(model) = messages
+                        .as_any()
+                        .downcast_ref::<slint::VecModel<ui_shell::ChatMessage>>()
+                    {
+                        model.push(chat_msg);
+                    }
                 }
             }
             // v0.8.0: Invite settings
@@ -667,6 +826,7 @@ pub fn process_signals(
                     w.set_thread_parent_timestamp(
                         ui_shell::format_timestamp(parent.timestamp).into(),
                     );
+                    w.set_thread_parent_id(parent.message_id.clone().into());
                 }
                 let replies: Vec<ui_shell::ChatMessage> = messages
                     .iter()
@@ -771,6 +931,12 @@ pub fn process_signals(
                 log::info!("Password changed successfully");
                 crate::helpers::show_toast(w, "Password changed", 1);
             }
+            SignalMessage::EmailChanged { email } => {
+                log::info!("Email changed successfully");
+                w.set_account_email(email.as_str().into());
+                crate::helpers::save_account_email_async(email.clone());
+                crate::helpers::show_toast(w, "Email updated", 1);
+            }
             SignalMessage::AllSessionsRevoked => {
                 log::info!("All sessions revoked — current session re-authenticated");
                 crate::helpers::show_toast(w, "All other sessions revoked", 1);
@@ -826,6 +992,15 @@ pub fn process_signals(
                 w.set_is_logged_in(false);
                 crate::helpers::clear_auth_token_async();
                 crate::helpers::show_toast(w, "Account deleted", 1);
+            }
+            // v0.12: server-side read state snapshot. Overlay server values on
+            // top of the local map — the server is authoritative across devices.
+            SignalMessage::ReadStateSnapshot { entries } => {
+                log::info!(
+                    "Read-state snapshot received: {} entries",
+                    entries.len()
+                );
+                crate::helpers::apply_read_state_snapshot(entries);
             }
             // v0.10.0: Scheduled events
             SignalMessage::ScheduledEventCreated { event } => {

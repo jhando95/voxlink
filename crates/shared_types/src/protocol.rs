@@ -2,11 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::{
     default_search_limit, default_voice_quality, BanInfo, ChannelInfo, FavoriteFriend,
-    FriendPresence, FriendRequest, MemberInfo, SpaceAuditEntry, SpaceInfo,
+    FriendPresence, FriendRequest, MemberInfo, ReadStateEntry, SpaceAuditEntry, SpaceInfo,
 };
+use crate::permissions::{Permissions, RoleAssignment, RoleInfo};
 use crate::view::{ChannelType, SpaceRole, UserStatus};
 use crate::message_data::{
-    AutomodWord, ParticipantInfo, PublicSpaceInfo, ScheduledEvent, SpaceSearchResult,
+    AutomodWord, LinkPreview, ParticipantInfo, PublicSpaceInfo, ScheduledEvent, SpaceSearchResult,
     TextMessageData,
 };
 
@@ -275,6 +276,15 @@ pub enum SignalMessage {
     },
     /// Password changed successfully.
     PasswordChanged,
+    /// Change account email (requires current password).
+    ChangeEmail {
+        current_password: String,
+        new_email: String,
+    },
+    /// Email changed successfully — server echoes the stored (normalized) email.
+    EmailChanged {
+        email: String,
+    },
     /// Revoke all sessions — invalidates all tokens, forces re-login everywhere.
     RevokeAllSessions,
     /// Server confirms all sessions were revoked.
@@ -810,8 +820,80 @@ pub enum SignalMessage {
     },
 
     // v0.10.0: Account management
-    DeleteAccount,
+    DeleteAccount {
+        #[serde(default)]
+        current_password: String,
+    },
     AccountDeleted,
+
+    // v0.12.0+: server-side read state for multi-device sync.
+    // Client → server: mark a channel as read up to `message_id`.
+    MarkChannelRead {
+        channel_id: String,
+        message_id: String,
+    },
+    // Server → client: full snapshot of (channel_id, last_read_message_id) pairs.
+    // Sent on successful Authenticate/Login so a new device starts in sync.
+    ReadStateSnapshot {
+        entries: Vec<ReadStateEntry>,
+    },
+
+    // ─── v0.13: custom roles + granular permissions management API ───
+    // Client → server.
+    CreateRole {
+        name: String,
+        color: String,
+        permissions: Permissions,
+        #[serde(default)]
+        position: i32,
+    },
+    UpdateRole {
+        role_id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        permissions: Option<Permissions>,
+        #[serde(default)]
+        position: Option<i32>,
+    },
+    DeleteRole {
+        role_id: String,
+    },
+    AssignRoleToMember {
+        user_id: String,
+        role_id: String,
+    },
+    UnassignRoleFromMember {
+        user_id: String,
+        role_id: String,
+    },
+    RequestRoleList,
+
+    // Server → client.
+    RoleListSnapshot {
+        space_id: String,
+        roles: Vec<RoleInfo>,
+        assignments: Vec<RoleAssignment>,
+    },
+    RoleCreated {
+        space_id: String,
+        role: RoleInfo,
+    },
+    RoleUpdated {
+        space_id: String,
+        role: RoleInfo,
+    },
+    RoleDeleted {
+        space_id: String,
+        role_id: String,
+    },
+    MemberRolesChanged {
+        space_id: String,
+        user_id: String,
+        role_ids: Vec<String>,
+    },
     SetDisplayName {
         name: String,
     },
@@ -849,6 +931,37 @@ pub enum SignalMessage {
         message: TextMessageData,
         #[serde(default)]
         duration_secs: u32,
+    },
+
+    // File / image attachments. Like `SendVoiceNote`, an upload directly posts
+    // the chat message. The server stores the bytes content-addressed and serves
+    // them on demand (`RequestAttachment`) rather than broadcasting them to every
+    // recipient. Bytes travel base64-encoded inside the JSON frame (see `b64`).
+    /// Client -> Server: upload a file and post it as a message in `channel_id`.
+    /// `caption` is the optional accompanying text (may be empty).
+    UploadAttachment {
+        channel_id: String,
+        file_name: String,
+        mime: String,
+        caption: String,
+        data_b64: String,
+    },
+    /// Client -> Server: fetch the bytes of a stored attachment.
+    RequestAttachment {
+        attachment_id: String,
+    },
+    /// Server -> Client: the bytes of a requested attachment.
+    AttachmentData {
+        attachment_id: String,
+        file_name: String,
+        mime: String,
+        data_b64: String,
+    },
+    /// Server -> Client: an OpenGraph preview fetched for a message's link.
+    LinkPreviewReady {
+        channel_id: String,
+        message_id: String,
+        preview: LinkPreview,
     },
 
     // Reactions with user info
@@ -1077,7 +1190,7 @@ impl SignalMessage {
             Self::ScheduledMessageCancelled { .. } => 186,
             Self::SetWelcomeMessage { .. } => 187,
             Self::WelcomeMessageChanged { .. } => 188,
-            Self::DeleteAccount => 189,
+            Self::DeleteAccount { .. } => 189,
             Self::AccountDeleted => 190,
             Self::SetDisplayName { .. } => 191,
             Self::DisplayNameChanged { .. } => 192,
@@ -1090,6 +1203,25 @@ impl SignalMessage {
             Self::VoiceNote { .. } => 199,
             Self::MessageReacted { .. } => 200,
             Self::AudioQualityReport { .. } => 201,
+            Self::UploadAttachment { .. } => 202,
+            Self::RequestAttachment { .. } => 203,
+            Self::AttachmentData { .. } => 204,
+            Self::ChangeEmail { .. } => 205,
+            Self::EmailChanged { .. } => 206,
+            Self::LinkPreviewReady { .. } => 207,
+            Self::MarkChannelRead { .. } => 208,
+            Self::ReadStateSnapshot { .. } => 209,
+            Self::CreateRole { .. } => 210,
+            Self::UpdateRole { .. } => 211,
+            Self::DeleteRole { .. } => 212,
+            Self::AssignRoleToMember { .. } => 213,
+            Self::UnassignRoleFromMember { .. } => 214,
+            Self::RequestRoleList => 215,
+            Self::RoleListSnapshot { .. } => 216,
+            Self::RoleCreated { .. } => 217,
+            Self::RoleUpdated { .. } => 218,
+            Self::RoleDeleted { .. } => 219,
+            Self::MemberRolesChanged { .. } => 220,
         }
     }
 
@@ -1297,6 +1429,25 @@ impl SignalMessage {
         "VoiceNote",
         "MessageReacted",
         "AudioQualityReport",
+        "UploadAttachment",
+        "RequestAttachment",
+        "AttachmentData",
+        "ChangeEmail",
+        "EmailChanged",
+        "LinkPreviewReady",
+        "MarkChannelRead",
+        "ReadStateSnapshot",
+        "CreateRole",
+        "UpdateRole",
+        "DeleteRole",
+        "AssignRoleToMember",
+        "UnassignRoleFromMember",
+        "RequestRoleList",
+        "RoleListSnapshot",
+        "RoleCreated",
+        "RoleUpdated",
+        "RoleDeleted",
+        "MemberRolesChanged",
     ];
 }
 

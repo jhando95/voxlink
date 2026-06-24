@@ -11,6 +11,33 @@ pub(crate) async fn handle_create_event(
     end_time: i64,
     db: &Db,
 ) {
+    // Validate inputs before doing anything else. Without these guards the
+    // handler would happily persist empty titles, multi-megabyte descriptions,
+    // past-dated start times, and end_time<start_time intervals.
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        send_error(state, peer_id, "Event title is required").await;
+        return;
+    }
+    if title.chars().count() > 128 {
+        send_error(state, peer_id, "Event title is too long (max 128 chars)").await;
+        return;
+    }
+    if description.chars().count() > 2000 {
+        send_error(state, peer_id, "Event description is too long (max 2000 chars)").await;
+        return;
+    }
+    let now = crate::now_epoch_secs() as i64;
+    // Allow a small backwards grace (5 min) for clock skew.
+    if start_time + 300 < now {
+        send_error(state, peer_id, "Event start time must be in the future").await;
+        return;
+    }
+    if end_time != 0 && end_time <= start_time {
+        send_error(state, peer_id, "Event end time must be after start time").await;
+        return;
+    }
+
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() {
         Some(p) => p,
@@ -73,7 +100,7 @@ pub(crate) async fn handle_create_event(
     };
     let msg = SignalMessage::ScheduledEventCreated { event };
     for p in &peers_map {
-        send_to(p, &msg).await;
+        send_to(p, &msg);
     }
 }
 
@@ -114,7 +141,7 @@ pub(crate) async fn handle_delete_event(state: &State, peer_id: &str, event_id: 
     }
     let msg = SignalMessage::ScheduledEventDeleted { event_id };
     for p in &peers_map {
-        send_to(p, &msg).await;
+        send_to(p, &msg);
     }
 }
 
@@ -149,8 +176,7 @@ pub(crate) async fn handle_toggle_event_interest(state: &State, peer_id: &str, e
                 interested_count: count,
                 is_interested,
             },
-        )
-        .await;
+        );
     }
 }
 
@@ -180,6 +206,6 @@ pub(crate) async fn handle_list_events(state: &State, peer_id: &str, db: &Db) {
         .unwrap_or_default();
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
-        send_to(&p, &SignalMessage::ScheduledEventList { events }).await;
+        send_to(&p, &SignalMessage::ScheduledEventList { events });
     }
 }

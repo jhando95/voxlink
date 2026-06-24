@@ -1364,6 +1364,188 @@ async fn test_create_text_channel() {
 }
 
 #[tokio::test]
+async fn test_upload_attachment_roundtrip() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    create_space(&mut alice, "Pics", "Alice").await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "media".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
+        })
+        .await;
+    let channel_id = loop {
+        match alice.recv_signal().await {
+            SignalMessage::ChannelCreated { channel } => break channel.id,
+            _ => continue,
+        }
+    };
+
+    let bytes = vec![0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3, 42];
+    alice
+        .send_signal(&SignalMessage::UploadAttachment {
+            channel_id: channel_id.clone(),
+            file_name: "pic.png".to_string(),
+            mime: "image/png".to_string(),
+            caption: "check this out".to_string(),
+            data_b64: shared_types::b64::encode(&bytes),
+        })
+        .await;
+
+    // The upload posts a chat message, broadcast back to the sender too.
+    let attachment_id = loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::TextMessage { message, .. }) => {
+                assert_eq!(message.content, "check this out");
+                assert_eq!(message.attachment_name.as_deref(), Some("pic.png"));
+                assert_eq!(message.attachment_size, Some(bytes.len() as u32));
+                break message
+                    .attachment_id
+                    .expect("attachment message must carry an attachment_id");
+            }
+            Some(_) => continue,
+            None => panic!("did not receive the attachment message"),
+        }
+    };
+
+    // Fetching the attachment returns the exact bytes.
+    alice
+        .send_signal(&SignalMessage::RequestAttachment {
+            attachment_id: attachment_id.clone(),
+        })
+        .await;
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::AttachmentData {
+                attachment_id: id,
+                file_name,
+                mime,
+                data_b64,
+            }) => {
+                assert_eq!(id, attachment_id);
+                assert_eq!(file_name, "pic.png");
+                assert_eq!(mime, "image/png");
+                assert_eq!(shared_types::b64::decode(&data_b64).unwrap(), bytes);
+                break;
+            }
+            Some(_) => continue,
+            None => panic!("did not receive AttachmentData"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_voice_note_roundtrip() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    create_space(&mut alice, "VN", "Alice").await;
+
+    alice
+        .send_signal(&SignalMessage::CreateChannel {
+            channel_name: "voice-notes".to_string(),
+            channel_type: shared_types::ChannelType::Text,
+            voice_quality: 2,
+        })
+        .await;
+    let channel_id = loop {
+        match alice.recv_signal().await {
+            SignalMessage::ChannelCreated { channel } => break channel.id,
+            _ => continue,
+        }
+    };
+
+    alice
+        .send_signal(&SignalMessage::SendVoiceNote {
+            channel_id: channel_id.clone(),
+            duration_secs: 5,
+            data: vec![0u8; 128],
+        })
+        .await;
+
+    // The voice note is delivered as a TextMessage carrying a voice-note attachment.
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::TextMessage { message, .. }) => {
+                if message
+                    .attachment_name
+                    .as_deref()
+                    .map(|n| n.contains("voice_note"))
+                    .unwrap_or(false)
+                {
+                    assert_eq!(message.attachment_size, Some(128));
+                    break;
+                }
+            }
+            Some(_) => continue,
+            None => panic!("voice note was not delivered to the sender's space"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_change_email_flow() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await;
+
+    alice
+        .send_signal(&SignalMessage::CreateAccount {
+            email: "alice@example.com".to_string(),
+            password: "hunter2pw".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .await;
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::AccountCreated { .. }) => break,
+            Some(SignalMessage::AuthError { message }) => panic!("account creation failed: {message}"),
+            Some(_) => continue,
+            None => panic!("no AccountCreated"),
+        }
+    }
+
+    // Correct password → email updates.
+    alice
+        .send_signal(&SignalMessage::ChangeEmail {
+            current_password: "hunter2pw".to_string(),
+            new_email: "alice2@example.com".to_string(),
+        })
+        .await;
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::EmailChanged { email }) => {
+                assert_eq!(email, "alice2@example.com");
+                break;
+            }
+            Some(SignalMessage::AuthError { message }) => panic!("change email failed: {message}"),
+            Some(_) => continue,
+            None => panic!("no EmailChanged"),
+        }
+    }
+
+    // Wrong password → rejected, email unchanged.
+    alice
+        .send_signal(&SignalMessage::ChangeEmail {
+            current_password: "wrong-password".to_string(),
+            new_email: "alice3@example.com".to_string(),
+        })
+        .await;
+    loop {
+        match alice.recv_signal_timeout(Duration::from_secs(3)).await {
+            Some(SignalMessage::AuthError { .. }) => break,
+            Some(SignalMessage::EmailChanged { .. }) => {
+                panic!("wrong password must not change the email")
+            }
+            Some(_) => continue,
+            None => panic!("expected AuthError for wrong password"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_channel_created_broadcast() {
     let server = TestServer::start().await;
     let mut alice = server.connect().await;

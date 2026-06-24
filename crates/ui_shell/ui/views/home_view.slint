@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { DirectMessageThreadData, PublicSpaceData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
+import { DirectMessageThreadData, FriendData, GroupDMThreadData, PublicSpaceData, SavedServerData, SpaceData, VxTheme } from "../theme.slint";
 import { Divider, FieldLabel, SectionLabel, StatusDot, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatBlock, VxStatusPill } from "../components.slint";
 
 export component HomeView inherits Rectangle {
@@ -17,6 +17,13 @@ export component HomeView inherits Rectangle {
     in-out property <string> room-password: "";
     in property <[DirectMessageThreadData]> direct-message-threads: [];
     in property <int> unread-direct-messages-count: 0;
+    in property <[GroupDMThreadData]> group-dm-threads: [];
+    in property <[FriendData]> favorite-friends: [];
+    in property <[string]> new-group-dm-selection: [];
+    in-out property <bool> show-new-group-dm-picker: false;
+    callback toggle-new-group-dm-friend(string);
+    callback create-group-dm();
+    callback open-group-dm(string);
     in property <[SavedServerData]> saved-servers: [];
     in property <bool> streamer-mode: false;
     in-out property <string> activity-text: "";
@@ -97,7 +104,7 @@ export component HomeView inherits Rectangle {
                         Text {
                             text: "Fast native calls, persistent spaces, and direct chat in a calm desktop shell that stays out of the way.";
                             color: VxTheme.text-secondary;
-                            font-size: 11px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
 
@@ -176,7 +183,7 @@ export component HomeView inherits Rectangle {
                     Text {
                         text: "Voxlink is a voice-first chat app. Here's how to get started:";
                         color: VxTheme.text-secondary;
-                        font-size: 12px;
+                        font-size: 13px;
                         wrap: word-wrap;
                     }
 
@@ -209,7 +216,7 @@ export component HomeView inherits Rectangle {
                             Text {
                                 text: "Your own server with voice and text channels.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                         }
@@ -244,7 +251,7 @@ export component HomeView inherits Rectangle {
                             Text {
                                 text: "Share your invite code to bring people in.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                         }
@@ -279,7 +286,7 @@ export component HomeView inherits Rectangle {
                             Text {
                                 text: "Click any voice channel to start talking.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                         }
@@ -314,7 +321,7 @@ export component HomeView inherits Rectangle {
                             Text {
                                 text: "Use text channels for messages, reactions, and threads.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                         }
@@ -413,7 +420,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: server.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 11px;
+                                            font-size: 12px;
                                             font-weight: 500;
                                             vertical-alignment: center;
                                             horizontal-stretch: 1;
@@ -423,7 +430,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: root.streamer-mode ? "ws://***:****" : server.address;
                                             color: VxTheme.text-muted;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             vertical-alignment: center;
                                         }
 
@@ -435,7 +442,7 @@ export component HomeView inherits Rectangle {
                                             Text {
                                                 text: "✕";
                                                 color: remove-touch.has-hover ? VxTheme.danger : VxTheme.text-muted;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 horizontal-alignment: center;
                                                 vertical-alignment: center;
                                             }
@@ -490,7 +497,7 @@ export component HomeView inherits Rectangle {
                                 if root.spaces.length > 0 : Text {
                                     text: root.spaces.length + " linked";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                 }
                             }
@@ -506,13 +513,13 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: "Your workspace rail is empty.";
                                         color: VxTheme.text-primary;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                     }
                                     Text {
                                         text: "Create a space to get channels, members, and chat in one place.";
                                         color: VxTheme.text-muted;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -560,14 +567,14 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: space.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 12px;
+                                            font-size: 13px;
                                             font-weight: 700;
                                             overflow: elide;
                                         }
                                         Text {
                                             text: space.member-count + " members  ·  " + space.channel-count + " channels";
                                             color: VxTheme.text-muted;
-                                            font-size: 9px;
+                                            font-size: 11px;
                                             overflow: elide;
                                         }
                                     }
@@ -595,10 +602,162 @@ export component HomeView inherits Rectangle {
                             HorizontalLayout {
                                 alignment: space-between;
                                 SectionLabel { text: "DIRECT MESSAGES"; }
-                                if root.unread-direct-messages-count > 0 : VxStatusPill {
-                                    label: root.unread-direct-messages-count + " unread";
-                                    tone: VxTheme.accent;
-                                    fill: VxTheme.accent-subtle;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    if root.unread-direct-messages-count > 0 : VxStatusPill {
+                                        label: root.unread-direct-messages-count + " unread";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
+                                    VxButton {
+                                        label: root.show-new-group-dm-picker ? "Cancel" : "New group";
+                                        glyph: root.show-new-group-dm-picker ? "CN" : "GP";
+                                        small: true;
+                                        soft: true;
+                                        clicked => {
+                                            root.show-new-group-dm-picker = !root.show-new-group-dm-picker;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Inline multi-select friend picker for creating a group DM
+                            if root.show-new-group-dm-picker : Rectangle {
+                                border-radius: VxTheme.radius-card;
+                                background: VxTheme.bg-soft;
+                                border-color: VxTheme.accent-border.transparentize(0.5);
+                                border-width: 1px;
+                                VerticalLayout {
+                                    padding: 14px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Pick 2 or more friends for a group conversation.";
+                                        color: VxTheme.text-secondary;
+                                        font-size: 12px;
+                                    }
+                                    if root.favorite-friends.length == 0 : Text {
+                                        text: "Add some friends first.";
+                                        color: VxTheme.text-muted;
+                                        font-size: 12px;
+                                    }
+                                    for friend in root.favorite-friends : Rectangle {
+                                        height: 32px;
+                                        border-radius: VxTheme.radius-control;
+                                        background: gp-friend-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+                                        gp-friend-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.toggle-new-group-dm-friend(friend.user-id); }
+                                        }
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            spacing: 10px;
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 16px;
+                                                height: 16px;
+                                                border-radius: 4px;
+                                                border-width: 1px;
+                                                // Highlight check when the user-id is in the selection
+                                                background: root.new-group-dm-selection.length > 0
+                                                    && (
+                                                        root.new-group-dm-selection[0] == friend.user-id
+                                                        || (root.new-group-dm-selection.length > 1 && root.new-group-dm-selection[1] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 2 && root.new-group-dm-selection[2] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 3 && root.new-group-dm-selection[3] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 4 && root.new-group-dm-selection[4] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 5 && root.new-group-dm-selection[5] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 6 && root.new-group-dm-selection[6] == friend.user-id)
+                                                        || (root.new-group-dm-selection.length > 7 && root.new-group-dm-selection[7] == friend.user-id)
+                                                    )
+                                                    ? VxTheme.accent : transparent;
+                                                border-color: VxTheme.border-strong;
+                                            }
+                                            Text {
+                                                text: friend.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 13px;
+                                                font-weight: 600;
+                                                horizontal-stretch: 1;
+                                            }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        alignment: end;
+                                        Text {
+                                            text: root.new-group-dm-selection.length + " selected";
+                                            color: VxTheme.text-muted;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                        }
+                                        VxButton {
+                                            label: "Create group";
+                                            glyph: "OK";
+                                            small: true;
+                                            accent: true;
+                                            enabled: root.new-group-dm-selection.length >= 2;
+                                            clicked => {
+                                                root.create-group-dm();
+                                                root.show-new-group-dm-picker = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Group DM threads
+                            for group in root.group-dm-threads : Rectangle {
+                                border-radius: VxTheme.radius-control;
+                                background: gp-thread-touch.has-hover ? VxTheme.row-hover-bg : VxTheme.bg-soft;
+                                border-color: group.unread-count > 0 ? VxTheme.accent-border : VxTheme.border-subtle;
+                                border-width: 1px;
+                                gp-thread-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.open-group-dm(group.group-id); }
+                                }
+                                HorizontalLayout {
+                                    padding: 10px;
+                                    spacing: 10px;
+                                    alignment: center;
+                                    VxGlyphTile {
+                                        tile-size: 28px;
+                                        glyph: "GP";
+                                        tone: VxTheme.accent;
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            Text {
+                                                text: group.name;
+                                                color: VxTheme.text-primary;
+                                                font-size: 12px;
+                                                font-weight: 700;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: group.member-count + " people";
+                                                color: VxTheme.text-muted;
+                                                font-size: 11px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        Text {
+                                            text: group.preview;
+                                            color: VxTheme.text-secondary;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    if group.unread-count > 0 : VxStatusPill {
+                                        label: group.unread-count + "";
+                                        tone: VxTheme.accent;
+                                        fill: VxTheme.accent-subtle;
+                                    }
                                 }
                             }
 
@@ -613,13 +772,13 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: "No conversations yet";
                                         color: VxTheme.text-secondary;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                     }
                                     Text {
                                         text: "Start a conversation from your friends list.";
                                         color: VxTheme.text-muted;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -675,14 +834,14 @@ export component HomeView inherits Rectangle {
                                             Text {
                                                 text: thread.name;
                                                 color: VxTheme.text-primary;
-                                                font-size: 11px;
+                                                font-size: 12px;
                                                 font-weight: 700;
                                                 overflow: elide;
                                             }
                                             Text {
                                                 text: thread.meta;
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                                 vertical-alignment: center;
                                             }
                                         }
@@ -690,7 +849,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: thread.preview;
                                             color: VxTheme.text-secondary;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             overflow: elide;
                                         }
                                     }
@@ -713,7 +872,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: "Go";
                                             color: dm-call-wide.has-hover ? VxTheme.success : VxTheme.text-muted;
-                                            font-size: 9px;
+                                            font-size: 11px;
                                             font-weight: 700;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -781,7 +940,7 @@ export component HomeView inherits Rectangle {
                                 Text {
                                     text: "A space is your own group with voice and text channels.";
                                     color: VxTheme.text-muted;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     wrap: word-wrap;
                                 }
                                 VxInput {
@@ -850,7 +1009,7 @@ export component HomeView inherits Rectangle {
                             Text {
                                 text: "Fast room codes for ad-hoc voice without building a full space.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
 
@@ -984,7 +1143,7 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: server.name;
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 500;
                                         vertical-alignment: center;
                                         horizontal-stretch: 1;
@@ -994,7 +1153,7 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: root.streamer-mode ? "ws://***:****" : server.address;
                                         color: VxTheme.text-muted;
-                                        font-size: 10px;
+                                        font-size: 12px;
                                         vertical-alignment: center;
                                     }
 
@@ -1006,7 +1165,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: "✕";
                                             color: narrow-remove-touch.has-hover ? VxTheme.danger : VxTheme.text-muted;
-                                            font-size: 11px;
+                                            font-size: 12px;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
@@ -1221,13 +1380,13 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: space.name;
                                         color: VxTheme.text-primary;
-                                        font-size: 12px;
+                                        font-size: 13px;
                                         font-weight: 700;
                                     }
                                     Text {
                                         text: space.member-count + " members";
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
                                 }
                                 if space.has-unread : VxStatusPill {
@@ -1268,7 +1427,7 @@ export component HomeView inherits Rectangle {
                             if root.public-spaces.length == 0 : Text {
                                 text: "No public spaces found. Ask a server admin to make their space public.";
                                 color: VxTheme.text-muted;
-                                font-size: 10px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
 
@@ -1314,13 +1473,13 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: ps.name;
                                             color: VxTheme.text-primary;
-                                            font-size: 12px;
+                                            font-size: 13px;
                                             font-weight: 700;
                                         }
                                         if ps.description != "" : Text {
                                             text: ps.description;
                                             color: VxTheme.text-secondary;
-                                            font-size: 9px;
+                                            font-size: 11px;
                                             overflow: elide;
                                         }
                                         HorizontalLayout {
@@ -1328,7 +1487,7 @@ export component HomeView inherits Rectangle {
                                             Text {
                                                 text: ps.member-count + " members";
                                                 color: VxTheme.text-muted;
-                                                font-size: 9px;
+                                                font-size: 11px;
                                             }
                                             if ps.online-count > 0 : HorizontalLayout {
                                                 spacing: 3px;
@@ -1341,7 +1500,7 @@ export component HomeView inherits Rectangle {
                                                 Text {
                                                     text: ps.online-count + " online";
                                                     color: VxTheme.success;
-                                                    font-size: 9px;
+                                                    font-size: 11px;
                                                 }
                                             }
                                         }
@@ -1377,7 +1536,7 @@ export component HomeView inherits Rectangle {
                         if root.direct-message-threads.length == 0 : Text {
                             text: "Recent direct messages will appear here.";
                             color: VxTheme.text-muted;
-                            font-size: 10px;
+                            font-size: 12px;
                             wrap: word-wrap;
                         }
 
@@ -1424,7 +1583,7 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: thread.name;
                                         color: VxTheme.text-primary;
-                                        font-size: 11px;
+                                        font-size: 12px;
                                         font-weight: 700;
                                         overflow: elide;
                                         horizontal-stretch: 1;
@@ -1433,7 +1592,7 @@ export component HomeView inherits Rectangle {
                                     Text {
                                         text: thread.meta;
                                         color: VxTheme.text-muted;
-                                        font-size: 9px;
+                                        font-size: 11px;
                                     }
 
                                     if thread.unread-count > 0 : VxStatusPill {
@@ -1454,7 +1613,7 @@ export component HomeView inherits Rectangle {
                                         Text {
                                             text: "Go";
                                             color: dm-call-compact.has-hover ? VxTheme.success : VxTheme.text-muted;
-                                            font-size: 9px;
+                                            font-size: 11px;
                                             font-weight: 700;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -1483,7 +1642,7 @@ export component HomeView inherits Rectangle {
                                 Text {
                                     text: thread.preview;
                                     color: VxTheme.text-secondary;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     overflow: elide;
                                 }
                             }
