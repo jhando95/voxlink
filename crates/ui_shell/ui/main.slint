@@ -71,7 +71,8 @@ export component MainWindow inherits Window {
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
-    in-out property <string> version-text: "0.11.0";
+    // Set from Rust at startup (config_store reads Cargo CARGO_PKG_VERSION).
+    in-out property <string> version-text;
     in-out property <string> uptime-text: "0s";
     in-out property <string> listening-keybind: "";
     in-out property <string> ptt-key-display: "Space";
@@ -1815,20 +1816,28 @@ export component MainWindow inherits Window {
         }
 
         // ─── Toast Notification ───
-        if root.toast-visible : Rectangle {
+        if root.toast-visible : toast-box := Rectangle {
+            // Derived once so the toast-type cascade lives in one place. Editing
+            // a severity is now a two-line change (accent + glyph), not four.
+            property <color> toast-accent:
+                root.toast-type == 3 ? VxTheme.danger :
+                root.toast-type == 2 ? VxTheme.warning :
+                root.toast-type == 1 ? VxTheme.success :
+                VxTheme.accent;
+            property <string> toast-glyph:
+                root.toast-type == 3 ? "✕" :
+                root.toast-type == 2 ? "⚠" :
+                root.toast-type == 1 ? "✓" : "ℹ";
+            property <color> toast-text: root.toast-type >= 1 ? #fff : VxTheme.text-primary;
+            property <color> toast-meta: root.toast-type >= 1 ? #fff : VxTheme.text-muted;
+
             x: (parent.width - self.width) / 2;
             y: parent.height - 80px;
             width: min(360px, parent.width - 40px);
             height: 40px;
             border-radius: VxTheme.radius-control;
-            background: root.toast-type == 3 ? VxTheme.danger :
-                        root.toast-type == 2 ? VxTheme.warning :
-                        root.toast-type == 1 ? VxTheme.success :
-                        VxTheme.bg-raised;
-            border-color: root.toast-type == 3 ? VxTheme.danger :
-                          root.toast-type == 2 ? VxTheme.warning :
-                          root.toast-type == 1 ? VxTheme.success :
-                          VxTheme.accent-border;
+            background: root.toast-type == 0 ? VxTheme.bg-raised : toast-accent;
+            border-color: root.toast-type == 0 ? VxTheme.accent-border : toast-accent;
             border-width: 1px;
             opacity: 0.95;
             animate opacity { duration: 200ms; }
@@ -1839,9 +1848,7 @@ export component MainWindow inherits Window {
                 alignment: center;
                 spacing: 8px;
                 Text {
-                    text: root.toast-type == 3 ? "✕" :
-                          root.toast-type == 2 ? "⚠" :
-                          root.toast-type == 1 ? "✓" : "ℹ";
+                    text: toast-box.toast-glyph;
                     color: root.toast-type >= 1 ? #fff : VxTheme.accent;
                     font-size: 13px;
                     font-weight: 700;
@@ -1849,7 +1856,7 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: root.toast-message;
-                    color: root.toast-type >= 1 ? #fff : VxTheme.text-primary;
+                    color: toast-box.toast-text;
                     font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
@@ -1861,7 +1868,7 @@ export component MainWindow inherits Window {
                     clicked => { root.toast-visible = false; }
                     Text {
                         text: "×";
-                        color: root.toast-type >= 1 ? #fff : VxTheme.text-muted;
+                        color: toast-box.toast-meta;
                         font-size: 14px;
                         horizontal-alignment: center;
                         vertical-alignment: center;

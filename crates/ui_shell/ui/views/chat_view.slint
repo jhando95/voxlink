@@ -101,6 +101,19 @@ export component ChatView inherits Rectangle {
     callback attach-file(); // open a file picker and upload into the active channel
     callback download-attachment(string); // attachment_id
 
+    /// Emoji-picker click handler. Targets a message if one is selected,
+    /// otherwise appends to the composer input. Always closes the picker and
+    /// clears the search. Replaces 7+ hand-typed copies (one per tab + recents).
+    function pick-emoji(emoji: string) {
+        if root.emoji-picker-target-message-id != "" {
+            root.react-to-message(root.emoji-picker-target-message-id, emoji);
+        } else {
+            root.chat-input = root.chat-input + emoji;
+        }
+        root.show-emoji-picker = false;
+        root.emoji-search-text = "";
+    }
+
     function submit-composer() {
         if !root.composer-can-send {
             return;
@@ -1787,15 +1800,7 @@ export component ChatView inherits Rectangle {
                     border-width: 1px;
                     rr-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => {
-                            if root.emoji-picker-target-message-id != "" {
-                                root.react-to-message(root.emoji-picker-target-message-id, rr-emoji);
-                            } else {
-                                root.chat-input = root.chat-input + rr-emoji;
-                            }
-                            root.show-emoji-picker = false;
-                            root.emoji-search-text = "";
-                        }
+                        clicked => { root.pick-emoji(rr-emoji); }
                     }
                     Text {
                         text: rr-emoji;
@@ -1829,12 +1834,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-r0.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-r0 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -1864,12 +1864,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-s1.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-s1 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -1896,12 +1891,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-p2.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-p2 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -1928,12 +1918,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-n3.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-n3 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -1960,12 +1945,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-f4.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-f4 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -1992,12 +1972,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-o5.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-o5 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }
@@ -2024,12 +1999,7 @@ export component ChatView inherits Rectangle {
                                 background: ep-s6.has-hover ? VxTheme.card-hover-bg : transparent;
                                 ep-s6 := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        if root.emoji-picker-target-message-id != "" {
-                                            root.react-to-message(root.emoji-picker-target-message-id, emoji);
-                                        } else { root.chat-input = root.chat-input + emoji; }
-                                        root.show-emoji-picker = false; root.emoji-search-text = "";
-                                    }
+                                    clicked => { root.pick-emoji(emoji); }
                                 }
                                 Text { text: emoji; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                             }

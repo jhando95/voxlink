@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.13.2 — UI: simplification + token consolidation
+
+Audit-driven simplification on top of v0.13.1's section-definition pass. No
+new functionality; the .slint files are shorter and the cascades they used
+to type out 4-7 times now live in one place.
+
+- **`pick-emoji(emoji)` function on the chat root** replaces 8 hand-typed
+  copies of the same add-vs-react + close-picker + clear-search bookkeeping
+  (7 emoji-picker tabs + recent-reactions strip). Adding a new tab or
+  changing the click behavior is now a one-line edit instead of a
+  cross-file find-and-replace.
+- **Toast severity cascade hoisted** to derived `toast-accent` /
+  `toast-glyph` / `toast-text` / `toast-meta` properties on the toast
+  Rectangle. The same 4-arm ternary previously appeared in background,
+  border, icon glyph, label color, and close-X color bindings; now each
+  references the cached value. Adding a severity tier is 2 line edits, not
+  4-5.
+- **Room status-bar quality-color hoisted** to `status-bar-row.quality-color`
+  + `quality-label`. The connection-quality cascade (none/connecting/good/
+  unstable/poor) was previously typed three times across the dot, label
+  text, and ping color bindings. New tiers now go in one place.
+- **`VxTheme.pad-card` / `pad-card-compact` / `space-card-rows` tokens**
+  introduced so future density tweaks land in one line instead of sweeping
+  ~60 inline `padding: 18px` literals across the view files.
+- **Dead default removed** — `version-text: "0.11.0"` literal default on
+  the main window was three releases stale and only ever overwritten by
+  Rust at startup. Now declared without a default so the actual version is
+  always whatever Rust sets.
+
+No protocol or functional changes — server doesn't need redeploy from
+v0.13.0 or v0.13.1.
+
 ## v0.13.1 — UI: clearer sector definition
 
 Cosmetic-only pass on top of v0.13.0. The view zones (sidebar / content /

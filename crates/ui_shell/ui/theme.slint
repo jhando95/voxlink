@@ -594,6 +594,13 @@ export global VxTheme {
     out property <length> gutter:
         16px * ui-scale;
 
+    // ── Padding tokens ──
+    // Card body padding occurred as a literal in 60+ places; tokenizing means
+    // density tweaks become one-line PRs.
+    out property <length> pad-card:         18px;   // standard VxCard body
+    out property <length> pad-card-compact: 14px;   // dense card body
+    out property <length> space-card-rows:  14px;   // vertical spacing between rows in a card
+
     // ── Typography scale ──
     // Tokenized so legibility/density tune in one place. Nudged up from the
     // legacy 9–11px norm for a cleaner, more modern read with real hierarchy.

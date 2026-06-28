@@ -1146,7 +1146,22 @@ export component RoomView inherits Rectangle {
                 background: VxTheme.border-subtle;
             }
 
-            HorizontalLayout {
+            status-bar-row := HorizontalLayout {
+                // Connection-quality cascade derived once. Editing a tier is
+                // now a one-line change instead of three (dot, label, color).
+                property <color> quality-color:
+                    !root.is-connected || root.reconnect-attempts > 0 ? VxTheme.danger :
+                    root.ping-ms < 0 ? VxTheme.text-muted :
+                    root.ping-ms < 100 ? VxTheme.success :
+                    root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                property <string> quality-label:
+                    !root.is-connected
+                        ? "Reconnecting" + (root.reconnect-attempts > 0 ? " (" + root.reconnect-attempts + ")" : "...")
+                        : root.ping-ms < 0 ? "Connecting..."
+                        : root.ping-ms < 100 ? "Connected"
+                        : root.ping-ms < 200 ? "Unstable"
+                        : "Poor connection";
+
                 padding-left: 16px;
                 padding-right: 16px;
                 spacing: 10px;
@@ -1157,11 +1172,7 @@ export component RoomView inherits Rectangle {
                     width: 8px;
                     height: 8px;
                     border-radius: 4px;
-                    background: !root.is-connected ? VxTheme.danger :
-                                root.reconnect-attempts > 0 ? VxTheme.danger :
-                                root.ping-ms < 0 ? VxTheme.text-muted :
-                                root.ping-ms < 100 ? VxTheme.success :
-                                root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    background: status-bar-row.quality-color;
                     opacity: !root.is-connected || root.reconnect-attempts > 0
                         ? 0.4 + 0.6 * Math.abs(Math.sin(animation-tick() / 800ms * 360deg))
                         : 1.0;
@@ -1169,26 +1180,18 @@ export component RoomView inherits Rectangle {
 
                 // Connection label
                 Text {
-                    text: !root.is-connected
-                        ? "Reconnecting" + (root.reconnect-attempts > 0 ? " (" + root.reconnect-attempts + ")" : "...")
-                        : root.ping-ms < 0 ? "Connecting..."
-                        : root.ping-ms < 100 ? "Connected"
-                        : root.ping-ms < 200 ? "Unstable"
-                        : "Poor connection";
-                    color: !root.is-connected || root.reconnect-attempts > 0 ? VxTheme.danger :
-                           root.ping-ms < 0 ? VxTheme.text-muted :
-                           root.ping-ms < 100 ? VxTheme.success :
-                           root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    text: status-bar-row.quality-label;
+                    color: status-bar-row.quality-color;
                     font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
 
-                // Ping value
+                // Ping value — dimmer for healthy connections, same color
+                // tier as the label for stressed ones.
                 if root.ping-ms >= 0 : Text {
                     text: root.ping-ms + "ms";
-                    color: root.ping-ms < 100 ? VxTheme.text-muted :
-                           root.ping-ms < 200 ? VxTheme.warning : VxTheme.danger;
+                    color: root.ping-ms < 100 ? VxTheme.text-muted : status-bar-row.quality-color;
                     font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
