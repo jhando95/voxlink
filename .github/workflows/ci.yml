@@ -15,6 +15,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
+  # ui_shell's Slint-generated module is enormous; on the Windows runner rustc
+  # aborts (exit code 3, no diagnostics) building its test harness at full
+  # debuginfo. Give rustc a 32MB stack and use line-tables-only debuginfo for
+  # test builds — backtraces in CI stay useful, memory/stack pressure drops.
+  RUST_MIN_STACK: "33554432"
+  CARGO_PROFILE_TEST_DEBUG: "1"
 
 jobs:
   build-test:
