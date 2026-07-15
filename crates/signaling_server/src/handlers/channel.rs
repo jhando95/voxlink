@@ -1,6 +1,6 @@
 use crate::{send_error, send_to, validate_name};
 use crate::{ChannelMeta, Db, Peer, Room, State};
-use shared_types::{ChannelInfo, ChannelType, ParticipantInfo, SignalMessage};
+use shared_types::{ChannelInfo, ChannelType, ParticipantInfo, Permissions, SignalMessage};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
@@ -34,13 +34,21 @@ pub async fn handle_create_channel(
         return;
     };
 
-    let Some((_, actor_user_id, actor_role)) = super::space::peer_space_role(state, peer_id).await
+    let Some((_, actor_user_id, _actor_role)) = super::space::peer_space_role(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !super::space::can_manage_channels(actor_role) {
-        send_error(state, peer_id, "Only admins can create channels").await;
+    if !super::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_CHANNELS)
+    {
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to create channels",
+        )
+        .await;
         return;
     }
 
@@ -226,13 +234,21 @@ pub async fn handle_delete_channel(state: &State, peer_id: &str, channel_id: Str
         return;
     };
 
-    let Some((_, actor_user_id, actor_role)) = super::space::peer_space_role(state, peer_id).await
+    let Some((_, actor_user_id, _actor_role)) = super::space::peer_space_role(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !super::space::can_manage_channels(actor_role) {
-        send_error(state, peer_id, "Only admins can delete channels").await;
+    if !super::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_CHANNELS)
+    {
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to delete channels",
+        )
+        .await;
         return;
     }
 

@@ -204,6 +204,13 @@ pub struct GroupMessageRow {
 }
 
 impl Database {
+    /// Reserved role_ids for the managed roles synthesized from the legacy
+    /// 4-tier system. Stable across restarts so re-seeding is idempotent.
+    pub const EVERYONE_RID: &'static str = "__everyone";
+    pub const LEGACY_MEMBER_RID: &'static str = "__legacy_member";
+    pub const LEGACY_MOD_RID: &'static str = "__legacy_moderator";
+    pub const LEGACY_ADMIN_RID: &'static str = "__legacy_admin";
+
     /// Lock the DB connection, recovering from poisoned mutex (a prior panic in a
     /// spawn_blocking task). This prevents a single DB error from crashing all future ops.
     pub fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
@@ -2232,17 +2239,102 @@ impl Database {
         Ok(assigned | default)
     }
 
+    /// Seed the four managed roles (@everyone + the legacy-tier trio) for a
+    /// single space. Idempotent upserts. Called per-space by the v2 synthesis
+    /// AND at space creation time so a fresh space has a role catalog
+    /// immediately (not only after the next server restart).
+    pub fn seed_managed_roles(&self, space_id: &str, now: i64) -> Result<(), String> {
+        self.upsert_role_def(&SpaceRoleDefRow {
+            space_id: space_id.to_string(),
+            role_id: Self::EVERYONE_RID.into(),
+            name: "@everyone".into(),
+            color: String::new(),
+            position: 0,
+            permissions: shared_types::Permissions::LEGACY_MEMBER_DEFAULTS.bits(),
+            is_managed: true,
+            is_default: true,
+            created_at: now,
+        })?;
+        self.upsert_role_def(&SpaceRoleDefRow {
+            space_id: space_id.to_string(),
+            role_id: Self::LEGACY_MEMBER_RID.into(),
+            name: "Member".into(),
+            color: String::new(),
+            position: 10,
+            permissions: shared_types::Permissions::LEGACY_MEMBER_DEFAULTS.bits(),
+            is_managed: true,
+            is_default: false,
+            created_at: now,
+        })?;
+        self.upsert_role_def(&SpaceRoleDefRow {
+            space_id: space_id.to_string(),
+            role_id: Self::LEGACY_MOD_RID.into(),
+            name: "Moderator".into(),
+            color: String::new(),
+            position: 50,
+            permissions: shared_types::Permissions::LEGACY_MODERATOR_BUNDLE.bits(),
+            is_managed: true,
+            is_default: false,
+            created_at: now,
+        })?;
+        self.upsert_role_def(&SpaceRoleDefRow {
+            space_id: space_id.to_string(),
+            role_id: Self::LEGACY_ADMIN_RID.into(),
+            name: "Admin".into(),
+            color: String::new(),
+            position: 100,
+            permissions: shared_types::Permissions::LEGACY_ADMIN_BUNDLE.bits(),
+            is_managed: true,
+            is_default: false,
+            created_at: now,
+        })?;
+        Ok(())
+    }
+
+    /// Replace a user's managed-legacy role assignment with the one matching
+    /// `role_key` ("admin" / "moderator" / "member"). Custom (non-managed)
+    /// role assignments are left untouched, so a legacy SetMemberRole can't
+    /// wipe roles created through the new management API. Passing "member"
+    /// just clears the mod/admin managed roles (the default @everyone role
+    /// already carries member permissions).
+    pub fn set_legacy_role_assignment(
+        &self,
+        space_id: &str,
+        user_id: &str,
+        role_key: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        for managed in [
+            Self::LEGACY_ADMIN_RID,
+            Self::LEGACY_MOD_RID,
+            Self::LEGACY_MEMBER_RID,
+        ] {
+            let _ = self.delete_role_member(space_id, managed, user_id)?;
+        }
+        let rid = match role_key {
+            "admin" => Self::LEGACY_ADMIN_RID,
+            "moderator" => Self::LEGACY_MOD_RID,
+            "member" => Self::LEGACY_MEMBER_RID,
+            _ => return Ok(()),
+        };
+        self.upsert_role_member(&SpaceRoleMemberRow {
+            space_id: space_id.to_string(),
+            role_id: rid.into(),
+            user_id: user_id.to_string(),
+            assigned_at: now,
+            assigned_by: String::new(),
+        })
+    }
+
     /// Idempotent: synthesize v2 role-catalog rows from any legacy 4-tier
     /// `space_roles` entries that don't already have a matching `is_managed`
     /// role-def + assignment. Called from `apply_migrations` after schema_v2
     /// runs, and safe to call on every open() (it short-circuits when the
     /// per-space synthetic rows are already present).
     pub fn migrate_legacy_roles_to_v2(&self) -> Result<usize, String> {
-        // Synthetic role_id reserved for the legacy tier so re-runs are stable.
-        const LEGACY_ADMIN_RID: &str = "__legacy_admin";
-        const LEGACY_MOD_RID: &str = "__legacy_moderator";
-        const LEGACY_MEMBER_RID: &str = "__legacy_member";
-        const EVERYONE_RID: &str = "__everyone";
+        const LEGACY_ADMIN_RID: &str = Database::LEGACY_ADMIN_RID;
+        const LEGACY_MOD_RID: &str = Database::LEGACY_MOD_RID;
+        const LEGACY_MEMBER_RID: &str = Database::LEGACY_MEMBER_RID;
 
         let legacy: Vec<(String, String, String, i64)> = {
             let conn = self.lock_conn()?;
@@ -2292,51 +2384,8 @@ impl Database {
         let mut seeded_assignments = 0usize;
 
         for space_id in &all_spaces {
-            // Ensure the four managed roles exist (idempotent upsert).
-            self.upsert_role_def(&SpaceRoleDefRow {
-                space_id: space_id.clone(),
-                role_id: EVERYONE_RID.into(),
-                name: "@everyone".into(),
-                color: String::new(),
-                position: 0,
-                permissions: shared_types::Permissions::LEGACY_MEMBER_DEFAULTS.bits(),
-                is_managed: true,
-                is_default: true,
-                created_at: now,
-            })?;
-            self.upsert_role_def(&SpaceRoleDefRow {
-                space_id: space_id.clone(),
-                role_id: LEGACY_MEMBER_RID.into(),
-                name: "Member".into(),
-                color: String::new(),
-                position: 10,
-                permissions: shared_types::Permissions::LEGACY_MEMBER_DEFAULTS.bits(),
-                is_managed: true,
-                is_default: false,
-                created_at: now,
-            })?;
-            self.upsert_role_def(&SpaceRoleDefRow {
-                space_id: space_id.clone(),
-                role_id: LEGACY_MOD_RID.into(),
-                name: "Moderator".into(),
-                color: String::new(),
-                position: 50,
-                permissions: shared_types::Permissions::LEGACY_MODERATOR_BUNDLE.bits(),
-                is_managed: true,
-                is_default: false,
-                created_at: now,
-            })?;
-            self.upsert_role_def(&SpaceRoleDefRow {
-                space_id: space_id.clone(),
-                role_id: LEGACY_ADMIN_RID.into(),
-                name: "Admin".into(),
-                color: String::new(),
-                position: 100,
-                permissions: shared_types::Permissions::LEGACY_ADMIN_BUNDLE.bits(),
-                is_managed: true,
-                is_default: false,
-                created_at: now,
-            })?;
+            // Ensure the four managed roles exist (idempotent upserts).
+            self.seed_managed_roles(space_id, now)?;
         }
 
         // Now copy assignments. owner role is intentionally NOT synthesized —

@@ -1,28 +1,35 @@
 use crate::{send_error, send_to, Db, Peer, State};
-use shared_types::{AutomodWord, SignalMessage, SpaceRole};
+use shared_types::{AutomodWord, Permissions, SignalMessage, SpaceRole};
 use std::sync::Arc;
 
 use super::presence::notify_watchers_for_user;
 use super::space::{
-    append_audit_entry, broadcast_to_space, can_manage_members, peer_space_role,
-    resolve_space_member, role_for_identity, role_rank,
+    append_audit_entry, broadcast_to_space, peer_space_role, resolve_space_member,
+    role_for_identity, role_rank,
 };
 
 async fn actor_context(
     state: &State,
     peer_id: &str,
-) -> Option<(String, String, SpaceRole, String)> {
+) -> Option<(String, String, SpaceRole, String, Permissions)> {
     let (space_id, actor_user_id, actor_role) = peer_space_role(state, peer_id).await?;
     let peer = {
         let s = state.read().await;
         s.peers.get(peer_id).cloned()
     }?;
     let actor_name = peer.name.lock().await.clone();
-    Some((space_id, actor_user_id, actor_role, actor_name))
+    let actor_perms =
+        Permissions::from_bits(peer.space_perms.load(std::sync::atomic::Ordering::Relaxed));
+    Some((space_id, actor_user_id, actor_role, actor_name, actor_perms))
 }
 
+/// Rank rule only — the *capability* for each action (kick/ban/mute/...) is
+/// checked separately against the granular permission bitmask. Elevated
+/// targets (Moderator/Admin/Owner) are protected: they can only be moderated
+/// by a strictly higher legacy tier. Plain Members can be moderated by anyone
+/// holding the capability bit, so custom roles work without a legacy tier.
 fn can_moderate_target(actor_role: SpaceRole, target_role: SpaceRole) -> bool {
-    can_manage_members(actor_role) && role_rank(actor_role) > role_rank(target_role)
+    role_rank(target_role) == 0 || role_rank(actor_role) > role_rank(target_role)
 }
 
 async fn remove_member_from_space(
@@ -41,6 +48,9 @@ async fn remove_member_from_space(
 
     member_peer.set_room_code(None).await;
     *member_peer.space_id.lock().await = None;
+    member_peer
+        .space_perms
+        .store(0, std::sync::atomic::Ordering::Relaxed);
 
     send_to(
         member_peer,
@@ -61,13 +71,13 @@ async fn remove_member_from_space(
 }
 
 pub async fn handle_kick_member(state: &State, peer_id: &str, member_id: String, db: &Db) {
-    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+    let Some((space_id, actor_user_id, actor_role, actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::KICK_MEMBERS) {
         send_error(state, peer_id, "You do not have permission to kick members").await;
         return;
     }
@@ -128,13 +138,13 @@ pub async fn handle_mute_member(
     muted: bool,
     db: &Db,
 ) {
-    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+    let Some((space_id, actor_user_id, actor_role, actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::MUTE_MEMBERS) {
         send_error(state, peer_id, "You do not have permission to mute members").await;
         return;
     }
@@ -208,13 +218,13 @@ pub async fn handle_server_deafen_member(
     deafened: bool,
     db: &Db,
 ) {
-    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+    let Some((space_id, actor_user_id, actor_role, actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::DEAFEN_MEMBERS) {
         send_error(
             state,
             peer_id,
@@ -287,13 +297,13 @@ pub async fn handle_server_deafen_member(
 }
 
 pub async fn handle_ban_member(state: &State, peer_id: &str, member_id: String, db: &Db) {
-    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+    let Some((space_id, actor_user_id, actor_role, actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::BAN_MEMBERS) {
         send_error(state, peer_id, "You do not have permission to ban members").await;
         return;
     }
@@ -380,13 +390,13 @@ pub async fn handle_ban_member(state: &State, peer_id: &str, member_id: String, 
 }
 
 pub async fn handle_unban_member(state: &State, peer_id: &str, user_id: String, db: &Db) {
-    let Some((space_id, actor_user_id, actor_role, actor_name)) =
+    let Some((space_id, actor_user_id, _actor_role, actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::BAN_MEMBERS) {
         send_error(
             state,
             peer_id,
@@ -434,13 +444,13 @@ pub async fn handle_unban_member(state: &State, peer_id: &str, user_id: String, 
 }
 
 pub async fn handle_list_bans(state: &State, peer_id: &str, db: &Db) {
-    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+    let Some((space_id, _actor_user_id, _actor_role, _actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !actor_perms.has(Permissions::BAN_MEMBERS) {
         send_error(state, peer_id, "You do not have permission to view bans").await;
         return;
     }
@@ -584,13 +594,13 @@ pub async fn handle_add_automod_word(
     action: String,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+    let Some((space_id, _actor_user_id, _actor_role, _actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(SpaceRole::Admin) {
+    if !actor_perms.has(Permissions::MANAGE_AUTOMOD) {
         send_error(state, peer_id, "Admin or higher required to manage automod").await;
         return;
     }
@@ -636,13 +646,13 @@ pub async fn handle_add_automod_word(
 }
 
 pub async fn handle_remove_automod_word(state: &State, peer_id: &str, word: String, db: &Db) {
-    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+    let Some((space_id, _actor_user_id, _actor_role, _actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(SpaceRole::Admin) {
+    if !actor_perms.has(Permissions::MANAGE_AUTOMOD) {
         send_error(state, peer_id, "Admin or higher required to manage automod").await;
         return;
     }
@@ -682,13 +692,13 @@ pub async fn handle_remove_automod_word(state: &State, peer_id: &str, word: Stri
 }
 
 pub async fn handle_list_automod_words(state: &State, peer_id: &str, db: &Db) {
-    let Some((space_id, _actor_user_id, actor_role, _actor_name)) =
+    let Some((space_id, _actor_user_id, _actor_role, _actor_name, actor_perms)) =
         actor_context(state, peer_id).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(SpaceRole::Admin) {
+    if !actor_perms.has(Permissions::MANAGE_AUTOMOD) {
         send_error(state, peer_id, "Admin or higher required to view automod").await;
         return;
     }

@@ -1,6 +1,6 @@
 use crate::connection::{send_error, send_to};
 use crate::types::{Db, State};
-use shared_types::SignalMessage;
+use shared_types::{Permissions, SignalMessage};
 
 pub(crate) async fn handle_schedule_message(
     state: &State,
@@ -150,16 +150,15 @@ pub(crate) async fn handle_set_welcome_message(
         Some(sp) => sp,
         None => return,
     };
-    let user_id = peer
-        .user_id
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_else(|| peer_id.to_string());
-    let role = crate::handlers::space::role_for_identity(space, &user_id);
-    if !role.has_at_least(shared_types::SpaceRole::Admin) {
+    let perms = Permissions::from_bits(peer.space_perms.load(std::sync::atomic::Ordering::Relaxed));
+    if !perms.has(Permissions::MANAGE_SPACE) {
         drop(s);
-        send_error(state, peer_id, "Admin+ required").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to set the welcome message",
+        )
+        .await;
         return;
     }
     let members: Vec<_> = space.member_ids.to_vec();

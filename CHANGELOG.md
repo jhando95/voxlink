@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.13.4 — Custom roles are now authoritative
+
+Server-side permission overhaul: the granular permission bitmask introduced
+with the v0.13.0 role-management API now actually gates every moderation and
+management action. Until now a custom role like "Bouncer (KICK_MEMBERS)" was
+stored and broadcast but ignored — every handler still checked only the
+legacy Owner/Admin/Moderator/Member ladder.
+
+### Permission sweep (23 capability gates across 9 handler files)
+- Every capability check now consults the actor's **effective permission
+  bitmask** (OR of all held v2 roles + the @everyone default, plus
+  OWNER_BYPASS for the space owner) instead of the legacy 4-tier role:
+  kick/mute/server-deafen/ban/unban/view-bans (KICK_MEMBERS, MUTE_MEMBERS,
+  DEAFEN_MEMBERS, BAN_MEMBERS), timeouts (TIMEOUT_MEMBERS), automod word
+  lists (MANAGE_AUTOMOD), channel create/delete/topic/settings
+  (MANAGE_CHANNELS), priority-speaker-on-others (PRIORITY_SPEAKER),
+  scheduled events (MANAGE_EVENTS), start/stop recording (START_RECORDING /
+  STOP_RECORDING), pin + delete-any-message (MANAGE_MESSAGES), audit-log
+  visibility (VIEW_AUDIT_LOG), set-member-role + role colors (MANAGE_ROLES),
+  rename/description/welcome/invite settings (MANAGE_SPACE).
+- **Rank protection retained where it matters**: elevated targets
+  (Moderator/Admin/Owner on the legacy ladder) can still only be moderated
+  by a strictly higher tier; plain Members can be moderated by anyone
+  holding the capability bit, so custom roles work without a legacy tier.
+- Channel `min_role` gates are unchanged — that's a parallel per-channel
+  access mechanism, not an actor capability.
+
+### Per-peer permission cache
+- New `Peer.space_perms: AtomicU64` — effective bitmask cached lock-free per
+  connection. Refreshed on space join/create, SetMemberRole, role
+  assign/unassign (per-user), role update/delete (whole space), and cleared
+  on leave/kick/space-delete/identity-switch. Permission checks on hot
+  handler paths are now a single atomic load instead of a DB query.
+- Fresh spaces seed their managed role catalog (@everyone + legacy trio) at
+  creation time instead of only after the next server restart, and legacy
+  SetMemberRole writes through to the v2 role tables so both systems agree.
+- Anonymous space owners can now use the role-management API (the handlers
+  resolved identity differently from the rest of the server and rejected
+  unauthenticated owners).
+
+### Tests
+- New integration test proves a custom role holding only KICK_MEMBERS grants
+  kick capability to a legacy plain Member (and that the same member is
+  denied before the role is assigned).
+
 ## v0.13.3 — Zero clippy warnings, rustfmt everywhere, CI actually green
 
 Hygiene + CI-reliability release. No user-facing feature changes; the ships

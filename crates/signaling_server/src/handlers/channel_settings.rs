@@ -1,7 +1,7 @@
 use crate::connection::{send_error, send_to};
 use crate::types::{Db, Peer, State};
 use crate::DB_TIMEOUT;
-use shared_types::SignalMessage;
+use shared_types::{Permissions, SignalMessage};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -123,13 +123,21 @@ pub(crate) async fn handle_set_channel_topic(
     db: &Db,
 ) {
     let topic = topic.chars().take(256).collect::<String>();
-    let Some((space_id, actor_user_id, actor_role)) =
+    let Some((space_id, actor_user_id, _actor_role)) =
         crate::handlers::space::peer_space_role(state, peer_id).await
     else {
         return;
     };
-    if !crate::handlers::space::can_manage_channels(actor_role) {
-        send_error(state, peer_id, "Only admins can change channel topics").await;
+    if !crate::handlers::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_CHANNELS)
+    {
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to change channel topics",
+        )
+        .await;
         return;
     }
     let actor_name = {
@@ -206,13 +214,21 @@ pub(crate) async fn handle_channel_setting(
     setting: ChannelSetting,
     db: &crate::types::Db,
 ) {
-    let Some((space_id, _, actor_role)) =
+    let Some((space_id, _, _actor_role)) =
         crate::handlers::space::peer_space_role(state, peer_id).await
     else {
         return;
     };
-    if !crate::handlers::space::can_manage_channels(actor_role) {
-        send_error(state, peer_id, "Only admins can change channel settings").await;
+    if !crate::handlers::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_CHANNELS)
+    {
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to change channel settings",
+        )
+        .await;
         return;
     }
 
@@ -305,22 +321,26 @@ pub(crate) async fn handle_set_priority_speaker(
     target_id: String,
     enabled: bool,
 ) {
-    // Only Moderator+ can set priority speaker on others; anyone can set it on themselves
+    // PRIORITY_SPEAKER permission required to set it on others; anyone can
+    // set it on themselves.
     let is_self = peer_id == target_id;
     if !is_self {
-        if let Some((_space_id, _user_id, role)) =
-            crate::handlers::space::peer_space_role(state, peer_id).await
+        if crate::handlers::space::peer_space_role(state, peer_id)
+            .await
+            .is_none()
         {
-            if !role.has_at_least(shared_types::SpaceRole::Moderator) {
-                send_error(
-                    state,
-                    peer_id,
-                    "Moderator+ required to set priority speaker on others",
-                )
-                .await;
-                return;
-            }
-        } else {
+            return;
+        }
+        if !crate::handlers::space::perms_of_peer(state, peer_id)
+            .await
+            .has(Permissions::PRIORITY_SPEAKER)
+        {
+            send_error(
+                state,
+                peer_id,
+                "You do not have permission to set priority speaker on others",
+            )
+            .await;
             return;
         }
     }

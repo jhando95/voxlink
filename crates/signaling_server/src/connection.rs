@@ -97,6 +97,7 @@ pub(crate) async fn handle_connection(
                 last_screen_chunk_sequence: AtomicU32::new(0),
                 blocked_by: std::sync::RwLock::new(HashSet::new()),
                 status_preset: Mutex::new(shared_types::UserStatus::default()),
+                space_perms: AtomicU64::new(0),
             }),
         );
         id

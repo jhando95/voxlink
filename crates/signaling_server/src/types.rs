@@ -72,6 +72,11 @@ pub(crate) struct Peer {
     /// User-selected status preset (Online / Idle / DnD / Invisible).
     /// Read by member-info builders so a member's chosen preset survives reconnects.
     pub status_preset: Mutex<shared_types::UserStatus>,
+    /// Cached effective permission bitmask for the peer's CURRENT space
+    /// (OR of every held role's permissions, plus OWNER_BYPASS when the peer
+    /// owns the space). 0 when not in a space. Recomputed on space join and
+    /// on any role mutation affecting this user; lock-free read per check.
+    pub space_perms: AtomicU64,
 }
 
 impl Peer {

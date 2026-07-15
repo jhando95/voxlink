@@ -1,10 +1,10 @@
 use crate::connection::send_error;
 use crate::handlers::space::{
-    can_manage_members, peer_space_role, resolve_space_member, role_for_identity, role_rank,
+    peer_space_role, perms_of_peer, resolve_space_member, role_for_identity, role_rank,
 };
 use crate::types::{Db, State};
 use crate::validation::now_epoch_secs;
-use shared_types::{SignalMessage, SpaceRole};
+use shared_types::{Permissions, SignalMessage, SpaceRole};
 use std::sync::atomic::Ordering;
 
 pub(crate) async fn handle_timeout_member(
@@ -17,7 +17,10 @@ pub(crate) async fn handle_timeout_member(
     let Some((space_id, actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
         return;
     };
-    if !can_manage_members(actor_role) {
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::TIMEOUT_MEMBERS)
+    {
         send_error(
             state,
             peer_id,
@@ -41,8 +44,9 @@ pub(crate) async fn handle_timeout_member(
         return;
     }
 
-    // Rank check: a moderator may not time out an equal or higher-ranked member
-    // (e.g. an admin or the owner).
+    // Rank check: elevated members (Moderator+) may only be timed out by a
+    // strictly higher legacy tier; plain Members are covered by the capability
+    // check above (so custom roles work without a legacy tier).
     let target_role = {
         let s = state.read().await;
         s.spaces
@@ -50,7 +54,7 @@ pub(crate) async fn handle_timeout_member(
             .map(|space| role_for_identity(space, &target_uid))
             .unwrap_or(SpaceRole::Member)
     };
-    if !(can_manage_members(actor_role) && role_rank(actor_role) > role_rank(target_role)) {
+    if role_rank(target_role) > 0 && role_rank(actor_role) <= role_rank(target_role) {
         send_error(state, peer_id, "You cannot time out that member").await;
         return;
     }

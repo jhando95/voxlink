@@ -30,7 +30,15 @@ async fn actor_perms(
     let (space_id, user_id) = {
         let s = state.read().await;
         let peer = s.peers.get(peer_id)?;
-        let uid = peer.user_id.lock().await.clone()?;
+        // Same identity fallback as stable_peer_id(): anonymous peers act
+        // under their connection id, so an unauthenticated space owner can
+        // still manage roles.
+        let uid = peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer_id.to_string());
         let sid = peer.space_id.lock().await.clone()?;
         (sid, uid)
     };
@@ -290,6 +298,7 @@ pub(crate) async fn handle_update_role(
     if let Some(pos) = update.position {
         existing.position = pos;
     }
+    let perms_changed = update.permissions.is_some();
     let db_clone = db_ref.clone();
     let row_for_db = existing.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || db_clone.upsert_role_def(&row_for_db))
@@ -317,6 +326,9 @@ pub(crate) async fn handle_update_role(
         },
     )
     .await;
+    if perms_changed {
+        super::space::refresh_perms_for_space(state, db, &space_id).await;
+    }
 }
 
 pub(crate) async fn handle_delete_role(state: &State, peer_id: &str, role_id: String, db: &Db) {
@@ -373,6 +385,7 @@ pub(crate) async fn handle_delete_role(state: &State, peer_id: &str, role_id: St
         },
     )
     .await;
+    super::space::refresh_perms_for_space(state, db, &space_id).await;
 }
 
 pub(crate) async fn handle_assign_role_to_member(
@@ -442,6 +455,7 @@ pub(crate) async fn handle_assign_role_to_member(
         send_error(state, peer_id, &format!("Failed to assign role: {e}")).await;
         return;
     }
+    super::space::refresh_perms_for_user(state, db, &space_id, &user_id).await;
     fan_out_member_role_change(state, db, &space_id, &user_id).await;
 }
 
@@ -471,6 +485,7 @@ pub(crate) async fn handle_unassign_role_from_member(
     let uid = user_id.clone();
     let _ =
         tokio::task::spawn_blocking(move || db_clone.delete_role_member(&sid, &rid, &uid)).await;
+    super::space::refresh_perms_for_user(state, db, &space_id, &user_id).await;
     fan_out_member_role_change(state, db, &space_id, &user_id).await;
 }
 

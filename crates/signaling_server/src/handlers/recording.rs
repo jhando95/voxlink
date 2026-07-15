@@ -1,7 +1,7 @@
 use crate::connection::{send_error, send_to};
 use crate::types::{Db, State};
 use crate::validation::now_epoch_secs;
-use shared_types::SignalMessage;
+use shared_types::{Permissions, SignalMessage};
 use std::sync::atomic::Ordering;
 
 pub(crate) async fn handle_start_recording(state: &State, peer_id: &str, channel_id: String) {
@@ -14,20 +14,13 @@ pub(crate) async fn handle_start_recording(state: &State, peer_id: &str, channel
         Some(id) => id,
         None => return,
     };
-    let space = match s.spaces.get(&space_id) {
-        Some(sp) => sp,
-        None => return,
-    };
-    let user_id = peer
-        .user_id
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_else(|| peer_id.to_string());
-    let role = crate::handlers::space::role_for_identity(space, &user_id);
-    if !role.has_at_least(shared_types::SpaceRole::Admin) {
+    if !s.spaces.contains_key(&space_id) {
+        return;
+    }
+    let perms = Permissions::from_bits(peer.space_perms.load(Ordering::Relaxed));
+    if !perms.has(Permissions::START_RECORDING) {
         drop(s);
-        send_error(state, peer_id, "Admin+ required to record").await;
+        send_error(state, peer_id, "You do not have permission to record").await;
         return;
     }
     let started_by = peer.name.lock().await.clone();
@@ -60,21 +53,18 @@ pub(crate) async fn handle_stop_recording(state: &State, peer_id: &str, channel_
         Some(id) => id,
         None => return,
     };
-    let space = match s.spaces.get(&space_id) {
-        Some(sp) => sp,
-        None => return,
-    };
-    let user_id = peer
-        .user_id
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_else(|| peer_id.to_string());
-    let role = crate::handlers::space::role_for_identity(space, &user_id);
-    // Only Moderator+ can stop recording (recording initiators are always Admin+)
-    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+    if !s.spaces.contains_key(&space_id) {
+        return;
+    }
+    let perms = Permissions::from_bits(peer.space_perms.load(Ordering::Relaxed));
+    if !perms.has(Permissions::STOP_RECORDING) {
         drop(s);
-        send_error(state, peer_id, "Moderator+ required to stop recording").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to stop recording",
+        )
+        .await;
         return;
     }
     let room_key = format!("sp:{}:ch:{}", space_id, channel_id);

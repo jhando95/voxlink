@@ -1,6 +1,6 @@
 use crate::{send_error, send_to};
 use crate::{Db, Peer, State};
-use shared_types::{ChannelType, ReactionData, SignalMessage};
+use shared_types::{ChannelType, Permissions, ReactionData, SignalMessage};
 use std::sync::Arc;
 
 const MAX_DIRECT_MESSAGES: usize = 500;
@@ -1044,24 +1044,19 @@ pub async fn handle_pin_message(
     };
     let Some(space_id) = space_id else { return };
 
+    // MANAGE_MESSAGES lets an actor pin any message; senders can pin their own.
+    // Read the cached bitmask before taking the write lock below.
+    let can_manage_messages = super::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_MESSAGES);
     let ok = {
         let mut s = state.write().await;
-        // Look up actor's role within this space (Moderator+ can pin any message).
-        let actor_role = if let Some(sp) = s.spaces.get(&space_id) {
-            sp.member_roles
-                .get(&owner_identity)
-                .copied()
-                .unwrap_or(shared_types::SpaceRole::Member)
-        } else {
-            shared_types::SpaceRole::Member
-        };
-        let is_mod_or_above = actor_role.has_at_least(shared_types::SpaceRole::Moderator);
         if let Some(space) = s.spaces.get_mut(&space_id) {
             let is_owner = space.owner_id == owner_identity;
             if let Some(messages) = space.text_messages.get_mut(&channel_id) {
                 if let Some(message) = messages.iter_mut().find(|msg| msg.message_id == message_id)
                 {
-                    if message.sender_id == owner_identity || is_owner || is_mod_or_above {
+                    if message.sender_id == owner_identity || is_owner || can_manage_messages {
                         message.pinned = pinned;
                         true
                     } else {
@@ -1118,23 +1113,18 @@ pub async fn handle_delete_text_message(
     };
     let Some(space_id) = space_id else { return };
 
-    // Check ownership: sender can delete own, space owner + moderators+ can delete any.
+    // Check ownership: sender can delete own; MANAGE_MESSAGES (or space owner)
+    // can delete any. Read the cached bitmask before taking the write lock.
+    let can_manage_messages = super::space::perms_of_peer(state, peer_id)
+        .await
+        .has(Permissions::MANAGE_MESSAGES);
     let ok = {
         let mut s = state.write().await;
-        let actor_role = if let Some(sp) = s.spaces.get(&space_id) {
-            sp.member_roles
-                .get(&owner_identity)
-                .copied()
-                .unwrap_or(shared_types::SpaceRole::Member)
-        } else {
-            shared_types::SpaceRole::Member
-        };
-        let is_mod_or_above = actor_role.has_at_least(shared_types::SpaceRole::Moderator);
         if let Some(space) = s.spaces.get_mut(&space_id) {
             let is_owner = space.owner_id == owner_identity;
             if let Some(msgs) = space.text_messages.get_mut(&channel_id) {
                 if let Some(pos) = msgs.iter().position(|m| m.message_id == message_id) {
-                    if msgs[pos].sender_id == owner_identity || is_owner || is_mod_or_above {
+                    if msgs[pos].sender_id == owner_identity || is_owner || can_manage_messages {
                         msgs.remove(pos);
                         true
                     } else {

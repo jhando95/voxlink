@@ -34,28 +34,6 @@ pub fn role_rank(role: SpaceRole) -> u8 {
     }
 }
 
-pub fn can_manage_channels(role: SpaceRole) -> bool {
-    matches!(role, SpaceRole::Owner | SpaceRole::Admin)
-}
-
-pub fn can_manage_members(role: SpaceRole) -> bool {
-    matches!(
-        role,
-        SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
-    )
-}
-
-pub fn can_manage_roles(role: SpaceRole) -> bool {
-    matches!(role, SpaceRole::Owner | SpaceRole::Admin)
-}
-
-pub fn can_view_audit(role: SpaceRole) -> bool {
-    matches!(
-        role,
-        SpaceRole::Owner | SpaceRole::Admin | SpaceRole::Moderator
-    )
-}
-
 pub fn role_for_identity(space: &Space, user_id: &str) -> SpaceRole {
     if space.owner_id == user_id {
         SpaceRole::Owner
@@ -91,33 +69,20 @@ pub fn space_info_for_identity(space: &Space, user_id: &str) -> SpaceInfo {
 }
 
 async fn send_audit_log_snapshot_to_peer(state: &State, space_id: &str, peer: &Arc<Peer>) {
-    let (audit_log, owner_id, member_roles) = {
+    let audit_log = {
         let s = state.read().await;
         let Some(space) = s.spaces.get(space_id) else {
             return;
         };
-        (
-            space.audit_log.iter().cloned().collect::<Vec<_>>(),
-            space.owner_id.clone(),
-            space.member_roles.clone(),
-        )
+        space.audit_log.iter().cloned().collect::<Vec<_>>()
     };
 
-    let user_id = peer
-        .user_id
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_else(|| peer.id.clone());
-    let role = if user_id == owner_id {
-        SpaceRole::Owner
-    } else {
-        member_roles
-            .get(&user_id)
-            .copied()
-            .unwrap_or(SpaceRole::Member)
-    };
-    let entries = if can_view_audit(role) {
+    // Relies on the peer's perm cache being refreshed before this runs
+    // (join/create/set-member-role all refresh first).
+    let perms = shared_types::Permissions::from_bits(
+        peer.space_perms.load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let entries = if perms.has(shared_types::Permissions::VIEW_AUDIT_LOG) {
         audit_log
     } else {
         Vec::new()
@@ -137,6 +102,129 @@ pub async fn peer_space_role(state: &State, peer_id: &str) -> Option<(String, St
         user_id.clone(),
         role_for_identity(space, &user_id),
     ))
+}
+
+/// Lock-free read of the peer's cached effective permission bitmask.
+/// Returns `Permissions::empty()` when the peer is unknown or not in a space.
+pub async fn perms_of_peer(state: &State, peer_id: &str) -> shared_types::Permissions {
+    let s = state.read().await;
+    match s.peers.get(peer_id) {
+        Some(peer) => shared_types::Permissions::from_bits(
+            peer.space_perms.load(std::sync::atomic::Ordering::Relaxed),
+        ),
+        None => shared_types::Permissions::empty(),
+    }
+}
+
+/// Recompute + cache a peer's effective permission bitmask for their current
+/// space. Call at space join/create and after any role mutation affecting the
+/// user. Anonymous peers get the default (@everyone) role bits, matching the
+/// legacy Member tier; when no DB is configured, fall back to the legacy
+/// tier's hard-coded bundle so behavior is unchanged in DB-less mode.
+pub async fn refresh_peer_perms(
+    state: &State,
+    db: &Db,
+    peer_id: &str,
+) -> shared_types::Permissions {
+    use shared_types::Permissions;
+    let (peer, space_id, user_id) = {
+        let s = state.read().await;
+        let Some(peer) = s.peers.get(peer_id).cloned() else {
+            return Permissions::empty();
+        };
+        let space_id = peer.space_id.lock().await.clone();
+        let user_id = peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer_id.to_string());
+        (peer, space_id, user_id)
+    };
+    let Some(space_id) = space_id else {
+        peer.space_perms
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        return Permissions::empty();
+    };
+    let (is_owner, legacy_role) = {
+        let s = state.read().await;
+        match s.spaces.get(&space_id) {
+            Some(space) => (
+                space.owner_id == user_id,
+                role_for_identity(space, &user_id),
+            ),
+            None => (false, SpaceRole::Member),
+        }
+    };
+    let mut perms = if let Some(db) = db {
+        let db = db.clone();
+        let sid = space_id.clone();
+        let uid = user_id.clone();
+        let bits = tokio::task::spawn_blocking(move || {
+            db.load_user_effective_permissions(&sid, &uid).unwrap_or(0)
+        })
+        .await
+        .unwrap_or(0);
+        Permissions::from_bits(bits)
+    } else {
+        // DB-less server: derive from the in-memory legacy tier.
+        match legacy_role {
+            SpaceRole::Owner | SpaceRole::Admin => Permissions::LEGACY_ADMIN_BUNDLE,
+            SpaceRole::Moderator => Permissions::LEGACY_MODERATOR_BUNDLE,
+            SpaceRole::Member => Permissions::LEGACY_MEMBER_DEFAULTS,
+        }
+    };
+    if is_owner {
+        perms = perms.union(Permissions::OWNER_BYPASS);
+    }
+    peer.space_perms
+        .store(perms.bits(), std::sync::atomic::Ordering::Relaxed);
+    perms
+}
+
+/// Refresh the cached permissions of every connected peer whose stable
+/// identity is `user_id` within `space_id` (a user can have several devices).
+pub async fn refresh_perms_for_user(state: &State, db: &Db, space_id: &str, user_id: &str) {
+    let candidates = {
+        let s = state.read().await;
+        s.spaces
+            .get(space_id)
+            .map(|space| {
+                space
+                    .member_ids
+                    .iter()
+                    .filter_map(|mid| s.peers.get(mid).cloned())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    for peer in candidates {
+        let uid = peer
+            .user_id
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_else(|| peer.id.clone());
+        if uid == user_id {
+            refresh_peer_perms(state, db, &peer.id).await;
+        }
+    }
+}
+
+/// Refresh the cached permissions of every connected member of a space.
+/// Used when a role definition changes (UpdateRole / DeleteRole), which can
+/// affect any number of holders at once.
+pub async fn refresh_perms_for_space(state: &State, db: &Db, space_id: &str) {
+    let member_peer_ids = {
+        let s = state.read().await;
+        s.spaces
+            .get(space_id)
+            .map(|space| space.member_ids.clone())
+            .unwrap_or_default()
+    };
+    for pid in member_peer_ids {
+        refresh_peer_perms(state, db, &pid).await;
+    }
 }
 
 pub async fn resolve_space_member(
@@ -198,7 +286,7 @@ pub async fn append_audit_entry(
     target_name: Option<String>,
     detail: String,
 ) -> Option<SpaceAuditEntry> {
-    let (entry, owner_id, member_roles, candidate_recipients) = {
+    let (entry, candidate_recipients) = {
         let mut s = state.write().await;
         let entry_id = s.alloc_audit_id();
         let entry = SpaceAuditEntry {
@@ -210,43 +298,28 @@ pub async fn append_audit_entry(
             timestamp: now_secs() as u64,
         };
 
-        let (member_ids, owner_id, member_roles) = {
+        let member_ids = {
             let space = s.spaces.get_mut(space_id)?;
             space.audit_log.push_front(entry.clone());
             while space.audit_log.len() > crate::MAX_SPACE_AUDIT_ENTRIES {
                 space.audit_log.pop_back();
             }
-            (
-                space.member_ids.clone(),
-                space.owner_id.clone(),
-                space.member_roles.clone(),
-            )
+            space.member_ids.clone()
         };
 
         let candidate_recipients = member_ids
             .iter()
             .filter_map(|member_id| s.peers.get(member_id).cloned())
             .collect::<Vec<_>>();
-        (entry, owner_id, member_roles, candidate_recipients)
+        (entry, candidate_recipients)
     };
 
     let mut recipients = Vec::new();
     for peer in candidate_recipients {
-        let user_id = peer
-            .user_id
-            .lock()
-            .await
-            .clone()
-            .unwrap_or_else(|| peer.id.clone());
-        let role = if user_id == owner_id {
-            SpaceRole::Owner
-        } else {
-            member_roles
-                .get(&user_id)
-                .copied()
-                .unwrap_or(SpaceRole::Member)
-        };
-        if can_view_audit(role) {
+        let perms = shared_types::Permissions::from_bits(
+            peer.space_perms.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        if perms.has(shared_types::Permissions::VIEW_AUDIT_LOG) {
             recipients.push(peer);
         }
     }
@@ -482,7 +555,7 @@ pub async fn handle_create_space(
                 log::error!("Failed to persist channel: {e}");
             }
             if let Err(e) = db.save_space_role(&crate::persistence::SpaceRoleRow {
-                space_id: sid,
+                space_id: sid.clone(),
                 user_id: sowner,
                 role: role_storage_key(SpaceRole::Owner).into(),
                 assigned_at,
@@ -490,8 +563,17 @@ pub async fn handle_create_space(
             }) {
                 log::error!("Failed to persist owner role: {e}");
             }
+            // Seed the v2 role catalog so the fresh space has @everyone +
+            // legacy-tier roles immediately (not only after next restart).
+            if let Err(e) = db.seed_managed_roles(&sid, assigned_at) {
+                log::error!("Failed to seed managed roles: {e}");
+            }
         });
     }
+
+    // Owner's cached permission bitmask (OWNER_BYPASS short-circuits checks
+    // even before the seeding task above lands).
+    refresh_peer_perms(state, db, peer_id).await;
 
     let _ = append_audit_entry(
         state,
@@ -837,6 +919,10 @@ pub async fn handle_join_space(
         None
     };
 
+    // Compute + cache the joiner's effective permission bitmask before they
+    // can issue any gated action in this space.
+    refresh_peer_perms(state, db, peer_id).await;
+
     if let Some(peer) = joiner_peer {
         send_to(
             &peer,
@@ -888,11 +974,13 @@ pub async fn handle_leave_space(state: &State, peer_id: &str) {
         }
     }
 
-    // Clear peer's space_id
+    // Clear peer's space_id + cached space permissions
     {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id) {
             *peer.space_id.lock().await = None;
+            peer.space_perms
+                .store(0, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -966,6 +1054,8 @@ pub async fn handle_delete_space(state: &State, peer_id: &str, db: &Db) {
             affected_user_ids.push(user_id);
         }
         *peer.space_id.lock().await = None;
+        peer.space_perms
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         peer.set_room_code(None).await;
         send_to(peer, &SignalMessage::SpaceDeleted);
     }
@@ -1000,7 +1090,10 @@ pub async fn handle_set_member_role(
         return;
     };
 
-    if !can_manage_roles(actor_role) {
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(shared_types::Permissions::MANAGE_ROLES)
+    {
         send_error(state, peer_id, "You do not have permission to manage roles").await;
         return;
     }
@@ -1078,17 +1171,20 @@ pub async fn handle_set_member_role(
         .map(|(_, _, name, _)| name)
         .unwrap_or_else(|| target_user_id.clone());
 
-    if let Some(db) = db {
-        let db = db.clone();
-        let space_id = space_id.clone();
-        let target_user_id = target_user_id.clone();
-        tokio::task::spawn_blocking(move || {
+    if let Some(db_ref) = db {
+        let db_clone = db_ref.clone();
+        let sid = space_id.clone();
+        let uid = target_user_id.clone();
+        // Persist to the legacy table AND mirror into the v2 role tables so
+        // effective-permission queries see the change immediately (previously
+        // the v2 side only synced at server restart via the synthesis pass).
+        let join = tokio::task::spawn_blocking(move || {
             let result = if role == SpaceRole::Member {
-                db.delete_space_role(&space_id, &target_user_id).map(|_| ())
+                db_clone.delete_space_role(&sid, &uid).map(|_| ())
             } else {
-                db.save_space_role(&crate::persistence::SpaceRoleRow {
-                    space_id,
-                    user_id: target_user_id,
+                db_clone.save_space_role(&crate::persistence::SpaceRoleRow {
+                    space_id: sid.clone(),
+                    user_id: uid.clone(),
                     role: role_storage_key(role).into(),
                     assigned_at: now_secs(),
                     role_color: String::new(),
@@ -1097,7 +1193,16 @@ pub async fn handle_set_member_role(
             if let Err(err) = result {
                 log::error!("Failed to persist role change: {err}");
             }
+            if let Err(err) =
+                db_clone.set_legacy_role_assignment(&sid, &uid, role_storage_key(role), now_secs())
+            {
+                log::error!("Failed to mirror role change into v2 tables: {err}");
+            }
         });
+        // Wait for the write-through before refreshing caches so the reload
+        // sees the new assignment.
+        let _ = join.await;
+        refresh_perms_for_user(state, db, &space_id, &target_user_id).await;
     }
 
     let notify = SignalMessage::MemberRoleChanged {
@@ -1145,11 +1250,15 @@ pub async fn handle_set_invite_settings(
     max_uses: Option<u32>,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
+    let Some((space_id, _actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
+    else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !can_manage_channels(actor_role) {
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(shared_types::Permissions::MANAGE_SPACE)
+    {
         crate::send_error(state, peer_id, "Insufficient permissions").await;
         return;
     }
@@ -1204,12 +1313,21 @@ pub async fn handle_set_nickname(state: &State, peer_id: &str, nickname: String,
 }
 
 pub async fn handle_rename_space(state: &State, peer_id: &str, name: String, db: &Db) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
+    let Some((space_id, _actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
+    else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(shared_types::SpaceRole::Admin) {
-        crate::send_error(state, peer_id, "Admin role required to rename space").await;
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(shared_types::Permissions::MANAGE_SPACE)
+    {
+        crate::send_error(
+            state,
+            peer_id,
+            "You do not have permission to rename the space",
+        )
+        .await;
         return;
     }
     let name = name.trim().to_string();
@@ -1245,12 +1363,21 @@ pub async fn handle_set_space_description(
     description: String,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
+    let Some((space_id, _actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
+    else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(shared_types::SpaceRole::Admin) {
-        crate::send_error(state, peer_id, "Admin role required").await;
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(shared_types::Permissions::MANAGE_SPACE)
+    {
+        crate::send_error(
+            state,
+            peer_id,
+            "You do not have permission to edit the space description",
+        )
+        .await;
         return;
     }
     let description = description.trim().to_string();
@@ -1287,12 +1414,21 @@ pub async fn handle_set_role_color(
     color: String,
     db: &Db,
 ) {
-    let Some((space_id, _actor_user_id, actor_role)) = peer_space_role(state, peer_id).await else {
+    let Some((space_id, _actor_user_id, _actor_role)) = peer_space_role(state, peer_id).await
+    else {
         crate::send_error(state, peer_id, "Not in a space").await;
         return;
     };
-    if !actor_role.has_at_least(SpaceRole::Admin) {
-        crate::send_error(state, peer_id, "Admin role required to change role colors").await;
+    if !perms_of_peer(state, peer_id)
+        .await
+        .has(shared_types::Permissions::MANAGE_ROLES)
+    {
+        crate::send_error(
+            state,
+            peer_id,
+            "You do not have permission to change role colors",
+        )
+        .await;
         return;
     }
 

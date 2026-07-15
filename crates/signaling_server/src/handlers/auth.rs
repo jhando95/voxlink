@@ -349,6 +349,8 @@ async fn clear_session_state_on_identity_switch(state: &State, peer_id: &str) {
         .store(false, std::sync::atomic::Ordering::Relaxed);
     peer.timeout_until
         .store(0, std::sync::atomic::Ordering::Relaxed);
+    peer.space_perms
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut w) = peer.whisper_targets.write() {
         w.clear();
     }

@@ -1714,11 +1714,11 @@ async fn test_owner_can_promote_admin_and_channel_access_updates() {
     match bob.recv_signal().await {
         SignalMessage::Error { message } => {
             assert!(
-                message.contains("admin"),
-                "Error should mention admin permission: {message}"
+                message.contains("admin") || message.contains("permission"),
+                "Error should mention channel-create permission: {message}"
             );
         }
-        other => panic!("Expected admin permission error, got: {:?}", other),
+        other => panic!("Expected permission error, got: {:?}", other),
     }
 
     alice
@@ -3657,6 +3657,102 @@ async fn test_non_owner_cannot_kick() {
             );
         }
         other => panic!("Expected Error, got: {:?}", other),
+    }
+}
+
+/// A custom role holding only KICK_MEMBERS must grant kick capability even
+/// though the holder stays a plain Member on the legacy 4-tier ladder.
+#[tokio::test]
+async fn test_custom_role_grants_kick_capability() {
+    let server = TestServer::start().await;
+    let mut alice = server.connect().await; // owner
+    let mut bob = server.connect().await; // gets the custom role
+    let mut carol = server.connect().await; // kick target
+
+    let (space, _) = create_space(&mut alice, "Bouncer Space", "Alice").await;
+    join_space(&mut bob, &space.invite_code, "Bob").await;
+    let bob_id = match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => member.id,
+        other => panic!("Expected MemberOnline for Bob, got: {other:?}"),
+    };
+    join_space(&mut carol, &space.invite_code, "Carol").await;
+    let carol_id = match alice.recv_signal().await {
+        SignalMessage::MemberOnline { member } => member.id,
+        other => panic!("Expected MemberOnline for Carol, got: {other:?}"),
+    };
+
+    // Baseline: plain member Bob cannot kick Carol.
+    bob.send_signal(&SignalMessage::KickMember {
+        member_id: carol_id.clone(),
+    })
+    .await;
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::Error { message } => {
+                assert!(
+                    message.contains("permission"),
+                    "Error should mention permissions: {message}"
+                );
+                break;
+            }
+            SignalMessage::MemberOnline { .. } => continue,
+            other => panic!("Expected Error, got: {other:?}"),
+        }
+    }
+
+    // Alice creates a "Bouncer" role with only KICK_MEMBERS and gives it to Bob.
+    alice
+        .send_signal(&SignalMessage::CreateRole {
+            name: "Bouncer".into(),
+            color: "#ff5555".into(),
+            permissions: shared_types::Permissions::KICK_MEMBERS,
+            position: 5,
+        })
+        .await;
+    let role_id = loop {
+        match alice.recv_signal().await {
+            SignalMessage::RoleCreated { role, .. } => break role.role_id,
+            SignalMessage::MemberOnline { .. } => continue,
+            other => panic!("Expected RoleCreated, got: {other:?}"),
+        }
+    };
+    alice
+        .send_signal(&SignalMessage::AssignRoleToMember {
+            user_id: bob_id.clone(),
+            role_id,
+        })
+        .await;
+    // Once Bob observes MemberRolesChanged, the server has already refreshed
+    // his cached permission bitmask (refresh happens before the broadcast).
+    loop {
+        match bob.recv_signal().await {
+            SignalMessage::MemberRolesChanged {
+                user_id, role_ids, ..
+            } if user_id == bob_id => {
+                assert_eq!(role_ids.len(), 1, "Bob should hold exactly one role");
+                break;
+            }
+            SignalMessage::MemberOnline { .. } | SignalMessage::RoleCreated { .. } => continue,
+            other => panic!("Expected MemberRolesChanged, got: {other:?}"),
+        }
+    }
+
+    // Bob can now kick Carol despite still being a legacy plain Member.
+    bob.send_signal(&SignalMessage::KickMember {
+        member_id: carol_id,
+    })
+    .await;
+    loop {
+        match carol.recv_signal().await {
+            SignalMessage::Kicked { reason } => {
+                assert!(reason.contains("kicked"), "Reason: {reason}");
+                break;
+            }
+            SignalMessage::MemberOnline { .. }
+            | SignalMessage::RoleCreated { .. }
+            | SignalMessage::MemberRolesChanged { .. } => continue,
+            other => panic!("Expected Kicked, got: {other:?}"),
+        }
     }
 }
 

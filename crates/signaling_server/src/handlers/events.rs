@@ -1,6 +1,6 @@
 use crate::connection::{send_error, send_to};
 use crate::types::{Db, State};
-use shared_types::SignalMessage;
+use shared_types::{Permissions, SignalMessage};
 
 pub(crate) async fn handle_create_event(
     state: &State,
@@ -62,10 +62,15 @@ pub(crate) async fn handle_create_event(
         .await
         .clone()
         .unwrap_or_else(|| peer_id.to_string());
-    let role = crate::handlers::space::role_for_identity(space, &user_id);
-    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+    let perms = Permissions::from_bits(peer.space_perms.load(std::sync::atomic::Ordering::Relaxed));
+    if !perms.has(Permissions::MANAGE_EVENTS) {
         drop(s);
-        send_error(state, peer_id, "Moderator+ required to create events").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to create events",
+        )
+        .await;
         return;
     }
     let creator_name = peer.name.lock().await.clone();
@@ -123,16 +128,15 @@ pub(crate) async fn handle_delete_event(state: &State, peer_id: &str, event_id: 
         Some(sp) => sp,
         None => return,
     };
-    let user_id = peer
-        .user_id
-        .lock()
-        .await
-        .clone()
-        .unwrap_or_else(|| peer_id.to_string());
-    let role = crate::handlers::space::role_for_identity(space, &user_id);
-    if !role.has_at_least(shared_types::SpaceRole::Moderator) {
+    let perms = Permissions::from_bits(peer.space_perms.load(std::sync::atomic::Ordering::Relaxed));
+    if !perms.has(Permissions::MANAGE_EVENTS) {
         drop(s);
-        send_error(state, peer_id, "Moderator+ required").await;
+        send_error(
+            state,
+            peer_id,
+            "You do not have permission to delete events",
+        )
+        .await;
         return;
     }
     let members: Vec<_> = space.member_ids.to_vec();
