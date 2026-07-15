@@ -1,15 +1,17 @@
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use tokio::net::UdpSocket;
-use shared_types::{
-    MAX_SCREEN_FRAME_SIZE, MAX_UDP_MEDIA_PAYLOAD_SIZE, MAX_UDP_SCREEN_CHUNK_SIZE,
-    MEDIA_PACKET_SCREEN, MEDIA_PACKET_SCREEN_CHUNK, SCREEN_CHUNK_METADATA_LEN,
-    ScreenChunkMetadata, decode_screen_chunk_metadata, SignalMessage,
-};
-use crate::types::{Peer, State};
 use crate::metrics_server::ServerMetrics;
-use crate::{LIMITS, UDP_SOCKET, send_to};
-use crate::validation::{atomic_rate_check, ChunkedScreenSequenceState, chunked_screen_sequence_state};
+use crate::types::{Peer, State};
+use crate::validation::{
+    atomic_rate_check, chunked_screen_sequence_state, ChunkedScreenSequenceState,
+};
+use crate::{send_to, LIMITS, UDP_SOCKET};
+use shared_types::{
+    decode_screen_chunk_metadata, ScreenChunkMetadata, SignalMessage, MAX_SCREEN_FRAME_SIZE,
+    MAX_UDP_MEDIA_PAYLOAD_SIZE, MAX_UDP_SCREEN_CHUNK_SIZE, MEDIA_PACKET_SCREEN,
+    MEDIA_PACKET_SCREEN_CHUNK, SCREEN_CHUNK_METADATA_LEN,
+};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
 
 type Metrics = Arc<ServerMetrics>;
 
@@ -24,7 +26,7 @@ pub(crate) async fn prepare_screen_relay(
     let count_frame = match chunk_sequence {
         Some(sequence) => {
             match chunked_screen_sequence_state(&peer.last_screen_chunk_sequence, sequence) {
-                ChunkedScreenSequenceState::NewFrame => {
+                ChunkedScreenSequenceState::New => {
                     if !atomic_rate_check(
                         &peer.screen_rate_window_ms,
                         &peer.screen_frame_count,
@@ -34,8 +36,8 @@ pub(crate) async fn prepare_screen_relay(
                     }
                     true
                 }
-                ChunkedScreenSequenceState::ExistingFrame => false,
-                ChunkedScreenSequenceState::StaleFrame => return None,
+                ChunkedScreenSequenceState::Existing => false,
+                ChunkedScreenSequenceState::Stale => return None,
             }
         }
         None => {
@@ -90,10 +92,7 @@ pub(crate) async fn prepare_screen_relay(
     Some((recipients, count_frame))
 }
 
-pub(crate) fn screen_chunk_is_plausible(
-    metadata: ScreenChunkMetadata,
-    chunk_len: usize,
-) -> bool {
+pub(crate) fn screen_chunk_is_plausible(metadata: ScreenChunkMetadata, chunk_len: usize) -> bool {
     if chunk_len > MAX_UDP_SCREEN_CHUNK_SIZE {
         return false;
     }
@@ -116,7 +115,9 @@ pub(crate) async fn send_screen_frame_to_peers(
             if let Some(addr) = udp_addr {
                 if let Some(socket) = UDP_SOCKET.get() {
                     if let Err(_e) = socket.send_to(frame, addr).await {
-                        metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+                        metrics
+                            .udp_send_failures_total
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                     metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
                     continue;
@@ -178,7 +179,12 @@ pub(crate) async fn relay_screen(state: &State, metrics: &Metrics, sender_id: &s
     .await;
 }
 
-pub(crate) async fn relay_screen_chunk(state: &State, metrics: &Metrics, sender_id: &str, data: &[u8]) {
+pub(crate) async fn relay_screen_chunk(
+    state: &State,
+    metrics: &Metrics,
+    sender_id: &str,
+    data: &[u8],
+) {
     if sender_id.len() > u8::MAX as usize {
         return;
     }
@@ -208,9 +214,8 @@ pub(crate) async fn relay_screen_chunk(state: &State, metrics: &Metrics, sender_
         return;
     }
 
-    let mut frame = Vec::with_capacity(
-        2 + sender_id.len() + SCREEN_CHUNK_METADATA_LEN + chunk_data.len(),
-    );
+    let mut frame =
+        Vec::with_capacity(2 + sender_id.len() + SCREEN_CHUNK_METADATA_LEN + chunk_data.len());
     frame.push(MEDIA_PACKET_SCREEN_CHUNK);
     frame.push(sender_id.len() as u8);
     frame.extend_from_slice(sender_id.as_bytes());
@@ -244,7 +249,9 @@ pub(crate) async fn relay_screen_udp(
         &peer.screen_frame_count,
         LIMITS.max_screen_fps,
     ) {
-        metrics.udp_rate_limited_total.fetch_add(1, Ordering::Relaxed);
+        metrics
+            .udp_rate_limited_total
+            .fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -322,7 +329,9 @@ pub(crate) async fn relay_screen_udp(
         };
         if let Some(addr) = udp_addr {
             if let Err(_e) = udp_socket.send_to(frame, addr).await {
-                metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .udp_send_failures_total
+                    .fetch_add(1, Ordering::Relaxed);
             }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {

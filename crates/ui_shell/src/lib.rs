@@ -672,20 +672,46 @@ pub fn set_channels(window: &MainWindow, channels: &[shared_types::ChannelInfo])
     window.set_channels(rc.into());
 }
 
+/// The viewer's social relationships, used to badge member rows
+/// (friend / incoming / outgoing / self) when rendering a space.
+pub struct SpaceSocialContext<'a> {
+    pub favorites: &'a [shared_types::FavoriteFriend],
+    pub incoming_requests: &'a [shared_types::FriendRequest],
+    pub outgoing_requests: &'a [shared_types::FriendRequest],
+    pub self_user_id: Option<&'a str>,
+}
+
+/// Config-derived per-user presentation preferences for the space view.
+/// Grouping these keeps `render_space` from growing an argument every time a
+/// new local preference is threaded in (which is how it hit 12 positional args).
+pub struct SpaceRenderPrefs<'a> {
+    pub collapsed_categories: &'a [String],
+    pub user_notes: &'a std::collections::HashMap<String, String>,
+    pub channel_notification_overrides: &'a std::collections::HashMap<String, String>,
+    pub favorite_channels: &'a [String],
+    pub blocked_users: &'a [String],
+}
+
 pub fn render_space(
     window: &MainWindow,
     space: &shared_types::SpaceState,
     search_query: &str,
-    favorites: &[shared_types::FavoriteFriend],
-    incoming_requests: &[shared_types::FriendRequest],
-    outgoing_requests: &[shared_types::FriendRequest],
-    self_user_id: Option<&str>,
-    collapsed_categories: &[String],
-    user_notes: &std::collections::HashMap<String, String>,
-    channel_notification_overrides: &std::collections::HashMap<String, String>,
-    favorite_channels: &[String],
-    blocked_users: &[String],
+    social: &SpaceSocialContext<'_>,
+    prefs: &SpaceRenderPrefs<'_>,
 ) {
+    let SpaceSocialContext {
+        favorites,
+        incoming_requests,
+        outgoing_requests,
+        self_user_id,
+    } = *social;
+    let SpaceRenderPrefs {
+        collapsed_categories,
+        user_notes,
+        channel_notification_overrides,
+        favorite_channels,
+        blocked_users,
+    } = *prefs;
     let query = search_query.trim().to_lowercase();
     let mut visible_text_channels = 0i32;
     let mut visible_voice_channels = 0i32;
@@ -981,9 +1007,10 @@ pub fn set_chat_messages_with_last_read(
         // Insert date separator at day boundaries
         if day != prev_day && m.timestamp > 0 {
             if prev_day > 0 {
-                let sep_text = format_day_separator(m.timestamp);
-                let mut sep = ChatMessage::default();
-                sep.date_separator = sep_text.into();
+                let sep = ChatMessage {
+                    date_separator: format_day_separator(m.timestamp).into(),
+                    ..Default::default()
+                };
                 model.push(sep);
             }
             prev_day = day;

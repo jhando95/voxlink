@@ -69,17 +69,18 @@ fn env_or<T: std::str::FromStr>(var: &str, default: T) -> T {
 static UDP_PORT: AtomicU16 = AtomicU16::new(0);
 static UDP_SOCKET: std::sync::OnceLock<Arc<UdpSocket>> = std::sync::OnceLock::new();
 
-pub(crate) static LIMITS: std::sync::LazyLock<ServerLimits> = std::sync::LazyLock::new(|| ServerLimits {
-    max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
-    max_connections_per_ip: env_or("VOXLINK_MAX_CONNECTIONS_PER_IP", 20),
-    max_channel_messages: env_or("VOXLINK_MAX_CHANNEL_MESSAGES", 100),
-    max_audio_fps: env_or("VOXLINK_MAX_AUDIO_FPS", 100),
-    max_screen_fps: env_or("VOXLINK_MAX_SCREEN_FPS", 60),
-    rate_limit_per_sec: env_or("VOXLINK_RATE_LIMIT_PER_SEC", 100),
-    max_spaces_per_user: env_or("VOXLINK_MAX_SPACES_PER_USER", 20),
-    max_channels_per_space: env_or("VOXLINK_MAX_CHANNELS_PER_SPACE", 100),
-    max_members_per_space: env_or("VOXLINK_MAX_MEMBERS_PER_SPACE", 500),
-});
+pub(crate) static LIMITS: std::sync::LazyLock<ServerLimits> =
+    std::sync::LazyLock::new(|| ServerLimits {
+        max_room_peers: env_or("VOXLINK_MAX_ROOM_PEERS", 10),
+        max_connections_per_ip: env_or("VOXLINK_MAX_CONNECTIONS_PER_IP", 20),
+        max_channel_messages: env_or("VOXLINK_MAX_CHANNEL_MESSAGES", 100),
+        max_audio_fps: env_or("VOXLINK_MAX_AUDIO_FPS", 100),
+        max_screen_fps: env_or("VOXLINK_MAX_SCREEN_FPS", 60),
+        rate_limit_per_sec: env_or("VOXLINK_RATE_LIMIT_PER_SEC", 100),
+        max_spaces_per_user: env_or("VOXLINK_MAX_SPACES_PER_USER", 20),
+        max_channels_per_space: env_or("VOXLINK_MAX_CHANNELS_PER_SPACE", 100),
+        max_members_per_space: env_or("VOXLINK_MAX_MEMBERS_PER_SPACE", 500),
+    });
 
 // Types are in types.rs, re-exported via `pub(crate) use types::*` above.
 type Metrics = Arc<ServerMetrics>;
@@ -279,14 +280,19 @@ async fn main() {
                             // Replay reactions onto loaded messages.
                             if let Ok(reactions) = db.load_reactions_for_channel(&cr.id) {
                                 // Build an index of message_id -> position in dq (O(1) lookups).
-                                let mut idx: HashMap<String, usize> = HashMap::with_capacity(dq.len());
+                                let mut idx: HashMap<String, usize> =
+                                    HashMap::with_capacity(dq.len());
                                 for (i, m) in dq.iter().enumerate() {
                                     idx.insert(m.message_id.clone(), i);
                                 }
                                 for (mid, emoji, user_name) in reactions {
-                                    let Some(pos) = idx.get(&mid).copied() else { continue };
+                                    let Some(pos) = idx.get(&mid).copied() else {
+                                        continue;
+                                    };
                                     let Some(msg) = dq.get_mut(pos) else { continue };
-                                    if let Some(r) = msg.reactions.iter_mut().find(|r| r.emoji == emoji) {
+                                    if let Some(r) =
+                                        msg.reactions.iter_mut().find(|r| r.emoji == emoji)
+                                    {
                                         if !r.users.contains(&user_name) {
                                             r.users.push(user_name);
                                         }
@@ -575,7 +581,15 @@ async fn main() {
                 })
                 .await
                 .unwrap_or_default();
-                for (sched_id, space_id, channel_id, sender_id, sender_name, content) in due {
+                for msg in due {
+                    let persistence::DueScheduledMessage {
+                        schedule_id: sched_id,
+                        space_id,
+                        channel_id,
+                        sender_id,
+                        sender_name,
+                        content,
+                    } = msg;
                     let msg_id = {
                         let mut s = state.write().await;
                         s.alloc_message_id()
@@ -667,7 +681,8 @@ async fn main() {
     // what systemctl stop / docker stop send by default — without it the shutdown
     // broadcast never runs on redeploy).
     #[cfg(unix)]
-    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
         Ok(s) => Some(s),
         Err(e) => {
             log::warn!("Failed to install SIGTERM handler: {e}");
@@ -763,13 +778,8 @@ async fn main() {
     log::info!("Server shut down gracefully");
 }
 
-// ─── LAN Discovery ───
-
-// ─── DM Voice Call Handlers ───
-
-// ─── UDP Transport ───
-
-/// Handle a RequestUdp signal: generate a session token and reply with UdpReady.
+// LAN discovery, DM voice calls, and UDP transport live in their own modules
+// (discovery.rs, handlers/calls.rs, relay/udp.rs).
 
 #[cfg(test)]
 mod tests {

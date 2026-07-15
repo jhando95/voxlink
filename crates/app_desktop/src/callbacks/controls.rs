@@ -134,21 +134,25 @@ pub fn setup_toggle_mic_mode(
             MicMode::PushToTalk => MicMode::OpenMic,
         };
         v.set_mic_mode(new_mode);
+        let is_ptt = new_mode == MicMode::PushToTalk;
+        // Keep VoiceSession authoritative. Switching to push-to-talk closes the
+        // mic until the key is held. Switching to open mic re-opens it *unless*
+        // the user is deafened (deafen implies muted).
+        v.is_muted = is_ptt || v.is_deafened;
+        let muted = v.is_muted;
+        drop(v);
+
         let Some(w) = window_weak.upgrade() else {
             return;
         };
-        w.set_is_open_mic(new_mode == MicMode::OpenMic);
+        w.set_is_open_mic(!is_ptt);
+        w.set_is_muted(muted);
 
         let audio = audio.clone();
-        let is_ptt = new_mode == MicMode::PushToTalk;
         rt_handle.spawn(async move {
             let aud = audio.lock().await;
             aud.set_vad_enabled(!is_ptt);
-            if is_ptt {
-                aud.set_muted(true);
-            } else {
-                aud.set_muted(false);
-            }
+            aud.set_muted(muted);
         });
     });
 }

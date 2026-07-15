@@ -92,7 +92,8 @@ pub fn handle_text_channel_selected(
             space.mentioned_text_channels.remove(channel_id);
             crate::helpers::save_last_text_channel_async(space.id.clone(), channel_id.to_string());
         }
-        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+        s.active_direct_message_user_id = None;
+        s.active_group_dm_id = None;
         s.current_view = AppView::TextChat;
     }
 
@@ -975,11 +976,7 @@ mod tests {
         assert_eq!(reply_start, 100);
         assert_eq!(messages.first().map(|m| m.message_id.as_str()), Some("m0"));
         assert_eq!(
-            messages
-                .iter()
-                .skip(reply_start)
-                .next()
-                .map(|m| m.message_id.as_str()),
+            messages.get(reply_start).map(|m| m.message_id.as_str()),
             Some("m100")
         );
         assert_eq!(messages.last().map(|m| m.message_id.as_str()), Some("m219"));

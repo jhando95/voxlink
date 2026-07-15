@@ -664,7 +664,7 @@ impl ScreenShareController {
                 if let Ok(mut state) = status_for_thread.lock() {
                     state.quality_label = format!("{} · {}", profile.name, preset.name);
                     state.quality_detail =
-                        screen_share_detail(preset, transport_warning_active, pacer.level()).into();
+                        screen_share_detail(preset, transport_warning_active, pacer.level());
                 }
 
                 let base_frame_interval = Duration::from_millis(1000 / preset.fps.max(1));
@@ -693,8 +693,7 @@ impl ScreenShareController {
                 if detail_refresh_needed {
                     if let Ok(mut state) = status_for_thread.lock() {
                         state.quality_detail =
-                            screen_share_detail(preset, transport_warning_active, pacer.level())
-                                .into();
+                            screen_share_detail(preset, transport_warning_active, pacer.level());
                     }
                 }
 
@@ -761,8 +760,7 @@ impl ScreenShareController {
                     if let Ok(mut state) = status_for_thread.lock() {
                         state.quality_label = format!("{} · {}", profile.name, active.name);
                         state.quality_detail =
-                            screen_share_detail(active, transport_warning_active, pacer.level())
-                                .into();
+                            screen_share_detail(active, transport_warning_active, pacer.level());
                     }
                 }
 

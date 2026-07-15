@@ -4,13 +4,13 @@
 // variants to their handler functions.  Per-variant handlers remain in
 // main.rs (crate root) and will be moved in Tasks A10-A17.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use shared_types::SignalMessage;
-use crate::types::{State, Db};
-use crate::ServerMetrics;
 use crate::handlers;
+use crate::types::{Db, State};
+use crate::ServerMetrics;
+use shared_types::SignalMessage;
 
 // Mirror the private type alias from main.rs so the function signature compiles.
 type Metrics = Arc<ServerMetrics>;
@@ -183,7 +183,7 @@ pub(crate) async fn handle_signal(
             handlers::presence::notify_watchers_for_peer(state, peer_id).await;
         }
         SignalMessage::WatchFriendPresence { user_ids } => {
-            handlers::presence::handle_watch_friend_presence(state, peer_id, user_ids).await;
+            handlers::presence::handle_watch_friend_presence(state, peer_id, user_ids, db).await;
         }
         SignalMessage::SendFriendRequest { user_id } => {
             handlers::friends::handle_send_friend_request(state, peer_id, user_id, db).await;
@@ -250,8 +250,10 @@ pub(crate) async fn handle_signal(
             message_id,
             emoji,
         } => {
-            handlers::chat::handle_react_to_message(state, peer_id, channel_id, message_id, emoji, db)
-                .await;
+            handlers::chat::handle_react_to_message(
+                state, peer_id, channel_id, message_id, emoji, db,
+            )
+            .await;
         }
         SignalMessage::ReactToDirectMessage {
             user_id,
@@ -267,7 +269,10 @@ pub(crate) async fn handle_signal(
             handlers::account::handle_set_user_status(state, peer_id, status, db).await;
         }
         SignalMessage::SetChannelTopic { channel_id, topic } => {
-            handlers::channel_settings::handle_set_channel_topic(state, peer_id, channel_id, topic, db).await;
+            handlers::channel_settings::handle_set_channel_topic(
+                state, peer_id, channel_id, topic, db,
+            )
+            .await;
         }
         SignalMessage::KickMember { member_id } => {
             handlers::moderation::handle_kick_member(state, peer_id, member_id, db).await;
@@ -347,8 +352,14 @@ pub(crate) async fn handle_signal(
             .await;
         }
         SignalMessage::SetChannelStatus { channel_id, status } => {
-            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::Status(status), db)
-                .await;
+            handlers::channel_settings::handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::Status(status),
+                db,
+            )
+            .await;
         }
         SignalMessage::SetChannelPermissions {
             channel_id,
@@ -362,7 +373,14 @@ pub(crate) async fn handle_signal(
             };
             let role_str = min_role.to_lowercase();
             let cid = channel_id.clone();
-            handlers::channel_settings::handle_channel_setting(state, peer_id, channel_id, ChannelSetting::MinRole(role), db).await;
+            handlers::channel_settings::handle_channel_setting(
+                state,
+                peer_id,
+                channel_id,
+                ChannelSetting::MinRole(role),
+                db,
+            )
+            .await;
             // Persist min_role to DB
             if let Some(ref db) = db {
                 let db = db.clone();
@@ -405,7 +423,10 @@ pub(crate) async fn handle_signal(
             peer_id: target_id,
             enabled,
         } => {
-            handlers::channel_settings::handle_set_priority_speaker(state, peer_id, target_id, enabled).await;
+            handlers::channel_settings::handle_set_priority_speaker(
+                state, peer_id, target_id, enabled,
+            )
+            .await;
         }
         SignalMessage::WhisperTo { target_peer_ids } => {
             handlers::whisper::handle_whisper_to(state, peer_id, target_peer_ids).await;
@@ -417,7 +438,8 @@ pub(crate) async fn handle_signal(
             member_id,
             duration_secs,
         } => {
-            handlers::timeouts::handle_timeout_member(state, peer_id, member_id, duration_secs, db).await;
+            handlers::timeouts::handle_timeout_member(state, peer_id, member_id, duration_secs, db)
+                .await;
         }
         // v0.8.0: Block/Unblock
         SignalMessage::BlockUser { user_id } => {
@@ -557,8 +579,7 @@ pub(crate) async fn handle_signal(
         }
         // v0.10.0: Role colors
         SignalMessage::SetRoleColor { role, color } => {
-            handlers::space::handle_set_role_color(state, peer_id, role.clone(), color.clone(), db)
-                .await;
+            handlers::space::handle_set_role_color(state, peer_id, role, color.clone(), db).await;
         }
         // v0.10.0: Activity status
         SignalMessage::SetActivity { activity } => {
@@ -566,7 +587,7 @@ pub(crate) async fn handle_signal(
         }
         // DM Voice Calls
         SignalMessage::CallUser { target_user_id } => {
-            handlers::calls::handle_call_user(state, peer_id, target_user_id).await;
+            handlers::calls::handle_call_user(state, peer_id, target_user_id, db).await;
         }
         SignalMessage::AcceptCall { room_key } => {
             handlers::calls::handle_accept_call(state, peer_id, room_key).await;
@@ -581,7 +602,16 @@ pub(crate) async fn handle_signal(
             start_time,
             end_time,
         } => {
-            handlers::events::handle_create_event(state, peer_id, title, description, start_time, end_time, db).await;
+            handlers::events::handle_create_event(
+                state,
+                peer_id,
+                title,
+                description,
+                start_time,
+                end_time,
+                db,
+            )
+            .await;
         }
         SignalMessage::DeleteScheduledEvent { event_id } => {
             handlers::events::handle_delete_event(state, peer_id, event_id, db).await;
@@ -598,10 +628,14 @@ pub(crate) async fn handle_signal(
             content,
             send_at,
         } => {
-            handlers::scheduling::handle_schedule_message(state, peer_id, channel_id, content, send_at, db).await;
+            handlers::scheduling::handle_schedule_message(
+                state, peer_id, channel_id, content, send_at, db,
+            )
+            .await;
         }
         SignalMessage::CancelScheduledMessage { schedule_id } => {
-            handlers::scheduling::handle_cancel_scheduled_message(state, peer_id, schedule_id, db).await;
+            handlers::scheduling::handle_cancel_scheduled_message(state, peer_id, schedule_id, db)
+                .await;
         }
         // Welcome Message
         SignalMessage::SetWelcomeMessage { message } => {
@@ -626,11 +660,7 @@ pub(crate) async fn handle_signal(
             message_id,
         } => {
             handlers::read_state::handle_mark_channel_read(
-                state,
-                peer_id,
-                channel_id,
-                message_id,
-                db,
+                state, peer_id, channel_id, message_id, db,
             )
             .await;
         }
@@ -645,7 +675,13 @@ pub(crate) async fn handle_signal(
             position,
         } => {
             handlers::roles::handle_create_role(
-                state, peer_id, name, color, permissions, position, db,
+                state,
+                peer_id,
+                name,
+                color,
+                permissions,
+                position,
+                db,
             )
             .await;
         }
@@ -657,7 +693,16 @@ pub(crate) async fn handle_signal(
             position,
         } => {
             handlers::roles::handle_update_role(
-                state, peer_id, role_id, name, color, permissions, position, db,
+                state,
+                peer_id,
+                role_id,
+                handlers::roles::RoleUpdate {
+                    name,
+                    color,
+                    permissions,
+                    position,
+                },
+                db,
             )
             .await;
         }
@@ -665,16 +710,12 @@ pub(crate) async fn handle_signal(
             handlers::roles::handle_delete_role(state, peer_id, role_id, db).await;
         }
         SignalMessage::AssignRoleToMember { user_id, role_id } => {
-            handlers::roles::handle_assign_role_to_member(
-                state, peer_id, user_id, role_id, db,
-            )
-            .await;
+            handlers::roles::handle_assign_role_to_member(state, peer_id, user_id, role_id, db)
+                .await;
         }
         SignalMessage::UnassignRoleFromMember { user_id, role_id } => {
-            handlers::roles::handle_unassign_role_from_member(
-                state, peer_id, user_id, role_id, db,
-            )
-            .await;
+            handlers::roles::handle_unassign_role_from_member(state, peer_id, user_id, role_id, db)
+                .await;
         }
         SignalMessage::RequestRoleList => {
             handlers::roles::handle_request_role_list(state, peer_id, db).await;
@@ -687,7 +728,8 @@ pub(crate) async fn handle_signal(
         | SignalMessage::MemberRolesChanged { .. } => {}
         // Server discovery
         SignalMessage::SetSpacePublic { is_public } => {
-            handlers::channel_settings::handle_set_space_public(state, peer_id, is_public, db).await;
+            handlers::channel_settings::handle_set_space_public(state, peer_id, is_public, db)
+                .await;
         }
         SignalMessage::BrowsePublicSpaces => {
             handlers::channel_settings::handle_browse_public_spaces(state, peer_id, db).await;
@@ -700,7 +742,15 @@ pub(crate) async fn handle_signal(
             duration_secs,
             data,
         } => {
-            handlers::recording::handle_send_voice_note(state, peer_id, channel_id, duration_secs, data, db).await;
+            handlers::recording::handle_send_voice_note(
+                state,
+                peer_id,
+                channel_id,
+                duration_secs,
+                data,
+                db,
+            )
+            .await;
         }
         SignalMessage::AudioQualityReport {
             capture_callback_median_ms,
@@ -718,9 +768,10 @@ pub(crate) async fn handle_signal(
             metrics
                 .client_audio_glitches_total
                 .fetch_add(glitches_delta as u64, std::sync::atomic::Ordering::Relaxed);
-            metrics
-                .client_audio_frames_dropped_total
-                .fetch_add(frames_dropped_delta as u64, std::sync::atomic::Ordering::Relaxed);
+            metrics.client_audio_frames_dropped_total.fetch_add(
+                frames_dropped_delta as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             metrics
                 .client_jitter_buffer_seconds
                 .observe(jitter_buffer_ms as f64 / 1000.0);

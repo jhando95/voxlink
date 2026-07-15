@@ -202,7 +202,11 @@ pub fn spawn_poll_task(
             // Only sample the OS (a process spawn) when we'd actually broadcast.
             let active = enabled && { network.lock().await.is_connected() };
             let allowlist = if active {
-                state.allowlist.lock().map(|g| g.clone()).unwrap_or_default()
+                state
+                    .allowlist
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -219,7 +223,9 @@ pub fn spawn_poll_task(
                 PresenceAction::Set(app) => {
                     let activity = format_activity(&app);
                     let net = network.lock().await;
-                    let _ = net.send_signal(&SignalMessage::SetActivity { activity }).await;
+                    let _ = net
+                        .send_signal(&SignalMessage::SetActivity { activity })
+                        .await;
                     last_sent = Some(app);
                 }
                 PresenceAction::Clear => {

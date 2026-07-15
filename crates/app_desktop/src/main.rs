@@ -211,7 +211,7 @@ fn main() {
     let deafen_key = Rc::new(RefCell::new(resolve_combo(&config.deafen_key, "d")));
 
     // Pre-parse soundboard keybinds: Vec<(clip_index, combo)>
-    let soundboard_combos: Rc<RefCell<Vec<(usize, Vec<Keycode>)>>> = {
+    let soundboard_combos: tick_loop::SoundboardCombos = {
         let combos: Vec<(usize, Vec<Keycode>)> = config
             .soundboard_clips
             .iter()
@@ -397,7 +397,9 @@ fn main() {
         })
         .collect();
     window.set_startup_total_ms(total as i32);
-    window.set_startup_phases(slint::ModelRc::new(slint::VecModel::<ui_shell::StartupPhaseData>::from(phase_models)));
+    window.set_startup_phases(slint::ModelRc::new(slint::VecModel::<
+        ui_shell::StartupPhaseData,
+    >::from(phase_models)));
 
     if let Err(err) = window.run() {
         log::error!("Voxlink UI loop failed: {err}");

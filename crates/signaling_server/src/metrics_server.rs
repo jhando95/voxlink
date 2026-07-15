@@ -1,9 +1,9 @@
+use crate::histogram::Histogram;
+use crate::types::State;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use crate::types::State;
-use crate::histogram::Histogram;
 
 pub(crate) struct ServerMetrics {
     pub(crate) connection_attempts_total: AtomicU64,
@@ -35,8 +35,7 @@ pub(crate) struct ServerMetrics {
     /// One counter per SignalMessage variant, indexed by
     /// `SignalMessage::variant_index()`. Array size is
     /// `shared_types::SIGNAL_MESSAGE_VARIANT_COUNT` (= 201).
-    pub(crate) per_message_counters:
-        [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
+    pub(crate) per_message_counters: [AtomicU64; shared_types::SIGNAL_MESSAGE_VARIANT_COUNT],
     pub(crate) signaling_dispatch_latency: Histogram,
     pub(crate) udp_relay_latency: Histogram,
     // M10: aggregated from client AudioQualityReport messages
@@ -100,7 +99,12 @@ impl Default for ServerMetrics {
     }
 }
 
-pub(crate) async fn run_metrics_server(state: State, metrics: std::sync::Arc<ServerMetrics>, addr: String, tls_enabled: bool) {
+pub(crate) async fn run_metrics_server(
+    state: State,
+    metrics: std::sync::Arc<ServerMetrics>,
+    addr: String,
+    tls_enabled: bool,
+) {
     let listener = match TcpListener::bind(&addr).await {
         Ok(listener) => listener,
         Err(e) => {
@@ -147,7 +151,11 @@ pub(crate) async fn run_metrics_server(state: State, metrics: std::sync::Arc<Ser
     }
 }
 
-pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_enabled: bool) -> String {
+pub(crate) async fn render_metrics(
+    state: &State,
+    metrics: &ServerMetrics,
+    tls_enabled: bool,
+) -> String {
     let s = state.read().await;
     let active_rooms = s.rooms.len();
     let active_spaces = s.spaces.len();
@@ -289,9 +297,11 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
     ));
     out.push_str("# HELP voxlink_signaling_messages_by_type_total Signaling messages received, broken down by SignalMessage variant\n");
     out.push_str("# TYPE voxlink_signaling_messages_by_type_total counter\n");
-    for (i, name) in shared_types::SignalMessage::VARIANT_NAMES.iter().enumerate() {
-        let count = metrics.per_message_counters[i]
-            .load(Ordering::Relaxed);
+    for (i, name) in shared_types::SignalMessage::VARIANT_NAMES
+        .iter()
+        .enumerate()
+    {
+        let count = metrics.per_message_counters[i].load(Ordering::Relaxed);
         if count > 0 {
             out.push_str(&format!(
                 "voxlink_signaling_messages_by_type_total{{type=\"{name}\"}} {count}\n"
@@ -301,8 +311,12 @@ pub(crate) async fn render_metrics(state: &State, metrics: &ServerMetrics, tls_e
 
     metrics.signaling_dispatch_latency.render(&mut out);
     metrics.udp_relay_latency.render(&mut out);
-    metrics.client_audio_capture_callback_seconds.render(&mut out);
-    metrics.client_audio_playback_callback_seconds.render(&mut out);
+    metrics
+        .client_audio_capture_callback_seconds
+        .render(&mut out);
+    metrics
+        .client_audio_playback_callback_seconds
+        .render(&mut out);
     metrics.client_jitter_buffer_seconds.render(&mut out);
 
     out

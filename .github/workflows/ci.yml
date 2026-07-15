@@ -39,6 +39,11 @@ jobs:
       - name: cargo check --workspace --all-targets
         run: cargo check --workspace --all-targets
 
+      # server_tests spawn these binaries from target/debug at runtime;
+      # `cargo test` alone does not produce them, so build explicitly first.
+      - name: build binaries needed by integration tests
+        run: cargo build -p signaling_server -p app_desktop
+
       - name: cargo test (skip flaky)
         shell: bash
         run: |
@@ -68,16 +73,10 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
-      - name: clippy (threshold 63)
-        shell: bash
-        run: |
-          cargo clippy --workspace --all-targets 2>&1 | tee clippy.log
-          count=$(grep -cE "^warning:" clippy.log || true)
-          echo "Clippy warning count: $count"
-          if [ "$count" -gt 63 ]; then
-            echo "FAIL: clippy warning count $count exceeds baseline of 63"
-            exit 1
-          fi
+      # Strict gate: the workspace reached zero clippy warnings in v0.13.3.
+      # New warnings fail CI so hygiene can't silently drift again.
+      - name: clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   windows-installer:
     name: windows-installer
@@ -102,6 +101,14 @@ jobs:
         shell: powershell
         run: installer\build-portable.ps1
 
+      # voxlink.iss bundles the VC++ runtime from installer/redist/, which is
+      # gitignored — fetch it fresh (same as release.yml does).
+      - name: Download VC++ Redistributable
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\redist | Out-Null
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "installer\redist\vc_redist.x64.exe" -UseBasicParsing
+
       - name: Compile Inno Setup installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
         with:
@@ -113,6 +120,6 @@ jobs:
         with:
           name: voxlink-windows-installer-${{ github.ref_name }}
           path: |
-            installer/Output/Voxlink-Setup-*.exe
-            target/Voxlink-*
+            target/installer/Voxlink-Setup-*.exe
+            target/Voxlink-*.zip
           if-no-files-found: error

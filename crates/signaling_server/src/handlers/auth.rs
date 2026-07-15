@@ -142,7 +142,7 @@ pub async fn handle_authenticate(
                         },
                     );
                     send_friend_snapshot_to_peer(state, peer_id, db).await;
-                super::read_state::send_snapshot_to_peer(state, peer_id, db).await;
+                    super::read_state::send_snapshot_to_peer(state, peer_id, db).await;
                 }
                 log::info!("Peer {peer_id} authenticated (restored identity)");
                 return true;
@@ -339,8 +339,10 @@ async fn clear_session_state_on_identity_switch(state: &State, peer_id: &str) {
     *peer.space_id.lock().await = None;
     *peer.typing_channel_id.lock().await = None;
     *peer.typing_dm_user_id.lock().await = None;
-    peer.is_muted.store(false, std::sync::atomic::Ordering::Relaxed);
-    peer.is_deafened.store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.is_muted
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    peer.is_deafened
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     peer.is_server_deafened
         .store(false, std::sync::atomic::Ordering::Relaxed);
     peer.is_priority_speaker
@@ -617,7 +619,10 @@ pub async fn handle_login(state: &State, peer_id: &str, email: String, password:
                 }),
             )
             .await;
-            log::info!("Rehashed legacy SHA-256 password to Argon2id for user {}", user.user_id);
+            log::info!(
+                "Rehashed legacy SHA-256 password to Argon2id for user {}",
+                user.user_id
+            );
         }
     }
 

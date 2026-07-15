@@ -20,5 +20,9 @@ fn bench_variant_index_unit(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_variant_index_struct, bench_variant_index_unit);
+criterion_group!(
+    benches,
+    bench_variant_index_struct,
+    bench_variant_index_unit
+);
 criterion_main!(benches);

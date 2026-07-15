@@ -1,5 +1,5 @@
-use crate::types::State;
 use crate::connection::send_error;
+use crate::types::State;
 
 pub(crate) async fn handle_whisper_to(state: &State, peer_id: &str, target_peer_ids: Vec<String>) {
     // Cap whisper targets to 20 to prevent abuse

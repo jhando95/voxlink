@@ -3,7 +3,14 @@
 ; Bundles VC++ Runtime so end users need ZERO prerequisites
 
 #define MyAppName "Voxlink"
-#define MyAppVersion "0.13.2"
+; Allow the version to be overridden from the command line
+; (ISCC /DMyAppVersion=1.2.3), as the release workflow does. The literal below is
+; only the fallback for local builds. Without the #ifndef guard the release
+; workflow's tag-derived version was silently ignored and every installer was
+; named after this hard-coded string.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.13.3"
+#endif
 #define MyAppPublisher "Voxlink"
 #define MyAppURL "https://github.com/jhando95/voxlink"
 #define MyAppExeName "Voxlink.exe"

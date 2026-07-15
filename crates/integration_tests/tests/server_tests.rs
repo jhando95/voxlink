@@ -310,6 +310,10 @@ fn desktop_bin_path() -> std::path::PathBuf {
         .join("target/debug/app_desktop")
 }
 
+// Test-only process spawner: each arg maps 1:1 onto a VOXLINK_AUTOMATION_* env
+// var, so a params struct would just duplicate that mapping. Call sites pass
+// named locals, keeping order mistakes visible in review.
+#[allow(clippy::too_many_arguments)]
 fn spawn_automated_desktop_client(
     desktop_bin: &std::path::Path,
     scenario: &str,
@@ -827,8 +831,8 @@ async fn test_performance_load() {
     let room_code = create_room(&mut clients[0], "User0").await;
 
     // Clients 1-4 join
-    for i in 1..5 {
-        join_room(&mut clients[i], &room_code, &format!("User{i}")).await;
+    for (i, client) in clients.iter_mut().enumerate().skip(1) {
+        join_room(client, &room_code, &format!("User{i}")).await;
     }
 
     // Drain all PeerJoined notifications
@@ -981,8 +985,8 @@ async fn test_sustained_chat_session() {
     let room_code = create_room(&mut clients[0], "User0").await;
 
     // Others join
-    for i in 1..10 {
-        join_room(&mut clients[i], &room_code, &format!("User{i}")).await;
+    for (i, client) in clients.iter_mut().enumerate().skip(1) {
+        join_room(client, &room_code, &format!("User{i}")).await;
     }
 
     // Drain PeerJoined notifications
@@ -1004,8 +1008,8 @@ async fn test_sustained_chat_session() {
 
     while start.elapsed() < duration {
         // 3 active speakers (clients 0, 1, 2) send one frame each
-        for i in 0..3 {
-            clients[i].send_binary(&audio_data).await;
+        for client in clients.iter_mut().take(3) {
+            client.send_binary(&audio_data).await;
             total_sent += 1;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1159,6 +1163,26 @@ async fn authenticate(
         other => panic!("Expected FriendSnapshot after auth, got: {:?}", other),
     }
     (token, user_id)
+}
+
+/// Establish a mutual friendship between two already-authenticated clients and
+/// drain the resulting FriendSnapshot messages from both. `a` sends the request,
+/// `b` accepts.
+async fn befriend(a: &mut TestClient, a_user_id: &str, b: &mut TestClient, b_user_id: &str) {
+    a.send_signal(&SignalMessage::SendFriendRequest {
+        user_id: b_user_id.to_string(),
+    })
+    .await;
+    let _ = a.recv_signal().await; // requester snapshot
+    let _ = b.recv_signal().await; // recipient snapshot
+
+    b.send_signal(&SignalMessage::RespondFriendRequest {
+        user_id: a_user_id.to_string(),
+        accept: true,
+    })
+    .await;
+    let _ = b.recv_signal().await; // accepter snapshot
+    let _ = a.recv_signal().await; // requester snapshot
 }
 
 #[tokio::test]
@@ -1501,7 +1525,9 @@ async fn test_change_email_flow() {
     loop {
         match alice.recv_signal_timeout(Duration::from_secs(3)).await {
             Some(SignalMessage::AccountCreated { .. }) => break,
-            Some(SignalMessage::AuthError { message }) => panic!("account creation failed: {message}"),
+            Some(SignalMessage::AuthError { message }) => {
+                panic!("account creation failed: {message}")
+            }
             Some(_) => continue,
             None => panic!("no AccountCreated"),
         }
@@ -2984,8 +3010,11 @@ async fn test_friend_presence_watch_updates_globally() {
     let mut alice = server.connect().await;
     let mut bob = server.connect().await;
 
-    let _alice_user_id = authenticate(&mut alice, "Alice", None).await.1;
+    let alice_user_id = authenticate(&mut alice, "Alice", None).await.1;
     let bob_user_id = authenticate(&mut bob, "Bob", None).await.1;
+
+    // Presence is only revealed for actual friends, so establish the friendship first.
+    befriend(&mut alice, &alice_user_id, &mut bob, &bob_user_id).await;
 
     alice
         .send_signal(&SignalMessage::WatchFriendPresence {
@@ -5405,22 +5434,21 @@ async fn test_audio_relay_stress() {
     bob.recv_signal().await; // RoomJoined
     alice.recv_signal().await; // PeerJoined
 
-    // Alice sends 100 audio frames rapidly
+    // Alice sends 100 audio frames at a mild 2ms pace. Real clients pace at
+    // 20ms/frame (cpal timing); an instantaneous burst over-runs the bounded
+    // per-peer media lane by design (lossy drop-on-full), so a zero-pace burst
+    // asserts behavior the product deliberately does not guarantee.
     let fake_audio = vec![0u8; 64]; // Simulated Opus frame
     for _ in 0..100 {
         alice.send_binary(&fake_audio).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 
     // Bob should receive audio frames
     let mut received = 0;
-    loop {
-        match bob.recv_binary_timeout(Duration::from_secs(2)).await {
-            Some(data) => {
-                assert!(!data.is_empty(), "Audio frame should not be empty");
-                received += 1;
-            }
-            None => break,
-        }
+    while let Some(data) = bob.recv_binary_timeout(Duration::from_secs(2)).await {
+        assert!(!data.is_empty(), "Audio frame should not be empty");
+        received += 1;
     }
 
     assert!(
@@ -5569,11 +5597,10 @@ async fn test_concurrent_room_joins() {
 
     // Host should have 10 PeerJoined notifications
     let mut join_count = 0;
-    loop {
-        match host.recv_signal_timeout(Duration::from_secs(2)).await {
-            Some(SignalMessage::PeerJoined { .. }) => join_count += 1,
-            _ => break,
-        }
+    while let Some(SignalMessage::PeerJoined { .. }) =
+        host.recv_signal_timeout(Duration::from_secs(2)).await
+    {
+        join_count += 1;
     }
     assert_eq!(join_count, 9, "Host should see 9 peer joins");
 }
@@ -5633,14 +5660,11 @@ async fn test_concurrent_message_edits() {
     // Drain all edit notifications
     let mut edit_count = 0;
     let mut last_content = String::new();
-    loop {
-        match alice.recv_signal_timeout(Duration::from_secs(2)).await {
-            Some(SignalMessage::TextMessageEdited { new_content, .. }) => {
-                last_content = new_content;
-                edit_count += 1;
-            }
-            _ => break,
-        }
+    while let Some(SignalMessage::TextMessageEdited { new_content, .. }) =
+        alice.recv_signal_timeout(Duration::from_secs(2)).await
+    {
+        last_content = new_content;
+        edit_count += 1;
     }
     assert_eq!(edit_count, 10, "Should receive all 10 edit notifications");
     assert_eq!(last_content, "Edit #9", "Last edit should be #9");
@@ -6250,8 +6274,8 @@ async fn test_stale_members_cleaned_on_join() {
     // Bob joins, then abruptly disconnects
     let mut bob = server.connect().await;
     let (_, _, members) = join_space(&mut bob, &space.invite_code, "Bob").await;
-    assert!(members.len() >= 1); // At least Alice
-                                 // drain MemberJoined from Alice
+    assert!(!members.is_empty()); // At least Alice
+                                  // drain MemberJoined from Alice
     let _ = alice.recv_signal_timeout(Duration::from_millis(500)).await;
 
     drop(bob); // Abrupt disconnect
@@ -6698,14 +6722,12 @@ async fn test_audio_relay_burst() {
 
     // Listener should receive some frames (rate limiter may drop some, which is fine)
     let mut received = 0;
-    loop {
-        match listener
-            .recv_binary_timeout(Duration::from_millis(200))
-            .await
-        {
-            Some(_) => received += 1,
-            None => break,
-        }
+    while listener
+        .recv_binary_timeout(Duration::from_millis(200))
+        .await
+        .is_some()
+    {
+        received += 1;
     }
     assert!(
         received > 0,
@@ -6779,13 +6801,13 @@ async fn test_delete_space_with_active_voice() {
     // Both should get SpaceDeleted
     loop {
         match alice.recv_signal().await {
-            SignalMessage::SpaceDeleted { .. } => break,
+            SignalMessage::SpaceDeleted => break,
             _ => continue,
         }
     }
     loop {
         match bob.recv_signal().await {
-            SignalMessage::SpaceDeleted { .. } => break,
+            SignalMessage::SpaceDeleted => break,
             _ => continue,
         }
     }

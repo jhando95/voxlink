@@ -165,7 +165,12 @@ pub(crate) async fn handle_upload_attachment(
             };
             if !user_role.has_at_least(min_role) {
                 drop(s);
-                send_error(state, peer_id, "You don't have permission to use this channel").await;
+                send_error(
+                    state,
+                    peer_id,
+                    "You don't have permission to use this channel",
+                )
+                .await;
                 return;
             }
         }
@@ -234,7 +239,12 @@ pub(crate) async fn handle_upload_attachment(
             }
             Ok(Ok(Ok(_))) => {}
             _ => {
-                send_error(state, peer_id, "Attachment storage is temporarily unavailable").await;
+                send_error(
+                    state,
+                    peer_id,
+                    "Attachment storage is temporarily unavailable",
+                )
+                .await;
                 return;
             }
         }
@@ -443,7 +453,10 @@ mod tests {
     #[test]
     fn accepts_common_safe_types() {
         for mime in ["image/png", "image/jpeg", "application/pdf", "text/plain"] {
-            assert!(validate_upload(mime, 100).is_ok(), "{mime} should be allowed");
+            assert!(
+                validate_upload(mime, 100).is_ok(),
+                "{mime} should be allowed"
+            );
         }
     }
 }

@@ -21,6 +21,9 @@ const TICK_MS_IDLE: u64 = 100; // 10Hz — low overhead when not in a voice call
 const TICKS_PER_IDLE_FIRE: u64 = TICK_MS_IDLE / TICK_MS_ACTIVE; // tick increment per idle fire
 const SCREEN_SHARE_RENDER_INTERVAL_MS: u64 = 33; // 30fps keeps preview smooth without 60fps texture churn
 
+/// UI-thread-shared list of (clip_index, key_combo) soundboard hotkey bindings.
+pub type SoundboardCombos = Rc<RefCell<Vec<(usize, Vec<Keycode>)>>>;
+
 // ─── Event Loop ───
 
 /// Start the 25ms event loop timer that drives the app.
@@ -44,7 +47,7 @@ pub fn start(
     ptt_key: Rc<RefCell<Vec<Keycode>>>,
     mute_key: Rc<RefCell<Vec<Keycode>>>,
     deafen_key: Rc<RefCell<Vec<Keycode>>>,
-    soundboard_combos: Rc<RefCell<Vec<(usize, Vec<Keycode>)>>>,
+    soundboard_combos: SoundboardCombos,
 ) {
     let window_weak = window.as_weak();
     let state = state.clone();
@@ -758,9 +761,7 @@ pub fn start(
             }
 
             // --- Audio quality telemetry every 10s while in a call ---
-            if in_call
-                && last_telemetry_update.borrow().elapsed() >= Duration::from_secs(10)
-            {
+            if in_call && last_telemetry_update.borrow().elapsed() >= Duration::from_secs(10) {
                 *last_telemetry_update.borrow_mut() = Instant::now();
                 send_audio_quality_report(
                     &network,
@@ -1005,7 +1006,9 @@ fn handle_room_hotkeys(
 
             if held != was_held {
                 *ptt_was_held.borrow_mut() = held;
-                let muted = !held;
+                // Deafen implies muted: holding push-to-talk must not open the mic
+                // while the user is deafened.
+                let muted = !held || voice.borrow().is_deafened;
                 voice.borrow_mut().is_muted = muted;
                 {
                     let mut s = state.borrow_mut();
@@ -1302,11 +1305,7 @@ fn send_audio_quality_report(
     let frames_dropped_delta = frames_dropped_cum.saturating_sub(prev_frames);
 
     // Skip reporting idle periods: no audio flowing, no losses, no glitches.
-    if capture_ms == 0
-        && playback_ms == 0
-        && glitches_delta == 0
-        && frames_dropped_delta == 0
-    {
+    if capture_ms == 0 && playback_ms == 0 && glitches_delta == 0 && frames_dropped_delta == 0 {
         return;
     }
 

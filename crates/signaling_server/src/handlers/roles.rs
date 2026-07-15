@@ -22,7 +22,11 @@ use crate::{now_epoch_secs, send_to};
 /// actor, or send an error and return None. `is_owner` is the structural
 /// `spaces.owner_id == user_id` check; it short-circuits every permission
 /// test (OWNER_BYPASS).
-async fn actor_perms(state: &State, peer_id: &str, db: &Db) -> Option<(String, String, bool, Permissions)> {
+async fn actor_perms(
+    state: &State,
+    peer_id: &str,
+    db: &Db,
+) -> Option<(String, String, bool, Permissions)> {
     let (space_id, user_id) = {
         let s = state.read().await;
         let peer = s.peers.get(peer_id)?;
@@ -41,9 +45,11 @@ async fn actor_perms(state: &State, peer_id: &str, db: &Db) -> Option<(String, S
         let db = db.clone();
         let sid = space_id.clone();
         let uid = user_id.clone();
-        tokio::task::spawn_blocking(move || db.load_user_effective_permissions(&sid, &uid).unwrap_or(0))
-            .await
-            .unwrap_or(0)
+        tokio::task::spawn_blocking(move || {
+            db.load_user_effective_permissions(&sid, &uid).unwrap_or(0)
+        })
+        .await
+        .unwrap_or(0)
     } else {
         0
     };
@@ -54,7 +60,10 @@ async fn actor_perms(state: &State, peer_id: &str, db: &Db) -> Option<(String, S
     Some((space_id, user_id, is_owner, perms))
 }
 
-async fn snapshot_for_space(db: &Db, space_id: &str) -> Option<(Vec<RoleInfo>, Vec<RoleAssignment>)> {
+async fn snapshot_for_space(
+    db: &Db,
+    space_id: &str,
+) -> Option<(Vec<RoleInfo>, Vec<RoleAssignment>)> {
     let db = db.as_ref()?.clone();
     let sid = space_id.to_string();
     tokio::task::spawn_blocking(move || -> Option<(Vec<RoleInfo>, Vec<RoleAssignment>)> {
@@ -98,7 +107,8 @@ async fn broadcast_to_space_id(state: &State, space_id: &str, msg: &SignalMessag
 }
 
 pub(crate) async fn handle_request_role_list(state: &State, peer_id: &str, db: &Db) {
-    let Some((space_id, _user_id, _is_owner, _perms)) = actor_perms(state, peer_id, db).await else {
+    let Some((space_id, _user_id, _is_owner, _perms)) = actor_perms(state, peer_id, db).await
+    else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -127,7 +137,8 @@ pub(crate) async fn handle_create_role(
     position: i32,
     db: &Db,
 ) {
-    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await else {
+    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await
+    else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -197,17 +208,23 @@ pub(crate) async fn handle_create_role(
     .await;
 }
 
+/// PATCH-style field set for UpdateRole. `None` = leave unchanged.
+pub(crate) struct RoleUpdate {
+    pub name: Option<String>,
+    pub color: Option<String>,
+    pub permissions: Option<Permissions>,
+    pub position: Option<i32>,
+}
+
 pub(crate) async fn handle_update_role(
     state: &State,
     peer_id: &str,
     role_id: String,
-    name: Option<String>,
-    color: Option<String>,
-    permissions: Option<Permissions>,
-    position: Option<i32>,
+    update: RoleUpdate,
     db: &Db,
 ) {
-    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await else {
+    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await
+    else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -237,7 +254,7 @@ pub(crate) async fn handle_update_role(
         send_error(state, peer_id, "Unknown role").await;
         return;
     };
-    if existing.is_managed && (name.is_some() || permissions.is_some()) {
+    if existing.is_managed && (update.name.is_some() || update.permissions.is_some()) {
         send_error(
             state,
             peer_id,
@@ -246,7 +263,7 @@ pub(crate) async fn handle_update_role(
         .await;
         return;
     }
-    if let Some(n) = name {
+    if let Some(n) = update.name {
         let trimmed = n.trim().to_string();
         if trimmed.is_empty() || trimmed.chars().count() > 64 {
             send_error(state, peer_id, "Role name must be 1-64 characters").await;
@@ -254,10 +271,10 @@ pub(crate) async fn handle_update_role(
         }
         existing.name = trimmed;
     }
-    if let Some(c) = color {
+    if let Some(c) = update.color {
         existing.color = c;
     }
-    if let Some(p) = permissions {
+    if let Some(p) = update.permissions {
         // Rank: actor must hold every bit they're granting.
         if !actor_perms.contains(p) && !actor_perms.has(Permissions::ADMINISTRATOR) {
             send_error(
@@ -270,7 +287,7 @@ pub(crate) async fn handle_update_role(
         }
         existing.permissions = p.bits();
     }
-    if let Some(pos) = position {
+    if let Some(pos) = update.position {
         existing.position = pos;
     }
     let db_clone = db_ref.clone();
@@ -303,7 +320,8 @@ pub(crate) async fn handle_update_role(
 }
 
 pub(crate) async fn handle_delete_role(state: &State, peer_id: &str, role_id: String, db: &Db) {
-    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await else {
+    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await
+    else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -345,8 +363,7 @@ pub(crate) async fn handle_delete_role(state: &State, peer_id: &str, role_id: St
     let db_clone = db_ref.clone();
     let sid = space_id.clone();
     let rid = role_id.clone();
-    let _ = tokio::task::spawn_blocking(move || db_clone.delete_role_def(&sid, &rid))
-        .await;
+    let _ = tokio::task::spawn_blocking(move || db_clone.delete_role_def(&sid, &rid)).await;
     broadcast_to_space_id(
         state,
         &space_id,
@@ -365,8 +382,7 @@ pub(crate) async fn handle_assign_role_to_member(
     role_id: String,
     db: &Db,
 ) {
-    let Some((space_id, actor_uid, _is_owner, actor_perms)) =
-        actor_perms(state, peer_id, db).await
+    let Some((space_id, actor_uid, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await
     else {
         send_error(state, peer_id, "Not in a space").await;
         return;
@@ -379,6 +395,37 @@ pub(crate) async fn handle_assign_role_to_member(
         send_error(state, peer_id, "Role management requires persistence").await;
         return;
     };
+    // Verify the role belongs to this space and enforce the permission ceiling:
+    // an actor may only assign a role whose permissions they themselves hold
+    // (unless they are an administrator). Without this, MANAGE_ROLES alone would
+    // let a user grant themselves ADMINISTRATOR by assigning a higher role.
+    let db_clone = db_ref.clone();
+    let sid = space_id.clone();
+    let rid = role_id.clone();
+    let target_role = tokio::task::spawn_blocking(move || -> Option<SpaceRoleDefRow> {
+        db_clone
+            .load_role_defs(&sid)
+            .ok()?
+            .into_iter()
+            .find(|r| r.role_id == rid)
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(target_role) = target_role else {
+        send_error(state, peer_id, "Unknown role for this space").await;
+        return;
+    };
+    let role_perms = Permissions::from_bits(target_role.permissions);
+    if !actor_perms.contains(role_perms) && !actor_perms.has(Permissions::ADMINISTRATOR) {
+        send_error(
+            state,
+            peer_id,
+            "You can only assign roles whose permissions you yourself hold",
+        )
+        .await;
+        return;
+    }
     let row = SpaceRoleMemberRow {
         space_id: space_id.clone(),
         role_id: role_id.clone(),
@@ -405,7 +452,8 @@ pub(crate) async fn handle_unassign_role_from_member(
     role_id: String,
     db: &Db,
 ) {
-    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await else {
+    let Some((space_id, _user_id, _is_owner, actor_perms)) = actor_perms(state, peer_id, db).await
+    else {
         send_error(state, peer_id, "Not in a space").await;
         return;
     };
@@ -421,8 +469,8 @@ pub(crate) async fn handle_unassign_role_from_member(
     let sid = space_id.clone();
     let rid = role_id.clone();
     let uid = user_id.clone();
-    let _ = tokio::task::spawn_blocking(move || db_clone.delete_role_member(&sid, &rid, &uid))
-        .await;
+    let _ =
+        tokio::task::spawn_blocking(move || db_clone.delete_role_member(&sid, &rid, &uid)).await;
     fan_out_member_role_change(state, db, &space_id, &user_id).await;
 }
 
@@ -465,10 +513,8 @@ mod tests {
     /// builds correctly without needing the full server harness.
     #[test]
     fn snapshot_groups_assignments_by_user() {
-        let path = std::env::temp_dir().join(format!(
-            "voxlink_role_snapshot_{}.db",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("voxlink_role_snapshot_{}.db", std::process::id()));
         let db = Database::open(&path).unwrap();
         db.save_space(&SpaceRow {
             id: "s1".into(),
@@ -486,7 +532,9 @@ mod tests {
             name: "Admins".into(),
             color: "#ff0000".into(),
             position: 50,
-            permissions: Permissions::MANAGE_SPACE.union(Permissions::KICK_MEMBERS).bits(),
+            permissions: Permissions::MANAGE_SPACE
+                .union(Permissions::KICK_MEMBERS)
+                .bits(),
             is_managed: false,
             is_default: false,
             created_at: now,

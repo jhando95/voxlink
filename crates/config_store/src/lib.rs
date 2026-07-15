@@ -390,7 +390,7 @@ pub fn store_auth_token(token: &str) -> Result<(), String> {
         entry
             .set_password(token)
             .map_err(|e| format!("Failed to write auth token to secure storage: {e}"))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(
@@ -418,12 +418,12 @@ pub fn clear_auth_token() -> Result<(), String> {
     ))]
     {
         let entry = auth_token_entry()?;
-        return match entry.delete_credential() {
+        match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(err) => Err(format!(
                 "Failed to delete auth token from secure storage: {err}"
             )),
-        };
+        }
     }
 
     #[cfg(not(any(
@@ -472,8 +472,10 @@ pub fn config_dir_display() -> String {
 /// Auth tokens live in secure storage and are not part of config.json anymore.
 pub fn reset_to_defaults() -> Result<(), String> {
     let existing = load_config();
-    let mut fresh = AppConfig::default();
-    fresh.account_email = existing.account_email;
+    let fresh = AppConfig {
+        account_email: existing.account_email,
+        ..Default::default()
+    };
     save_config(&fresh)
 }
 

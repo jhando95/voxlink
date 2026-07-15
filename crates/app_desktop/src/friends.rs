@@ -45,15 +45,19 @@ pub fn sync_ui(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
             window,
             space,
             &search_query,
-            &app.favorite_friends,
-            &app.incoming_friend_requests,
-            &app.outgoing_friend_requests,
-            app.self_user_id.as_deref(),
-            &cfg.collapsed_categories,
-            &cfg.user_notes,
-            &cfg.channel_notification_overrides,
-            &cfg.favorite_channels,
-            &cfg.blocked_users,
+            &ui_shell::SpaceSocialContext {
+                favorites: &app.favorite_friends,
+                incoming_requests: &app.incoming_friend_requests,
+                outgoing_requests: &app.outgoing_friend_requests,
+                self_user_id: app.self_user_id.as_deref(),
+            },
+            &ui_shell::SpaceRenderPrefs {
+                collapsed_categories: &cfg.collapsed_categories,
+                user_notes: &cfg.user_notes,
+                channel_notification_overrides: &cfg.channel_notification_overrides,
+                favorite_channels: &cfg.favorite_channels,
+                blocked_users: &cfg.blocked_users,
+            },
         );
     }
     ui_shell::set_friend_counts(window, &app.favorite_friends);

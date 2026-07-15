@@ -186,15 +186,19 @@ pub fn setup_filter_space(window: &MainWindow, state: &Rc<RefCell<shared_types::
                     &w,
                     space,
                     query.as_str(),
-                    &s.favorite_friends,
-                    &s.incoming_friend_requests,
-                    &s.outgoing_friend_requests,
-                    s.self_user_id.as_deref(),
-                    &cfg.collapsed_categories,
-                    &cfg.user_notes,
-                    &cfg.channel_notification_overrides,
-                    &cfg.favorite_channels,
-                &cfg.blocked_users,
+                    &ui_shell::SpaceSocialContext {
+                        favorites: &s.favorite_friends,
+                        incoming_requests: &s.incoming_friend_requests,
+                        outgoing_requests: &s.outgoing_friend_requests,
+                        self_user_id: s.self_user_id.as_deref(),
+                    },
+                    &ui_shell::SpaceRenderPrefs {
+                        collapsed_categories: &cfg.collapsed_categories,
+                        user_notes: &cfg.user_notes,
+                        channel_notification_overrides: &cfg.channel_notification_overrides,
+                        favorite_channels: &cfg.favorite_channels,
+                        blocked_users: &cfg.blocked_users,
+                    },
                 );
             }
         }
@@ -239,7 +243,8 @@ pub fn setup_leave_space(
             let mut s = state.borrow_mut();
             s.room = Default::default();
             s.space = None;
-            s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+            s.active_direct_message_user_id = None;
+            s.active_group_dm_id = None;
             s.direct_typing_users.clear();
             s.current_view = AppView::Home;
         }
@@ -434,16 +439,18 @@ pub fn setup_block_user(
         }
         // Optimistically persist locally so the UI flips immediately.
         let mut cfg = config_store::load_config();
-        if !cfg.blocked_users.iter().any(|u| u.as_str() == user_id.as_str()) {
+        if !cfg
+            .blocked_users
+            .iter()
+            .any(|u| u.as_str() == user_id.as_str())
+        {
             cfg.blocked_users.push(user_id.clone());
             let _ = config_store::save_config(&cfg);
         }
         let network = network.clone();
         rt_handle.spawn(async move {
             let net = network.lock().await;
-            let _ = net
-                .send_signal(&SignalMessage::BlockUser { user_id })
-                .await;
+            let _ = net.send_signal(&SignalMessage::BlockUser { user_id }).await;
         });
     });
 }

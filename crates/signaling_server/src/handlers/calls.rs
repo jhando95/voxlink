@@ -1,8 +1,13 @@
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, State};
 use shared_types::SignalMessage;
-use crate::types::State;
-use crate::connection::{send_to, send_error};
 
-pub(crate) async fn handle_call_user(state: &State, caller_peer_id: &str, target_user_id: String) {
+pub(crate) async fn handle_call_user(
+    state: &State,
+    caller_peer_id: &str,
+    target_user_id: String,
+    db: &Db,
+) {
     let s = state.read().await;
     let caller_peer = match s.peers.get(caller_peer_id).cloned() {
         Some(p) => p,
@@ -23,6 +28,27 @@ pub(crate) async fn handle_call_user(state: &State, caller_peer_id: &str, target
         }
     };
     let caller_name = caller_peer.name.lock().await.clone();
+    drop(s);
+
+    // Consent: you can only call users you are friends with, consistent with the
+    // friends-only gate on 1:1 DMs. This also removes the online/offline oracle
+    // for arbitrary user IDs.
+    if let Some(db) = db {
+        let db = db.clone();
+        let a = caller_user_id.clone();
+        let b = target_user_id.clone();
+        let are_friends = tokio::task::spawn_blocking(move || db.friendship_exists(&a, &b))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
+        if !are_friends {
+            send_error(state, caller_peer_id, "You can only call your friends").await;
+            return;
+        }
+    }
+
+    let s = state.read().await;
 
     // Find the target peer by user_id
     let mut target_peer = None;
@@ -68,14 +94,23 @@ pub(crate) async fn handle_accept_call(state: &State, peer_id: &str, room_key: S
         return;
     }
     let caller_user_id = parts[1];
-    let _target_user_id = parts[2];
+    let target_user_id = parts[2];
 
     let s = state.read().await;
     let accepter = match s.peers.get(peer_id).cloned() {
         Some(p) => p,
         None => return,
     };
+    let accepter_user_id = accepter.user_id.lock().await.clone();
     let accepter_name = accepter.name.lock().await.clone();
+
+    // Only the intended callee may accept. Without this check any third party who
+    // learns/guesses a `dm_call:A:B` key could force caller A into a room with them.
+    if accepter_user_id.as_deref() != Some(target_user_id) {
+        drop(s);
+        send_error(state, peer_id, "This call is not for you").await;
+        return;
+    }
 
     // Find the caller peer by user_id
     let mut caller_peer = None;
@@ -91,9 +126,16 @@ pub(crate) async fn handle_accept_call(state: &State, peer_id: &str, room_key: S
     if let Some(caller) = caller_peer {
         let caller_name = caller.name.lock().await.clone();
         // Join both peers to the DM call room using existing room join logic
-        crate::handlers::room::handle_join_room(state, &caller.id, room_key.clone(), caller_name, None)
+        crate::handlers::room::handle_join_room(
+            state,
+            &caller.id,
+            room_key.clone(),
+            caller_name,
+            None,
+        )
+        .await;
+        crate::handlers::room::handle_join_room(state, peer_id, room_key, accepter_name, None)
             .await;
-        crate::handlers::room::handle_join_room(state, peer_id, room_key, accepter_name, None).await;
     } else {
         send_to(
             &accepter,

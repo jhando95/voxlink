@@ -1,6 +1,6 @@
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, State};
 use shared_types::SignalMessage;
-use crate::types::{State, Db};
-use crate::connection::{send_to, send_error};
 
 pub(crate) async fn handle_create_event(
     state: &State,
@@ -24,7 +24,12 @@ pub(crate) async fn handle_create_event(
         return;
     }
     if description.chars().count() > 2000 {
-        send_error(state, peer_id, "Event description is too long (max 2000 chars)").await;
+        send_error(
+            state,
+            peer_id,
+            "Event description is too long (max 2000 chars)",
+        )
+        .await;
         return;
     }
     let now = crate::now_epoch_secs() as i64;
@@ -70,23 +75,23 @@ pub(crate) async fn handle_create_event(
         rand::rngs::OsRng.fill_bytes(&mut buf);
         format!("evt_{:08x}", u32::from_le_bytes(buf))
     };
-    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let members: Vec<_> = space.member_ids.to_vec();
     let peers_map: Vec<_> = members
         .iter()
         .filter_map(|mid| s.peers.get(mid).cloned())
         .collect();
     drop(s);
     if let Some(db) = db {
-        let _ = db.create_scheduled_event(
-            &event_id,
-            &space_id,
-            &title,
-            &description,
+        let _ = db.create_scheduled_event(&crate::persistence::NewScheduledEvent {
+            id: &event_id,
+            space_id: &space_id,
+            title: &title,
+            description: &description,
             start_time,
             end_time,
-            &user_id,
-            &creator_name,
-        );
+            creator_id: &user_id,
+            creator_name: &creator_name,
+        });
     }
     let event = shared_types::ScheduledEvent {
         id: event_id,
@@ -130,14 +135,26 @@ pub(crate) async fn handle_delete_event(state: &State, peer_id: &str, event_id: 
         send_error(state, peer_id, "Moderator+ required").await;
         return;
     }
-    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let members: Vec<_> = space.member_ids.to_vec();
     let peers_map: Vec<_> = members
         .iter()
         .filter_map(|mid| s.peers.get(mid).cloned())
         .collect();
     drop(s);
     if let Some(db) = db {
-        let _ = db.delete_scheduled_event(&event_id);
+        // Scope the delete to the actor's space; if nothing was removed the
+        // event_id did not belong here, so don't broadcast a phantom deletion.
+        match db.delete_scheduled_event(&event_id, &space_id) {
+            Ok(false) => {
+                send_error(state, peer_id, "Event not found in your space").await;
+                return;
+            }
+            Err(_) => {
+                send_error(state, peer_id, "Failed to delete event").await;
+                return;
+            }
+            Ok(true) => {}
+        }
     }
     let msg = SignalMessage::ScheduledEventDeleted { event_id };
     for p in &peers_map {
@@ -145,7 +162,12 @@ pub(crate) async fn handle_delete_event(state: &State, peer_id: &str, event_id: 
     }
 }
 
-pub(crate) async fn handle_toggle_event_interest(state: &State, peer_id: &str, event_id: String, db: &Db) {
+pub(crate) async fn handle_toggle_event_interest(
+    state: &State,
+    peer_id: &str,
+    event_id: String,
+    db: &Db,
+) {
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() {
         Some(p) => p,

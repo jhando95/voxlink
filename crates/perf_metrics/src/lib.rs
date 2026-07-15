@@ -127,7 +127,11 @@ impl PerfCollector {
             .as_ref()
             .map(|h| {
                 let m = h.median() * 1000.0;
-                if m.is_finite() { m as f32 } else { 999.0 }
+                if m.is_finite() {
+                    m as f32
+                } else {
+                    999.0
+                }
             })
             .unwrap_or(0.0);
         let playback_callback_median_ms = self
@@ -135,7 +139,11 @@ impl PerfCollector {
             .as_ref()
             .map(|h| {
                 let m = h.median() * 1000.0;
-                if m.is_finite() { m as f32 } else { 999.0 }
+                if m.is_finite() {
+                    m as f32
+                } else {
+                    999.0
+                }
             })
             .unwrap_or(0.0);
         let audio_glitch_count = self.callback_glitch_count.load(Ordering::Relaxed);
@@ -179,7 +187,11 @@ impl PerfCollector {
             .as_ref()
             .map(|h| {
                 let m = h.median() * 1000.0;
-                if m.is_finite() { m as u32 } else { 999 }
+                if m.is_finite() {
+                    m as u32
+                } else {
+                    999
+                }
             })
             .unwrap_or(0);
         let playback_ms = self
@@ -187,7 +199,11 @@ impl PerfCollector {
             .as_ref()
             .map(|h| {
                 let m = h.median() * 1000.0;
-                if m.is_finite() { m as u32 } else { 999 }
+                if m.is_finite() {
+                    m as u32
+                } else {
+                    999
+                }
             })
             .unwrap_or(0);
         let glitches = self

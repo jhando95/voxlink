@@ -73,6 +73,41 @@ pub struct BanRow {
     pub user_name: String,
 }
 
+/// Insert parameters for a scheduled space event. Named fields prevent the
+/// positional-argument-order bugs that wide DB write paths invite.
+pub struct NewScheduledEvent<'a> {
+    pub id: &'a str,
+    pub space_id: &'a str,
+    pub title: &'a str,
+    pub description: &'a str,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub creator_id: &'a str,
+    pub creator_name: &'a str,
+}
+
+/// Insert parameters for a time-deferred chat message.
+pub struct NewScheduledMessage<'a> {
+    pub id: &'a str,
+    pub space_id: &'a str,
+    pub channel_id: &'a str,
+    pub sender_id: &'a str,
+    pub sender_name: &'a str,
+    pub content: &'a str,
+    pub send_at: i64,
+}
+
+/// A scheduled message whose send_at has arrived, ready for delivery.
+#[derive(Debug, Clone)]
+pub struct DueScheduledMessage {
+    pub schedule_id: String,
+    pub space_id: String,
+    pub channel_id: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub content: String,
+}
+
 /// One row of the v2 role catalog. Carries the granular `permissions` u64
 /// bitmask and the metadata needed to render a role pill (name + color +
 /// position). `is_managed` marks rows synthesized from the legacy 4-tier
@@ -613,9 +648,9 @@ impl Database {
         // idempotent — safe to run on every open, no version gating needed.
         if effective >= 2 {
             match self.migrate_legacy_roles_to_v2() {
-                Ok(n) if n > 0 => log::info!(
-                    "Seeded {n} legacy → v2 role assignments across all spaces"
-                ),
+                Ok(n) if n > 0 => {
+                    log::info!("Seeded {n} legacy → v2 role assignments across all spaces")
+                }
                 Ok(_) => {}
                 Err(e) => log::warn!("Legacy role synthesis: {e}"),
             }
@@ -808,7 +843,9 @@ impl Database {
             .as_secs() as i64;
         // Find channels with auto_delete_hours > 0
         let mut stmt = conn
-            .prepare_cached("SELECT id, auto_delete_hours FROM channels WHERE auto_delete_hours > 0")
+            .prepare_cached(
+                "SELECT id, auto_delete_hours FROM channels WHERE auto_delete_hours > 0",
+            )
             .map_err(|e| format!("Query error: {e}"))?;
         let channels: Vec<(String, i64)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -1040,7 +1077,13 @@ impl Database {
 
     /// Mark a channel as read up to a specific message for a user. Upsert so
     /// retries are idempotent and clock-skew between devices is harmless.
-    pub fn upsert_last_read(&self, user_id: &str, channel_id: &str, message_id: &str, ts_secs: i64) {
+    pub fn upsert_last_read(
+        &self,
+        user_id: &str,
+        channel_id: &str,
+        message_id: &str,
+        ts_secs: i64,
+    ) {
         if let Ok(conn) = self.lock_conn() {
             let _ = conn.execute(
                 "INSERT INTO user_read_state (user_id, channel_id, last_read_message_id, last_read_at)
@@ -1055,10 +1098,7 @@ impl Database {
 
     /// Load all (channel_id, last_read_message_id) pairs for a user. Returned
     /// as a Vec so callers can include it in a single snapshot send.
-    pub fn load_read_state_for_user(
-        &self,
-        user_id: &str,
-    ) -> Result<Vec<(String, String)>, String> {
+    pub fn load_read_state_for_user(&self, user_id: &str) -> Result<Vec<(String, String)>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare_cached(
@@ -1221,10 +1261,7 @@ impl Database {
                 )
                 .unwrap_or(0);
             if still_referenced == 0 {
-                let _ = tx.execute(
-                    "DELETE FROM attachments WHERE id = ?1",
-                    params![att_id],
-                );
+                let _ = tx.execute("DELETE FROM attachments WHERE id = ?1", params![att_id]);
             }
         }
         tx.commit()
@@ -1420,12 +1457,12 @@ impl Database {
         // chunk to stay well under that even for very social users.
         let mut out = std::collections::HashMap::with_capacity(user_ids.len());
         for chunk in user_ids.chunks(500) {
-            let placeholders = std::iter::repeat("?")
-                .take(chunk.len())
+            let placeholders = std::iter::repeat_n("?", chunk.len())
                 .collect::<Vec<_>>()
                 .join(",");
-            let sql =
-                format!("SELECT user_id, display_name FROM users WHERE user_id IN ({placeholders})");
+            let sql = format!(
+                "SELECT user_id, display_name FROM users WHERE user_id IN ({placeholders})"
+            );
             let mut stmt = conn
                 .prepare_cached(&sql)
                 .map_err(|e| format!("Query error: {e}"))?;
@@ -1436,10 +1473,8 @@ impl Database {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })
                 .map_err(|e| format!("Query error: {e}"))?;
-            for r in rows {
-                if let Ok((id, name)) = r {
-                    out.insert(id, name);
-                }
+            for (id, name) in rows.flatten() {
+                out.insert(id, name);
             }
         }
         Ok(out)
@@ -1677,7 +1712,9 @@ impl Database {
     ) -> Result<bool, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare_cached("SELECT 1 FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2")
+            .prepare_cached(
+                "SELECT 1 FROM friend_requests WHERE requester_id = ?1 AND addressee_id = ?2",
+            )
             .map_err(|e| format!("Query error: {e}"))?;
         let exists = stmt
             .query_row(params![requester_id, addressee_id], |_| Ok(()))
@@ -1764,7 +1801,9 @@ impl Database {
         let (low, high) = ordered_friend_pair(user_a, user_b);
         let conn = self.lock_conn()?;
         let mut stmt = conn
-            .prepare_cached("SELECT 1 FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2")
+            .prepare_cached(
+                "SELECT 1 FROM friendships WHERE user_low_id = ?1 AND user_high_id = ?2",
+            )
             .map_err(|e| format!("Query error: {e}"))?;
         let exists = stmt.query_row(params![low, high], |_| Ok(())).is_ok();
         Ok(exists)
@@ -2132,10 +2171,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn load_role_members(
-        &self,
-        space_id: &str,
-    ) -> Result<Vec<SpaceRoleMemberRow>, String> {
+    pub fn load_role_members(&self, space_id: &str) -> Result<Vec<SpaceRoleMemberRow>, String> {
         let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare_cached(
@@ -2211,9 +2247,7 @@ impl Database {
         let legacy: Vec<(String, String, String, i64)> = {
             let conn = self.lock_conn()?;
             let mut stmt = conn
-                .prepare(
-                    "SELECT space_id, user_id, role, assigned_at FROM space_roles",
-                )
+                .prepare("SELECT space_id, user_id, role, assigned_at FROM space_roles")
                 .map_err(|e| format!("Query error: {e}"))?;
             let rows = stmt
                 .query_map([], |row| {
@@ -2231,8 +2265,7 @@ impl Database {
 
         // Group by space so we only seed the synthetic role-defs once per space.
         use std::collections::HashSet;
-        let spaces: HashSet<String> =
-            legacy.iter().map(|(sid, _, _, _)| sid.clone()).collect();
+        let spaces: HashSet<String> = legacy.iter().map(|(sid, _, _, _)| sid.clone()).collect();
         // Also seed for spaces that may have no legacy_roles rows at all (owner-only
         // spaces) so every space has an @everyone role going forward.
         let all_space_ids: Vec<String> = {
@@ -2755,35 +2788,35 @@ impl Database {
 
     // ── Scheduled Events ──
 
-    pub fn create_scheduled_event(
-        &self,
-        id: &str,
-        space_id: &str,
-        title: &str,
-        description: &str,
-        start_time: i64,
-        end_time: i64,
-        creator_id: &str,
-        creator_name: &str,
-    ) -> Result<(), String> {
+    pub fn create_scheduled_event(&self, ev: &NewScheduledEvent<'_>) -> Result<(), String> {
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO scheduled_events (id, space_id, title, description, start_time, end_time, creator_id, creator_name) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            rusqlite::params![id, space_id, title, description, start_time, end_time, creator_id, creator_name],
+            rusqlite::params![ev.id, ev.space_id, ev.title, ev.description, ev.start_time, ev.end_time, ev.creator_id, ev.creator_name],
         ).map_err(|e| format!("create event: {e}"))?;
         Ok(())
     }
 
-    pub fn delete_scheduled_event(&self, event_id: &str) -> Result<(), String> {
+    /// Deletes an event, scoping the delete to `space_id` so a moderator in one
+    /// space cannot delete an event belonging to another space by guessing its id.
+    /// Returns `Ok(true)` if an event was actually removed.
+    pub fn delete_scheduled_event(&self, event_id: &str, space_id: &str) -> Result<bool, String> {
         let conn = self.lock_conn()?;
+        let removed = conn
+            .execute(
+                "DELETE FROM scheduled_events WHERE id = ?1 AND space_id = ?2",
+                [event_id, space_id],
+            )
+            .map_err(|e| format!("del event: {e}"))?;
+        if removed == 0 {
+            return Ok(false);
+        }
         conn.execute(
             "DELETE FROM event_interests WHERE event_id = ?1",
             [event_id],
         )
         .map_err(|e| format!("del interests: {e}"))?;
-        conn.execute("DELETE FROM scheduled_events WHERE id = ?1", [event_id])
-            .map_err(|e| format!("del event: {e}"))?;
-        Ok(())
+        Ok(true)
     }
 
     pub fn toggle_event_interest(&self, event_id: &str, user_id: &str) -> Result<bool, String> {
@@ -2859,16 +2892,7 @@ impl Database {
 
     // ── Scheduled Messages ──
 
-    pub fn schedule_message(
-        &self,
-        id: &str,
-        space_id: &str,
-        channel_id: &str,
-        sender_id: &str,
-        sender_name: &str,
-        content: &str,
-        send_at: i64,
-    ) -> Result<(), String> {
+    pub fn schedule_message(&self, msg: &NewScheduledMessage<'_>) -> Result<(), String> {
         let conn = self.lock_conn()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2876,7 +2900,7 @@ impl Database {
             .as_secs() as i64;
         conn.execute(
             "INSERT INTO scheduled_messages (id, space_id, channel_id, sender_id, sender_name, content, send_at, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            rusqlite::params![id, space_id, channel_id, sender_id, sender_name, content, send_at, now],
+            rusqlite::params![msg.id, msg.space_id, msg.channel_id, msg.sender_id, msg.sender_name, msg.content, msg.send_at, now],
         ).map_err(|e| format!("schedule msg: {e}"))?;
         Ok(())
     }
@@ -2891,9 +2915,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_due_scheduled_messages(
-        &self,
-    ) -> Result<Vec<(String, String, String, String, String, String)>, String> {
+    pub fn get_due_scheduled_messages(&self) -> Result<Vec<DueScheduledMessage>, String> {
         let conn = self.lock_conn()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2904,17 +2926,17 @@ impl Database {
         ).map_err(|e| format!("prep due: {e}"))?;
         let rows = stmt
             .query_map([now], |r: &rusqlite::Row| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                ))
+                Ok(DueScheduledMessage {
+                    schedule_id: r.get(0)?,
+                    space_id: r.get(1)?,
+                    channel_id: r.get(2)?,
+                    sender_id: r.get(3)?,
+                    sender_name: r.get(4)?,
+                    content: r.get(5)?,
+                })
             })
             .map_err(|e| format!("query due: {e}"))?;
-        let mut out: Vec<(String, String, String, String, String, String)> = Vec::new();
+        let mut out = Vec::new();
         for r in rows {
             out.push(r.map_err(|e| format!("row: {e}"))?);
         }
@@ -3219,7 +3241,8 @@ mod tests {
             voice_quality: None,
             min_role: None,
             position: None,
-            auto_delete_hours: None, category: None,
+            auto_delete_hours: None,
+            category: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -3279,7 +3302,8 @@ mod tests {
             voice_quality: None,
             min_role: None,
             position: None,
-            auto_delete_hours: None, category: None,
+            auto_delete_hours: None,
+            category: None,
         })
         .unwrap();
         db.save_channel(&ChannelRow {
@@ -3292,7 +3316,8 @@ mod tests {
             voice_quality: None,
             min_role: None,
             position: None,
-            auto_delete_hours: None, category: None,
+            auto_delete_hours: None,
+            category: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -3334,13 +3359,15 @@ mod tests {
         db.save_ban(&BanRow {
             space_id: "s1".into(),
             user_id: "u1".into(),
-            banned_at: 12, user_name: String::new(),
+            banned_at: 12,
+            user_name: String::new(),
         })
         .unwrap();
         db.save_ban(&BanRow {
             space_id: "s2".into(),
             user_id: "u2".into(),
-            banned_at: 13, user_name: String::new(),
+            banned_at: 13,
+            user_name: String::new(),
         })
         .unwrap();
 
@@ -3380,7 +3407,8 @@ mod tests {
             voice_quality: None,
             min_role: None,
             position: None,
-            auto_delete_hours: None, category: None,
+            auto_delete_hours: None,
+            category: None,
         })
         .unwrap();
         let channels = db.load_channels_for_space("s1").unwrap();
@@ -3411,7 +3439,8 @@ mod tests {
                 voice_quality: None,
                 min_role: None,
                 position: None,
-                auto_delete_hours: None, category: None,
+                auto_delete_hours: None,
+                category: None,
             })
             .unwrap();
         }
@@ -3471,7 +3500,8 @@ mod tests {
             voice_quality: None,
             min_role: None,
             position: None,
-            auto_delete_hours: None, category: None,
+            auto_delete_hours: None,
+            category: None,
         })
         .unwrap();
         db.save_message(&MessageRow {
@@ -3564,7 +3594,8 @@ mod tests {
         db.save_ban(&BanRow {
             space_id: "s1".into(),
             user_id: "u1".into(),
-            banned_at: 1000, user_name: String::new(),
+            banned_at: 1000,
+            user_name: String::new(),
         })
         .unwrap();
         assert!(db.is_banned("s1", "u1").unwrap());
@@ -3757,13 +3788,15 @@ mod tests {
         db.save_ban(&BanRow {
             space_id: "s1".into(),
             user_id: "u1".into(),
-            banned_at: 1000, user_name: String::new(),
+            banned_at: 1000,
+            user_name: String::new(),
         })
         .unwrap();
         db.save_ban(&BanRow {
             space_id: "s1".into(),
             user_id: "u2".into(),
-            banned_at: 2000, user_name: String::new(),
+            banned_at: 2000,
+            user_name: String::new(),
         })
         .unwrap();
 
@@ -4040,19 +4073,13 @@ mod tests {
 
         // Initial set
         db.upsert_timeout("s1", "u_target", 1000, "u_actor", 0);
-        assert_eq!(
-            db.load_active_timeout("s1", "u_target", 500),
-            Some(1000)
-        );
+        assert_eq!(db.load_active_timeout("s1", "u_target", 500), Some(1000));
         // Expired in the future → no row returned
         assert_eq!(db.load_active_timeout("s1", "u_target", 1500), None);
 
         // Upsert extends the deadline
         db.upsert_timeout("s1", "u_target", 2000, "u_actor", 0);
-        assert_eq!(
-            db.load_active_timeout("s1", "u_target", 1500),
-            Some(2000)
-        );
+        assert_eq!(db.load_active_timeout("s1", "u_target", 1500), Some(2000));
 
         // clear_timeout removes the row entirely
         db.clear_timeout("s1", "u_target");
@@ -4071,15 +4098,20 @@ mod tests {
     #[test]
     fn batch_user_names_returns_known_ids_only() {
         let (db, path) = temp_db();
-        db.create_account("u1", "a@x.com", "h", "Ann", "t1", 1).unwrap();
-        db.create_account("u2", "b@x.com", "h", "Bob", "t2", 1).unwrap();
+        db.create_account("u1", "a@x.com", "h", "Ann", "t1", 1)
+            .unwrap();
+        db.create_account("u2", "b@x.com", "h", "Bob", "t2", 1)
+            .unwrap();
 
         let mut got = db
             .find_user_names_by_ids(&["u1", "u2", "u_missing"])
             .unwrap();
         assert_eq!(got.remove("u1").as_deref(), Some("Ann"));
         assert_eq!(got.remove("u2").as_deref(), Some("Bob"));
-        assert!(got.is_empty(), "missing id must be absent, not a placeholder");
+        assert!(
+            got.is_empty(),
+            "missing id must be absent, not a placeholder"
+        );
 
         // Empty input returns empty map without hitting DB.
         let empty = db.find_user_names_by_ids(&[]).unwrap();
@@ -4125,9 +4157,7 @@ mod tests {
         db.add_dm_reaction("dm1", "👍", "Bob", 1); // idempotent
         db.add_dm_reaction("dm2", "🎉", "Alice", 2);
 
-        let mut rows = db
-            .load_dm_reactions_for_pair("u_alice", "u_bob")
-            .unwrap();
+        let mut rows = db.load_dm_reactions_for_pair("u_alice", "u_bob").unwrap();
         rows.sort();
         assert_eq!(rows.len(), 2);
         assert!(rows.contains(&("dm1".into(), "👍".into(), "Bob".into())));
@@ -4193,19 +4223,13 @@ mod tests {
         assert!(defs.iter().any(|d| d.is_default && d.name == "@everyone"));
         // Moderator bundle should include KICK_MEMBERS.
         let mod_def = defs.iter().find(|d| d.name == "Moderator").unwrap();
-        assert!(
-            mod_def.permissions & shared_types::Permissions::KICK_MEMBERS.bits() != 0
-        );
+        assert!(mod_def.permissions & shared_types::Permissions::KICK_MEMBERS.bits() != 0);
 
         // Per-user effective permissions: u_mod gets moderator bundle (+default),
         // u_mem gets only the legacy-member bundle (+default == same bundle).
-        let perms = db
-            .load_user_effective_permissions("s1", "u_mod")
-            .unwrap();
+        let perms = db.load_user_effective_permissions("s1", "u_mod").unwrap();
         assert!(perms & shared_types::Permissions::BAN_MEMBERS.bits() != 0);
-        let perms_mem = db
-            .load_user_effective_permissions("s1", "u_mem")
-            .unwrap();
+        let perms_mem = db.load_user_effective_permissions("s1", "u_mem").unwrap();
         assert!(
             perms_mem & shared_types::Permissions::SEND_MESSAGES.bits() != 0,
             "member should still have SEND_MESSAGES via default + member role"
@@ -4219,9 +4243,7 @@ mod tests {
         // owner is computed structurally from spaces.owner_id. The default
         // role alone gives them basic perms; OWNER_BYPASS is applied in-memory
         // at check time (not by this DB query).
-        let perms_owner = db
-            .load_user_effective_permissions("s1", "u_owner")
-            .unwrap();
+        let perms_owner = db.load_user_effective_permissions("s1", "u_owner").unwrap();
         assert!(perms_owner & shared_types::Permissions::SEND_MESSAGES.bits() != 0);
 
         let _ = std::fs::remove_file(path);

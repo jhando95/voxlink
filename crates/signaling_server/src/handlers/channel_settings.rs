@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use shared_types::SignalMessage;
-use crate::types::{Peer, State, Db};
-use crate::connection::{send_to, send_error};
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, Peer, State};
 use crate::DB_TIMEOUT;
+use shared_types::SignalMessage;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 pub(crate) enum ChannelSetting {
     UserLimit(u32),
@@ -14,7 +14,12 @@ pub(crate) enum ChannelSetting {
     AutoDelete(u32),
 }
 
-pub(crate) async fn handle_set_space_public(state: &State, peer_id: &str, is_public: bool, db: &Db) {
+pub(crate) async fn handle_set_space_public(
+    state: &State,
+    peer_id: &str,
+    is_public: bool,
+    db: &Db,
+) {
     let (space_id, _user_id, role, member_ids) = {
         let s = state.read().await;
         let peer = match s.peers.get(peer_id).cloned() {
@@ -201,7 +206,8 @@ pub(crate) async fn handle_channel_setting(
     setting: ChannelSetting,
     db: &crate::types::Db,
 ) {
-    let Some((space_id, _, actor_role)) = crate::handlers::space::peer_space_role(state, peer_id).await
+    let Some((space_id, _, actor_role)) =
+        crate::handlers::space::peer_space_role(state, peer_id).await
     else {
         return;
     };

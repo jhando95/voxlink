@@ -42,6 +42,11 @@ impl MediaSession {
         // Buffer return channel — sender task returns used buffers here for reuse.
         // Use std::sync::mpsc so the audio callback can try_recv without async.
         let (ret_tx, ret_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        // The callback also needs to return buffers to the pool when the outbound
+        // channel is full — otherwise the dropped buffer is freed *inside the cpal
+        // callback* and the pool shrinks permanently, eventually forcing a heap
+        // allocation on every frame (a real-time hazard).
+        let ret_tx_cb = ret_tx.clone();
 
         // Pre-allocate the buffer pool and seed the return channel
         for _ in 0..POOL_SIZE {
@@ -100,9 +105,12 @@ impl MediaSession {
             };
             buf.extend_from_slice(encoded_data);
 
-            // try_send: if channel is full, drop the frame (better than blocking audio thread)
-            if tx.try_send(buf).is_err() {
+            // try_send: if the channel is full, drop the *frame* (better than
+            // blocking the audio thread) but recycle its buffer back into the pool
+            // instead of freeing it on the real-time thread.
+            if let Err(e) = tx.try_send(buf) {
                 dropped.fetch_add(1, Ordering::Relaxed);
+                let _ = ret_tx_cb.send(e.into_inner());
             }
         });
 

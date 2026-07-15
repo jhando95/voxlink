@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.13.3 — Zero clippy warnings, rustfmt everywhere, CI actually green
+
+Hygiene + CI-reliability release. No user-facing feature changes; the ships
+here are that the workspace now holds a strict lint bar and the CI pipeline
+that was silently red on every push since it was added is now green and
+trustworthy.
+
+### Lint: workspace at zero clippy warnings, gated
+- **~55 clippy warnings across all targets → 0.** Highlights beyond the
+  mechanical sweep (`useless_conversion`, `map_or`, casts, `format!`,
+  `while_let_loop`, `needless_range_loop`, `iter_nth`, stale doc comment):
+  - **live_stress_test's `SERIAL` mutex → `tokio::sync::Mutex`** — the guard
+    is held across every await in each test body; the std guard blocked the
+    runtime worker (10 × `await_holding_lock`). Bonus: no poisoning, so one
+    panicking test no longer cascades `PoisonError`s into the rest.
+  - **`render_space` 12 positional args → 5** via new `SpaceSocialContext` +
+    `SpaceRenderPrefs` structs. It had grown an argument every time a local
+    preference was threaded in; named fields stop the drift.
+  - **`handle_update_role` PATCH fields → `RoleUpdate` struct.**
+  - **`create_scheduled_event` / `schedule_message` → `NewScheduledEvent` /
+    `NewScheduledMessage` named-field param structs**, and the 6-tuple from
+    `get_due_scheduled_messages` → `DueScheduledMessage` row struct. Wide
+    positional DB write paths were an audit-flagged argument-order hazard.
+  - **`ChunkedScreenSequenceState::{NewFrame,ExistingFrame,StaleFrame}` →
+    `{New,Existing,Stale}`** (enum_variant_names).
+  - `SoundboardCombos` type alias for the shared hotkey-binding list.
+- **CI clippy gate tightened from "≤63 warnings" ratchet to
+  `cargo clippy --workspace --all-targets -- -D warnings`.** New warnings now
+  fail CI instead of accruing.
+- **`cargo fmt --all` run once** (46 files) so the committed
+  `cargo fmt --check` lint gate passes; the tree stays rustfmt-clean from
+  here on.
+
+### CI: fixed the two structural failures that kept every run red
+- **build-test**: `server_tests` spawn `target/debug/signaling_server` and
+  `app_desktop` at runtime, but the job only ran `cargo check` + `cargo test`,
+  which never produce those binaries on a fresh runner — every integration
+  test failed with "No such file or directory". Added an explicit
+  `cargo build -p signaling_server -p app_desktop` step.
+- **windows-installer**: `voxlink.iss` bundles
+  `installer/redist/vc_redist.x64.exe`, which is gitignored; release.yml
+  downloads it but ci.yml didn't, so ISCC aborted on the missing source
+  file. Added the same download step.
+
+### Also in this release (landed alongside)
+- **Role-assignment privilege-escalation guard** — `AssignRoleToMember` now
+  verifies the role belongs to the actor's space and that the actor holds
+  every permission the role grants (or is an administrator). Previously
+  MANAGE_ROLES alone could self-assign an ADMINISTRATOR role.
+- **Presence is friendship-gated** — `WatchFriendPresence` only reveals
+  presence for users the watcher is actually friends with, closing a
+  privacy oracle that let arbitrary user IDs be probed for online state and
+  current space/channel.
+- **Timeout rank checks** — a moderator can no longer time out an equal or
+  higher-ranked member, and the target must belong to the actor's own space.
+- **Scheduled-event deletion is space-scoped** — deleting an event now
+  verifies it belongs to the actor's space instead of trusting the id.
+
 ## v0.13.2 — UI: simplification + token consolidation
 
 Audit-driven simplification on top of v0.13.1's section-definition pass. No

@@ -1,8 +1,8 @@
-use std::sync::atomic::Ordering;
-use shared_types::SignalMessage;
-use crate::types::{State, Db};
-use crate::connection::{send_to, send_error};
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, State};
 use crate::validation::now_epoch_secs;
+use shared_types::SignalMessage;
+use std::sync::atomic::Ordering;
 
 pub(crate) async fn handle_start_recording(state: &State, peer_id: &str, channel_id: String) {
     let s = state.read().await;
@@ -121,9 +121,7 @@ pub(crate) async fn handle_send_voice_note(
     {
         let s = state.read().await;
         if let Some(peer) = s.peers.get(peer_id) {
-            let until = peer
-                .timeout_until
-                .load(Ordering::Relaxed);
+            let until = peer.timeout_until.load(Ordering::Relaxed);
             if until > 0 && now_epoch_secs() < until {
                 let peer = peer.clone();
                 drop(s);

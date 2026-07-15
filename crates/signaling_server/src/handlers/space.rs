@@ -602,9 +602,10 @@ pub async fn handle_join_space(
         let sid = space_id.clone();
         let cid = check_id.clone();
         let now = crate::now_epoch_secs() as i64;
-        let active = tokio::task::spawn_blocking(move || db_clone.load_active_timeout(&sid, &cid, now))
-            .await
-            .unwrap_or(None);
+        let active =
+            tokio::task::spawn_blocking(move || db_clone.load_active_timeout(&sid, &cid, now))
+                .await
+                .unwrap_or(None);
         if let Some(until_epoch) = active {
             let s = state.read().await;
             if let Some(peer) = s.peers.get(peer_id) {

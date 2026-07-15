@@ -736,7 +736,7 @@ impl AudioEngine {
                         }
                         Err(e) => {
                             encode_errors += 1;
-                            if encode_errors == 1 || encode_errors % 100 == 0 {
+                            if encode_errors == 1 || encode_errors.is_multiple_of(100) {
                                 log::warn!("Opus encode error (#{encode_errors}): {e}");
                             }
                         }

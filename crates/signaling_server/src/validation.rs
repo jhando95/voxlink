@@ -1,7 +1,7 @@
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
 use crate::types::State;
 use crate::LIMITS;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 
 // ─── Constants ───
 
@@ -39,9 +39,9 @@ pub(crate) fn atomic_rate_check(window_ms: &AtomicU64, counter: &AtomicU32, limi
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChunkedScreenSequenceState {
-    NewFrame,
-    ExistingFrame,
-    StaleFrame,
+    New,
+    Existing,
+    Stale,
 }
 
 pub(crate) fn chunked_screen_sequence_state(
@@ -51,10 +51,10 @@ pub(crate) fn chunked_screen_sequence_state(
     let mut current = last_sequence.load(Ordering::Relaxed);
     loop {
         if current == sequence {
-            return ChunkedScreenSequenceState::ExistingFrame;
+            return ChunkedScreenSequenceState::Existing;
         }
         if current != 0 && sequence.wrapping_sub(current) >= 0x8000_0000 {
-            return ChunkedScreenSequenceState::StaleFrame;
+            return ChunkedScreenSequenceState::Stale;
         }
         match last_sequence.compare_exchange(
             current,
@@ -62,7 +62,7 @@ pub(crate) fn chunked_screen_sequence_state(
             Ordering::Relaxed,
             Ordering::Relaxed,
         ) {
-            Ok(_) => return ChunkedScreenSequenceState::NewFrame,
+            Ok(_) => return ChunkedScreenSequenceState::New,
             Err(updated) => current = updated,
         }
     }

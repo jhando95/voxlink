@@ -145,7 +145,9 @@ mod tests {
     fn write_test_cert(dir: &std::path::Path) -> std::path::PathBuf {
         use rcgen::{CertificateParams, DnType, KeyPair};
         let mut params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
-        params.distinguished_name.push(DnType::CommonName, "localhost");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "localhost");
         let key = KeyPair::generate().unwrap();
         let cert = params.self_signed(&key).unwrap();
         let path = dir.join("leaf.pem");
@@ -158,7 +160,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = write_test_cert(dir.path());
         let info = read_cert_info(path.to_str().unwrap()).expect("parse succeeds");
-        assert!(info.subject.contains("localhost"), "subject = {}", info.subject);
+        assert!(
+            info.subject.contains("localhost"),
+            "subject = {}",
+            info.subject
+        );
         // rcgen defaults to a validity window of about 1 year; confirm > 10 days.
         assert!(
             info.secs_until_expiry > 10 * 86_400,

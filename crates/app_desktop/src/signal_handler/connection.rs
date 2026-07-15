@@ -87,7 +87,7 @@ fn remote_screen_render_budget_for_window(window_width: u32, window_height: u32)
 
 fn remote_screen_render_budget(window: &MainWindow) -> (u32, u32) {
     let size = window.window().size();
-    remote_screen_render_budget_for_window(size.width as u32, size.height as u32)
+    remote_screen_render_budget_for_window(size.width, size.height)
 }
 
 fn remote_screen_frame_fingerprint(frame_data: &[u8]) -> u64 {
@@ -488,9 +488,13 @@ pub fn check_connection(
                         }
                     }
                 });
-                // Exponential backoff with jitter: cap at 1200 ticks (~30s)
+                // Exponential backoff with jitter. The cooldown counter is
+                // decremented once per second (from the slow-update block in the
+                // tick loop), so one unit ≈ 1s and the cap is ~30s between
+                // attempts. (Previously 1200, which was ~20 min, not the ~30s
+                // the comment claimed.)
                 let mut interval = reconnect_interval.borrow_mut();
-                *interval = (*interval * 2).min(1200);
+                *interval = (*interval * 2).min(30);
                 // Add random jitter (±25% of interval) to prevent thundering herd
                 let jitter_range = (*interval / 4).max(1);
                 let jitter =
@@ -539,7 +543,10 @@ mod tls_classify_tests {
 
     #[test]
     fn classifies_timeout() {
-        assert_eq!(classify_connect_error("Connection timed out (5s)"), "timeout");
+        assert_eq!(
+            classify_connect_error("Connection timed out (5s)"),
+            "timeout"
+        );
     }
 
     #[test]

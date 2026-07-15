@@ -240,7 +240,7 @@ mod tests {
         assert!(is_blocked_ip(ip("fe80::1"))); // link-local
         assert!(is_blocked_ip(ip("fc00::1"))); // ULA
         assert!(is_blocked_ip(ip("::"))); // unspecified
-        // IPv4-mapped private address must also be blocked.
+                                          // IPv4-mapped private address must also be blocked.
         let mapped = IpAddr::V6(Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped());
         assert!(is_blocked_ip(mapped));
     }

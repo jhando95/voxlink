@@ -39,10 +39,18 @@ impl Histogram {
             name,
             help,
             buckets: [
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
             ],
             total_count: AtomicU64::new(0),
             total_sum_nanos: AtomicU64::new(0),
@@ -86,7 +94,12 @@ impl Histogram {
         // Sum in seconds.
         let sum_secs = self.total_sum_nanos.load(Ordering::Relaxed) as f64 / 1e9;
         let _ = writeln!(out, "{}_sum {}", self.name, sum_secs);
-        let _ = writeln!(out, "{}_count {}", self.name, self.total_count.load(Ordering::Relaxed));
+        let _ = writeln!(
+            out,
+            "{}_count {}",
+            self.name,
+            self.total_count.load(Ordering::Relaxed)
+        );
     }
 }
 
@@ -113,9 +126,9 @@ mod tests {
     fn observe_buckets_correctly() {
         let h = Histogram::new("test_hist", "test help");
         h.observe(0.0001); // -> bucket 0 (le=0.0005)
-        h.observe(0.003);  // -> bucket 3 (le=0.005)
-        h.observe(0.5);    // -> bucket 9 (le=0.5)
-        h.observe(5.0);    // -> +Inf bucket
+        h.observe(0.003); // -> bucket 3 (le=0.005)
+        h.observe(0.5); // -> bucket 9 (le=0.5)
+        h.observe(5.0); // -> +Inf bucket
         assert_eq!(h.buckets[0].load(Ordering::Relaxed), 1);
         assert_eq!(h.buckets[3].load(Ordering::Relaxed), 1);
         assert_eq!(h.buckets[9].load(Ordering::Relaxed), 1);

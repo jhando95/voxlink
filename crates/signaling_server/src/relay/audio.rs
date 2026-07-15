@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use tokio::net::UdpSocket;
+use crate::metrics_server::ServerMetrics;
 use crate::types::{Peer, State};
 use crate::validation::atomic_rate_check;
-use crate::metrics_server::ServerMetrics;
 use crate::LIMITS;
 use shared_types;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
 
 type Metrics = Arc<ServerMetrics>;
 
@@ -44,8 +44,10 @@ pub(crate) async fn relay_audio(
     // Without this, a moderation timeout only suppresses chat sends; voice was still
     // relayed, which made timeouts feel half-applied.
     {
-        let now = crate::now_epoch_secs() as u64;
-        let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+        let now = crate::now_epoch_secs();
+        let until = peer
+            .timeout_until
+            .load(std::sync::atomic::Ordering::Relaxed);
         if until > now {
             return;
         }
@@ -171,8 +173,10 @@ pub(crate) async fn relay_audio_udp(
     // Server-enforced timeout: drop audio while under moderation timeout (mirrors
     // the WebSocket relay above so UDP can't bypass moderation).
     {
-        let now = crate::now_epoch_secs() as u64;
-        let until = peer.timeout_until.load(std::sync::atomic::Ordering::Relaxed);
+        let now = crate::now_epoch_secs();
+        let until = peer
+            .timeout_until
+            .load(std::sync::atomic::Ordering::Relaxed);
         if until > now {
             return;
         }
@@ -183,7 +187,9 @@ pub(crate) async fn relay_audio_udp(
         &peer.audio_frame_count,
         LIMITS.max_audio_fps,
     ) {
-        metrics.udp_rate_limited_total.fetch_add(1, Ordering::Relaxed);
+        metrics
+            .udp_rate_limited_total
+            .fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -268,7 +274,9 @@ pub(crate) async fn relay_audio_udp(
         if let Some(addr) = udp_addr {
             // Send via UDP — fire-and-forget (UDP is unreliable by design)
             if let Err(_e) = udp_socket.send_to(frame, addr).await {
-                metrics.udp_send_failures_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .udp_send_failures_total
+                    .fetch_add(1, Ordering::Relaxed);
             }
             metrics.udp_frames_out_total.fetch_add(1, Ordering::Relaxed);
         } else {

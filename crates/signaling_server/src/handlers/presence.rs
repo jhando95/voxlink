@@ -3,12 +3,18 @@ use std::sync::Arc;
 
 use shared_types::{FriendPresence, SignalMessage, UserStatus};
 
+use crate::types::Db;
 use crate::{send_to, Peer, State};
 
 const MAX_WATCHED_FRIENDS: usize = 256;
 type PresencePeerMatch = (Arc<Peer>, String, Option<String>, Option<String>);
 
-pub async fn handle_watch_friend_presence(state: &State, peer_id: &str, user_ids: Vec<String>) {
+pub async fn handle_watch_friend_presence(
+    state: &State,
+    peer_id: &str,
+    user_ids: Vec<String>,
+    db: &Db,
+) {
     let peer = {
         let s = state.read().await;
         s.peers.get(peer_id).cloned()
@@ -18,13 +24,34 @@ pub async fn handle_watch_friend_presence(state: &State, peer_id: &str, user_ids
     };
 
     let mut seen = HashSet::new();
-    let watched: Vec<String> = user_ids
+    let mut watched: Vec<String> = user_ids
         .into_iter()
         .map(|user_id| user_id.trim().to_string())
         .filter(|user_id| !user_id.is_empty())
         .filter(|user_id| seen.insert(user_id.clone()))
         .take(MAX_WATCHED_FRIENDS)
         .collect();
+
+    // Only reveal presence for users the watcher is actually friends with.
+    // Presence exposes online state plus current space/channel/call — leaking it
+    // for arbitrary user IDs is a privacy oracle.
+    if let Some(db) = db {
+        let watcher_uid = peer.user_id.lock().await.clone();
+        if let Some(watcher_uid) = watcher_uid {
+            let db = db.clone();
+            let candidates = watched.clone();
+            watched = tokio::task::spawn_blocking(move || {
+                candidates
+                    .into_iter()
+                    .filter(|uid| db.friendship_exists(&watcher_uid, uid).unwrap_or(false))
+                    .collect()
+            })
+            .await
+            .unwrap_or_default();
+        } else {
+            watched.clear();
+        }
+    }
 
     {
         let mut current = peer.watched_friend_ids.lock().await;

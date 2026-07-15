@@ -766,9 +766,7 @@ pub fn setup_group_dm(
             } else {
                 items.push(uid.into());
             }
-            w.set_new_group_dm_selection(
-                std::rc::Rc::new(slint::VecModel::from(items)).into(),
-            );
+            w.set_new_group_dm_selection(std::rc::Rc::new(slint::VecModel::from(items)).into());
         });
     }
 
@@ -786,11 +784,7 @@ pub fn setup_group_dm(
                 .filter(|s| !s.is_empty())
                 .collect();
             if user_ids.len() < 2 {
-                crate::helpers::show_toast(
-                    &w,
-                    "Pick at least 2 friends to start a group",
-                    2,
-                );
+                crate::helpers::show_toast(&w, "Pick at least 2 friends to start a group", 2);
                 return;
             }
             // Clear the selection now that we've snapshotted it.
@@ -826,7 +820,8 @@ pub fn setup_group_dm(
             {
                 let mut s = state.borrow_mut();
                 s.active_group_dm_id = Some(group_id.clone());
-                s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+                s.active_direct_message_user_id = None;
+                s.active_group_dm_id = None;
                 // Clear unread on the group thread.
                 if let Some(g) = s
                     .group_dm_threads

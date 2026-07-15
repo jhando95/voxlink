@@ -15,8 +15,7 @@ fn bench_signal_from_slice_simple(c: &mut Criterion) {
     let data = br#""LeaveRoom""#;
     c.bench_function("signal_message_from_slice_simple", |b| {
         b.iter(|| {
-            let _: SignalMessage =
-                serde_json::from_slice(black_box(data)).expect("parse");
+            let _: SignalMessage = serde_json::from_slice(black_box(data)).expect("parse");
         })
     });
 }
@@ -26,8 +25,7 @@ fn bench_signal_from_slice_complex(c: &mut Criterion) {
     let data = br#"{"CreateRoom":{"user_name":"alice","password":null}}"#;
     c.bench_function("signal_message_from_slice_complex", |b| {
         b.iter(|| {
-            let _: SignalMessage =
-                serde_json::from_slice(black_box(data)).expect("parse");
+            let _: SignalMessage = serde_json::from_slice(black_box(data)).expect("parse");
         })
     });
 }

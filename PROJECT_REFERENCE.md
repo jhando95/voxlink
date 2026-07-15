@@ -35,9 +35,9 @@ sudo systemctl stop voxlink        # Stop
 - **Auth**: argon2 password hashing (legacy salted SHA-256 auto-rehashed on login)
 - **Persistence**: rusqlite with WAL + foreign_keys + busy_timeout + synchronous=NORMAL; statements use prepare_cached
 - **TLS**: rustls 0.23 (ring); CryptoProvider installed at server startup
-- **Version**: 0.12.0
-- **Tests**: ~372 (60 server bin + 312 across other crates + integration); cargo check is warning-free
-- **Local clippy**: ~62 warnings across the workspace (concentrated in `integration_tests` and `app_desktop`); strict gate not yet enforced
+- **Version**: 0.13.3
+- **Tests**: ~450 (64 server bin + 112 server integration + the rest across crates); cargo check is warning-free
+- **Lint**: zero clippy warnings + rustfmt-clean, both enforced in CI (`clippy -D warnings`, `fmt --check`)
 
 ## Workspace Crates
 

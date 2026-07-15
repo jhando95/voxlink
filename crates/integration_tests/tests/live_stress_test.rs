@@ -15,9 +15,13 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 
-// Force sequential execution — the remote server is a free-tier VM
-use std::sync::Mutex;
-static SERIAL: Mutex<()> = Mutex::new(());
+// Force sequential execution — the remote server is a free-tier VM.
+// tokio::sync::Mutex because the guard is held across the whole async test
+// body (std MutexGuard across .await blocks the runtime worker and trips
+// clippy::await_holding_lock). Bonus: no poisoning, so one panicking test
+// doesn't cascade PoisonErrors into every test after it.
+use tokio::sync::Mutex;
+static SERIAL: Mutex<()> = Mutex::const_new(());
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -108,11 +112,8 @@ impl Client {
 
     async fn drain(&mut self, dur: Duration) -> Vec<SignalMessage> {
         let mut msgs = Vec::new();
-        loop {
-            match self.recv_timeout(dur).await {
-                Some(msg) => msgs.push(msg),
-                None => break,
-            }
+        while let Some(msg) = self.recv_timeout(dur).await {
+            msgs.push(msg);
         }
         msgs
     }
@@ -161,8 +162,9 @@ fn generate_audio() -> Vec<u8> {
 
 /// Scenario 1: 10 clients connect, create rooms, join each other, exchange audio, leave.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_room_churn() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Room Churn Test (10 clients) → {url} ===");
 
@@ -230,8 +232,9 @@ async fn live_stress_room_churn() {
 
 /// Scenario 2: Create a space, 8 clients join, chat, join voice, send audio, leave.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_space_full_lifecycle() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Space Lifecycle Test (8 clients) → {url} ===");
 
@@ -400,8 +403,9 @@ async fn live_stress_space_full_lifecycle() {
 
 /// Scenario 3: Rapid connect/disconnect — 20 clients connect and immediately drop.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_rapid_disconnect() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Rapid Disconnect Test (20 clients) → {url} ===");
 
@@ -448,8 +452,9 @@ async fn live_stress_rapid_disconnect() {
 
 /// Scenario 4: Reconnect with same token — verify identity persistence.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_reconnect_identity() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Reconnect Identity Test → {url} ===");
 
@@ -491,8 +496,9 @@ async fn live_stress_reconnect_identity() {
 
 /// Scenario 5: Malformed data — garbage JSON, oversized frames, binary noise.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_malformed_data() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Malformed Data Test → {url} ===");
 
@@ -556,8 +562,9 @@ async fn live_stress_malformed_data() {
 
 /// Scenario 6: Concurrent space create + join race condition.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_space_race() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Space Race Condition Test (5 spaces × 4 joiners) → {url} ===");
 
@@ -670,8 +677,9 @@ async fn live_stress_space_race() {
 
 /// Scenario 7: Voice channel with many participants sending audio simultaneously.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_voice_channel_load() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Voice Channel Load Test (6 clients, 50 frames each) → {url} ===");
 
@@ -818,8 +826,9 @@ async fn live_stress_voice_channel_load() {
 
 /// Scenario 8: Chat message flood — many messages, edits, and deletes.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_chat_flood() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Chat Flood Test → {url} ===");
 
@@ -928,8 +937,9 @@ async fn live_stress_chat_flood() {
 
 /// Scenario 9: Friend system — add friends, send DMs, remove friends.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_friend_system() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Friend System Test → {url} ===");
 
@@ -1005,8 +1015,9 @@ async fn live_stress_friend_system() {
 
 /// Scenario 10: Everything at once — rooms, spaces, friends, chat, voice, disconnects.
 #[tokio::test]
+#[ignore = "hits a live server; set VOXLINK_SERVER and run explicitly with --ignored"]
 async fn live_stress_combined_chaos() {
-    let _lock = SERIAL.lock().unwrap();
+    let _lock = SERIAL.lock().await;
     let url = server_url();
     eprintln!("=== Combined Chaos Test (15 clients) → {url} ===");
 

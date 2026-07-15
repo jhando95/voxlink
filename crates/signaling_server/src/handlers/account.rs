@@ -1,7 +1,7 @@
-use shared_types::SignalMessage;
-use crate::types::{State, Db};
-use crate::connection::{send_to, send_error};
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, State};
 use crate::DB_TIMEOUT;
+use shared_types::SignalMessage;
 
 pub(crate) async fn handle_set_display_name(state: &State, peer_id: &str, name: String, db: &Db) {
     let trimmed = name.trim().to_string();

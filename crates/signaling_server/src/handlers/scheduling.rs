@@ -1,6 +1,6 @@
+use crate::connection::{send_error, send_to};
+use crate::types::{Db, State};
 use shared_types::SignalMessage;
-use crate::types::{State, Db};
-use crate::connection::{send_to, send_error};
 
 pub(crate) async fn handle_schedule_message(
     state: &State,
@@ -51,15 +51,15 @@ pub(crate) async fn handle_schedule_message(
         format!("sched_{:08x}", u32::from_le_bytes(buf))
     };
     drop(s);
-    let _ = db.schedule_message(
-        &schedule_id,
-        &space_id,
-        &channel_id,
-        &user_id,
-        &sender_name,
-        &content,
+    let _ = db.schedule_message(&crate::persistence::NewScheduledMessage {
+        id: &schedule_id,
+        space_id: &space_id,
+        channel_id: &channel_id,
+        sender_id: &user_id,
+        sender_name: &sender_name,
+        content: &content,
         send_at,
-    );
+    });
     let s = state.read().await;
     if let Some(p) = s.peers.get(peer_id).cloned() {
         send_to(
@@ -131,7 +131,12 @@ pub(crate) async fn handle_cancel_scheduled_message(
     }
 }
 
-pub(crate) async fn handle_set_welcome_message(state: &State, peer_id: &str, message: String, db: &Db) {
+pub(crate) async fn handle_set_welcome_message(
+    state: &State,
+    peer_id: &str,
+    message: String,
+    db: &Db,
+) {
     let s = state.read().await;
     let peer = match s.peers.get(peer_id).cloned() {
         Some(p) => p,
@@ -157,7 +162,7 @@ pub(crate) async fn handle_set_welcome_message(state: &State, peer_id: &str, mes
         send_error(state, peer_id, "Admin+ required").await;
         return;
     }
-    let members: Vec<_> = space.member_ids.iter().cloned().collect();
+    let members: Vec<_> = space.member_ids.to_vec();
     let peers_map: Vec<_> = members
         .iter()
         .filter_map(|mid| s.peers.get(mid).cloned())

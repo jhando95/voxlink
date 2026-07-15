@@ -278,9 +278,10 @@ pub fn process_signals(
             } => {
                 chat::handle_text_message(w, state, channel_id, message);
                 // Auto-fetch image attachments so they preview inline.
-                if let (Some(id), Some(name)) =
-                    (message.attachment_id.as_ref(), message.attachment_name.as_ref())
-                {
+                if let (Some(id), Some(name)) = (
+                    message.attachment_id.as_ref(),
+                    message.attachment_name.as_ref(),
+                ) {
                     if shared_types::attachment::is_image_filename(name) {
                         let net = ctx.network.clone();
                         let id = id.clone();
@@ -449,7 +450,8 @@ pub fn process_signals(
                     let mut s = state.borrow_mut();
                     s.room = Default::default();
                     s.space = None;
-                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+                    s.active_direct_message_user_id = None;
+                    s.active_group_dm_id = None;
                     s.direct_typing_users.clear();
                     s.current_view = shared_types::AppView::Home;
                 }
@@ -520,9 +522,9 @@ pub fn process_signals(
                 log::info!("Member {member_id} server-deafened: {deafened}");
                 w.set_status_text(
                     if *deafened {
-                        format!("Member server-deafened")
+                        "Member server-deafened".to_string()
                     } else {
-                        format!("Member server-undeafened")
+                        "Member server-undeafened".to_string()
                     }
                     .into(),
                 );
@@ -621,7 +623,11 @@ pub fn process_signals(
             SignalMessage::UserBlocked { user_id } => {
                 log::info!("Blocked user: {user_id}");
                 let mut cfg = config_store::load_config();
-                if !cfg.blocked_users.iter().any(|u| u.as_str() == user_id.as_str()) {
+                if !cfg
+                    .blocked_users
+                    .iter()
+                    .any(|u| u.as_str() == user_id.as_str())
+                {
                     cfg.blocked_users.push(user_id.clone());
                     let _ = config_store::save_config(&cfg);
                 }
@@ -664,7 +670,10 @@ pub fn process_signals(
                 if !viewing {
                     let mut s = state.borrow_mut();
                     if let Some(space) = s.space.as_mut() {
-                        *space.mentioned_text_channels.entry(channel_id.clone()).or_insert(0) += 1;
+                        *space
+                            .mentioned_text_channels
+                            .entry(channel_id.clone())
+                            .or_insert(0) += 1;
                     }
                 }
                 if w.get_notifications_enabled() && w.get_status_preset() != 2 {
@@ -700,8 +709,8 @@ pub fn process_signals(
                 // Auto-select the new group so the user lands in its chat.
                 {
                     let mut s = state.borrow_mut();
+                    s.active_direct_message_user_id = None;
                     s.active_group_dm_id = Some(group_id.clone());
-                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
                     s.current_view = AppView::TextChat;
                 }
                 w.set_chat_group_id(group_id.clone().into());
@@ -740,8 +749,8 @@ pub fn process_signals(
                             unread_count: 0,
                         });
                     }
+                    s.active_direct_message_user_id = None;
                     s.active_group_dm_id = Some(group_id.clone());
-                    s.active_direct_message_user_id = None; s.active_group_dm_id = None;
                     s.current_view = AppView::TextChat;
                 }
                 ui_shell::set_group_dm_threads(w, &state.borrow().group_dm_threads);
@@ -758,17 +767,11 @@ pub fn process_signals(
                 );
                 w.set_current_view(ui_shell::view_to_index(AppView::TextChat));
             }
-            SignalMessage::GroupMessage {
-                group_id,
-                message,
-            } => {
+            SignalMessage::GroupMessage { group_id, message } => {
                 let my_name = w.get_user_name().to_string();
                 let self_user_id = state.borrow().self_user_id.clone();
-                let is_active = state
-                    .borrow()
-                    .active_group_dm_id
-                    .as_deref()
-                    == Some(group_id.as_str());
+                let is_active =
+                    state.borrow().active_group_dm_id.as_deref() == Some(group_id.as_str());
                 // Update thread preview + bump unread when the group isn't open.
                 {
                     let mut s = state.borrow_mut();
@@ -996,10 +999,7 @@ pub fn process_signals(
             // v0.12: server-side read state snapshot. Overlay server values on
             // top of the local map — the server is authoritative across devices.
             SignalMessage::ReadStateSnapshot { entries } => {
-                log::info!(
-                    "Read-state snapshot received: {} entries",
-                    entries.len()
-                );
+                log::info!("Read-state snapshot received: {} entries", entries.len());
                 crate::helpers::apply_read_state_snapshot(entries);
             }
             // v0.10.0: Scheduled events
@@ -1028,7 +1028,7 @@ pub fn process_signals(
                     for i in 0..vec_model.row_count() {
                         if vec_model
                             .row_data(i)
-                            .map_or(false, |e| e.id == event_id.as_str())
+                            .is_some_and(|e| e.id == event_id.as_str())
                         {
                             vec_model.remove(i);
                             break;
@@ -1177,7 +1177,7 @@ pub fn process_signals(
                     for i in 0..vec_model.row_count() {
                         if vec_model
                             .row_data(i)
-                            .map_or(false, |e| e.word == word.as_str())
+                            .is_some_and(|e| e.word == word.as_str())
                         {
                             vec_model.remove(i);
                             break;

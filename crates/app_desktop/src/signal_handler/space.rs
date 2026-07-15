@@ -41,7 +41,8 @@ pub fn handle_space_created(
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
-        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+        s.active_direct_message_user_id = None;
+        s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = AppView::Space;
     }
@@ -212,7 +213,8 @@ pub fn handle_space_joined(
     {
         let mut s = state.borrow_mut();
         s.space = Some(space_state);
-        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+        s.active_direct_message_user_id = None;
+        s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = next_view;
     }
@@ -327,7 +329,8 @@ pub fn handle_space_deleted(
         let mut s = state.borrow_mut();
         s.room = Default::default();
         s.space = None;
-        s.active_direct_message_user_id = None; s.active_group_dm_id = None;
+        s.active_direct_message_user_id = None;
+        s.active_group_dm_id = None;
         s.direct_typing_users.clear();
         s.current_view = AppView::Home;
     }

@@ -184,8 +184,12 @@ pub async fn handle_select_direct_message(state: &State, peer_id: &str, user_id:
                     by_id.insert(m.message_id.clone(), i);
                 }
                 for (mid, emoji, user_name) in reactions {
-                    let Some(pos) = by_id.get(&mid).copied() else { continue };
-                    let Some(msg) = history.get_mut(pos) else { continue };
+                    let Some(pos) = by_id.get(&mid).copied() else {
+                        continue;
+                    };
+                    let Some(msg) = history.get_mut(pos) else {
+                        continue;
+                    };
                     if let Some(r) = msg.reactions.iter_mut().find(|r| r.emoji == emoji) {
                         if !r.users.contains(&user_name) {
                             r.users.push(user_name);
@@ -682,11 +686,12 @@ pub async fn handle_send_text_message(
             let preview_message = message_id.clone();
             let preview_space = space_id.clone();
             tokio::spawn(async move {
-                let fetched =
-                    tokio::task::spawn_blocking(move || crate::link_preview::fetch_link_preview(&url))
-                        .await
-                        .ok()
-                        .flatten();
+                let fetched = tokio::task::spawn_blocking(move || {
+                    crate::link_preview::fetch_link_preview(&url)
+                })
+                .await
+                .ok()
+                .flatten();
                 let Some(data) = fetched else {
                     return;
                 };
@@ -1535,14 +1540,25 @@ pub async fn handle_search_messages(
         return;
     };
 
-    // Verify the peer is in a space that owns this channel
+    // Verify the peer is in a space that actually owns this channel. Without the
+    // channel-ownership check, any authenticated user could search the message
+    // history of any channel in any space by supplying an arbitrary channel_id.
     {
         let s = state.read().await;
         let Some(peer) = s.peers.get(peer_id) else {
             return;
         };
-        if peer.space_id.lock().await.is_none() {
+        let Some(space_id) = peer.space_id.lock().await.clone() else {
             send_error(state, peer_id, "Not in a space").await;
+            return;
+        };
+        let owns_channel = s
+            .spaces
+            .get(&space_id)
+            .map(|space| space.channels.iter().any(|ch| ch.id == channel_id))
+            .unwrap_or(false);
+        if !owns_channel {
+            send_error(state, peer_id, "Channel not found in your space").await;
             return;
         }
     }
@@ -1731,6 +1747,29 @@ pub async fn handle_create_group_dm(
     if user_ids.is_empty() || user_ids.len() > 9 {
         send_error(state, peer_id, "Group DM requires 1-9 other members").await;
         return;
+    }
+
+    // Consent: every added member must be a friend of the creator, consistent
+    // with the friends-only gate on 1:1 DMs. Otherwise this is a spam/harassment
+    // vector (add arbitrary users to a group and push messages at them).
+    {
+        let friend_check_db = db.clone();
+        let creator = current_user_id.clone();
+        let candidates = user_ids.clone();
+        let all_friends = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            for uid in &candidates {
+                if !friend_check_db.friendship_exists(&creator, uid)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+        .await
+        .unwrap_or(Ok(false));
+        if !matches!(all_friends, Ok(true)) {
+            send_error(state, peer_id, "You can only add friends to a group DM").await;
+            return;
+        }
     }
 
     let mut all_members = vec![current_user_id.clone()];
@@ -1989,7 +2028,8 @@ pub async fn handle_get_thread(
         let mut grew = true;
         while grew {
             grew = false;
-            let mut next_frontier: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut next_frontier: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for msg in msgs.iter() {
                 let parent = match msg.reply_to_message_id.as_deref() {
                     Some(p) => p,

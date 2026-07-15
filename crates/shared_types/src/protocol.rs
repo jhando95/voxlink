@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::{
-    default_search_limit, default_voice_quality, BanInfo, ChannelInfo, FavoriteFriend,
-    FriendPresence, FriendRequest, MemberInfo, ReadStateEntry, SpaceAuditEntry, SpaceInfo,
-};
-use crate::permissions::{Permissions, RoleAssignment, RoleInfo};
-use crate::view::{ChannelType, SpaceRole, UserStatus};
 use crate::message_data::{
     AutomodWord, LinkPreview, ParticipantInfo, PublicSpaceInfo, ScheduledEvent, SpaceSearchResult,
     TextMessageData,
 };
+use crate::permissions::{Permissions, RoleAssignment, RoleInfo};
+use crate::state::{
+    default_search_limit, default_voice_quality, BanInfo, ChannelInfo, FavoriteFriend,
+    FriendPresence, FriendRequest, MemberInfo, ReadStateEntry, SpaceAuditEntry, SpaceInfo,
+};
+use crate::view::{ChannelType, SpaceRole, UserStatus};
 
 /// Messages between client and signaling server
 #[derive(Debug, Clone, Serialize, Deserialize)]

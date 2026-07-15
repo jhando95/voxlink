@@ -1,20 +1,20 @@
-use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
-use futures_util::StreamExt;
-use shared_types::SignalMessage;
-use tokio::sync::{mpsc, Mutex, Notify};
-use tokio_tungstenite::tungstenite::Message;
-use crate::types::{Peer, State, Db};
-use crate::tls::ServerStream;
 use crate::metrics_server::ServerMetrics;
 use crate::outbound;
-use crate::validation::instant_to_ms;
-use crate::validation::check_rate_limit;
 use crate::relay::audio::relay_audio;
 use crate::relay::screen::{relay_screen, relay_screen_chunk};
+use crate::tls::ServerStream;
+use crate::types::{Db, Peer, State};
+use crate::validation::check_rate_limit;
+use crate::validation::instant_to_ms;
+use futures_util::StreamExt;
+use shared_types::SignalMessage;
+use std::collections::HashSet;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::{mpsc, Mutex, Notify};
+use tokio_tungstenite::tungstenite::Message;
 
 type Metrics = Arc<ServerMetrics>;
 
@@ -56,8 +56,7 @@ pub(crate) async fn handle_connection(
 
     // Per-peer outbound lanes. The drain task is the sole owner of the sink;
     // senders never lock anything (see outbound.rs).
-    let (signaling_tx, signaling_rx) =
-        mpsc::channel(outbound::SIGNALING_LANE_CAPACITY);
+    let (signaling_tx, signaling_rx) = mpsc::channel(outbound::SIGNALING_LANE_CAPACITY);
     let (media_tx, media_rx) = mpsc::channel(outbound::MEDIA_LANE_CAPACITY);
     let disconnect = Arc::new(Notify::new());
 
@@ -164,8 +163,7 @@ pub(crate) async fn handle_connection(
                     metrics
                         .signaling_messages_total
                         .fetch_add(1, Ordering::Relaxed);
-                    metrics
-                        .per_message_counters[signal.variant_index()]
+                    metrics.per_message_counters[signal.variant_index()]
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let t0 = Instant::now();
                     crate::handle_signal(&state, &metrics, &peer_id, signal, &db).await;

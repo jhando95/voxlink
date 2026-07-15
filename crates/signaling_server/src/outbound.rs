@@ -27,15 +27,19 @@ use crate::tls::ServerStream;
 
 /// SplitSink half of a WebSocketStream<ServerStream>. The drain task is the
 /// sole owner; no Mutex anywhere on the hot path.
-pub(crate) type Tx = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<ServerStream>,
-    Message,
->;
+pub(crate) type Tx =
+    futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<ServerStream>, Message>;
 
-/// Bounded media-lane capacity. 8 frames ≈ 160ms of audio at 50fps — enough
-/// headroom for a momentary stall, small enough that drops kick in quickly
-/// when a peer is truly slow.
-pub(crate) const MEDIA_LANE_CAPACITY: usize = 8;
+/// Bounded media-lane capacity. 32 frames ≈ 640ms of audio at 50fps.
+///
+/// This must absorb *ingress bursts*, not just consumer stalls: TCP delivery
+/// bunches frames after a network hiccup, so the rx loop can hand the relay a
+/// multi-frame burst faster than the drain task is scheduled to run
+/// (empirically, capacity 8 dropped ~2/3 of a same-host 100-frame burst).
+/// Worst-case recovery staleness for a stalled-then-revived peer is the full
+/// queue (~640ms), which the client-side jitter buffer trims. Frames are
+/// shared `Bytes`, so a full queue holds refcounts, not buffer copies.
+pub(crate) const MEDIA_LANE_CAPACITY: usize = 32;
 
 /// Bounded signaling-lane capacity. Large enough that any well-behaved peer
 /// never approaches it (chat bursts, multi-peer space join fan-out), but

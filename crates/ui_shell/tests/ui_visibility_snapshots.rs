@@ -591,7 +591,8 @@ fn sample_members() -> ModelRc<MemberData> {
             nickname: s("JPH"),
             user_note: s(""),
             role_color_index: 4,
-            activity: s("Editing UI"), is_blocked_by_me: false,
+            activity: s("Editing UI"),
+            is_blocked_by_me: false,
         },
         MemberData {
             id: s("member-2"),
@@ -615,7 +616,8 @@ fn sample_members() -> ModelRc<MemberData> {
             nickname: s(""),
             user_note: s("Needs a DM follow-up"),
             role_color_index: 2,
-            activity: s("Reviewing prototype"), is_blocked_by_me: false,
+            activity: s("Reviewing prototype"),
+            is_blocked_by_me: false,
         },
         MemberData {
             id: s("member-3"),
@@ -639,7 +641,8 @@ fn sample_members() -> ModelRc<MemberData> {
             nickname: s(""),
             user_note: s(""),
             role_color_index: 0,
-            activity: s(""), is_blocked_by_me: false,
+            activity: s(""),
+            is_blocked_by_me: false,
         },
     ])
 }

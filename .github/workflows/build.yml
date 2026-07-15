@@ -1,8 +1,15 @@
-name: CI
+name: Build
+
+# Cross-platform release-build matrix. Correctness (check/test/clippy/fmt) lives
+# in ci.yml — this workflow only proves the release binaries link on every target
+# and uploads them as artifacts. It deliberately does NOT run the test suite:
+# the live_stress tests connect to the production server, so running them from CI
+# would stress prod on every push.
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -10,64 +17,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Check & Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install system deps (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libdbus-1-dev libfontconfig1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libx11-dev libpipewire-0.3-dev pkg-config
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: linux-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: linux-cargo-
-
-      - name: Check
-        run: cargo check --workspace
-
-      - name: Build server (needed by integration tests)
-        run: cargo build -p signaling_server
-
-      - name: Test workspace
-        run: cargo test --workspace --exclude ui_shell
-
-      - name: Test UI shell layout guards
-        run: cargo test -p ui_shell --test ui_visibility_layout
-
-      - name: Capture UI visibility snapshots
-        env:
-          VOXLINK_UI_WRITE_SNAPSHOTS: 1
-        run: cargo test -p ui_shell --test ui_visibility_snapshots snapshot_matrix_covers_key_views_in_narrow_and_wide_layouts -- --exact
-
-      - name: Upload UI visibility snapshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-visibility-snapshots
-          path: target/ui_visibility_snapshots/*.png
-          if-no-files-found: warn
-
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Benchmarks (dry run)
-        run: cargo bench --workspace --no-run
-
   build-matrix:
     name: Build (${{ matrix.name }})
-    needs: check
     strategy:
       fail-fast: false
       matrix:

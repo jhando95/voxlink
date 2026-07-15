@@ -32,10 +32,18 @@ impl Histogram {
             name,
             help,
             buckets: [
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
-                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
             ],
             total_count: AtomicU64::new(0),
             total_sum_nanos: AtomicU64::new(0),
@@ -130,8 +138,12 @@ mod tests {
     #[test]
     fn median_mixed_distribution() {
         let h = Histogram::new("t", "t");
-        for _ in 0..5 { h.observe(0.0001); }
-        for _ in 0..5 { h.observe(0.5); }
+        for _ in 0..5 {
+            h.observe(0.0001);
+        }
+        for _ in 0..5 {
+            h.observe(0.5);
+        }
         assert_eq!(h.median(), 0.0005);
     }
 

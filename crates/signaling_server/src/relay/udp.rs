@@ -1,13 +1,16 @@
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use crate::metrics_server::ServerMetrics;
+use crate::relay::{
+    audio::relay_audio_udp,
+    screen::{relay_screen_chunk, relay_screen_udp},
+};
+use crate::types::{Peer, State};
+use crate::UDP_PORT;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use tokio::net::UdpSocket;
 use shared_types::SignalMessage;
-use crate::types::{Peer, State};
-use crate::metrics_server::ServerMetrics;
-use crate::relay::{audio::relay_audio_udp, screen::{relay_screen_chunk, relay_screen_udp}};
-use crate::UDP_PORT;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
 
 type Metrics = Arc<ServerMetrics>;
 
@@ -78,14 +81,18 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
 
         // Minimum packet: 8-byte session token.
         if len < shared_types::UDP_SESSION_TOKEN_LEN {
-            metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+            metrics
+                .udp_invalid_packets_total
+                .fetch_add(1, Ordering::Relaxed);
             continue;
         }
 
         let token: [u8; 8] = match buf[..8].try_into() {
             Ok(t) => t,
             Err(_) => {
-                metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .udp_invalid_packets_total
+                    .fetch_add(1, Ordering::Relaxed);
                 continue;
             }
         };
@@ -101,7 +108,9 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
             let pid = match s.udp_sessions.get(&token) {
                 Some(pid) => pid.clone(),
                 None => {
-                    metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+                    metrics
+                        .udp_invalid_packets_total
+                        .fetch_add(1, Ordering::Relaxed);
                     continue; // Unknown token, silently drop
                 }
             };
@@ -129,7 +138,9 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
         }
 
         if len < 10 {
-            metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+            metrics
+                .udp_invalid_packets_total
+                .fetch_add(1, Ordering::Relaxed);
             continue;
         }
 
@@ -166,10 +177,14 @@ pub(crate) async fn run_udp_relay(state: State, metrics: Metrics, udp_socket: Ar
                 relay_screen_chunk(&state, &metrics, &peer_id, screen_data).await;
             }
             _ => {
-                metrics.udp_invalid_packets_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .udp_invalid_packets_total
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
 
-        metrics.udp_relay_latency.observe(t0.elapsed().as_secs_f64());
+        metrics
+            .udp_relay_latency
+            .observe(t0.elapsed().as_secs_f64());
     }
 }

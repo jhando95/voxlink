@@ -15,9 +15,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 /// Generate a self-signed root CA + leaf cert for "localhost".
 /// Returns (ca_cert_der, leaf_cert_pem, leaf_key_pem).
 fn make_self_signed() -> (Vec<u8>, String, String) {
-    use rcgen::{
-        BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-    };
+    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 
     // Root CA
     let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();

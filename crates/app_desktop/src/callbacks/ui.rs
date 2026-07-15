@@ -921,7 +921,7 @@ pub fn setup_quick_switcher(
             // Check if item_id matches a voice channel
             let is_voice = {
                 let state = state_ref.borrow();
-                state.space.as_ref().map_or(false, |space| {
+                state.space.as_ref().is_some_and(|space| {
                     space.channels.iter().any(|ch| {
                         ch.id == item_id_str && ch.channel_type == shared_types::ChannelType::Voice
                     })
@@ -967,9 +967,7 @@ pub fn setup_quick_switcher(
                 rt_handle.spawn(async move {
                     let net = network.lock().await;
                     let _ = net
-                        .send_signal(&shared_types::SignalMessage::SelectGroupDM {
-                            group_id: id,
-                        })
+                        .send_signal(&shared_types::SignalMessage::SelectGroupDM { group_id: id })
                         .await;
                 });
                 w.set_current_view(5);
@@ -1431,15 +1429,19 @@ pub fn setup_toggle_category_collapse(
                 &w,
                 space,
                 &query,
-                &s.favorite_friends,
-                &s.incoming_friend_requests,
-                &s.outgoing_friend_requests,
-                s.self_user_id.as_deref(),
-                &cfg.collapsed_categories,
-                &cfg.user_notes,
-                &cfg.channel_notification_overrides,
-                &cfg.favorite_channels,
-                &cfg.blocked_users,
+                &ui_shell::SpaceSocialContext {
+                    favorites: &s.favorite_friends,
+                    incoming_requests: &s.incoming_friend_requests,
+                    outgoing_requests: &s.outgoing_friend_requests,
+                    self_user_id: s.self_user_id.as_deref(),
+                },
+                &ui_shell::SpaceRenderPrefs {
+                    collapsed_categories: &cfg.collapsed_categories,
+                    user_notes: &cfg.user_notes,
+                    channel_notification_overrides: &cfg.channel_notification_overrides,
+                    favorite_channels: &cfg.favorite_channels,
+                    blocked_users: &cfg.blocked_users,
+                },
             );
         }
     });
@@ -1518,15 +1520,19 @@ pub fn setup_set_channel_notification(
                 &w,
                 space,
                 &query,
-                &s.favorite_friends,
-                &s.incoming_friend_requests,
-                &s.outgoing_friend_requests,
-                s.self_user_id.as_deref(),
-                &cfg.collapsed_categories,
-                &cfg.user_notes,
-                &cfg.channel_notification_overrides,
-                &cfg.favorite_channels,
-                &cfg.blocked_users,
+                &ui_shell::SpaceSocialContext {
+                    favorites: &s.favorite_friends,
+                    incoming_requests: &s.incoming_friend_requests,
+                    outgoing_requests: &s.outgoing_friend_requests,
+                    self_user_id: s.self_user_id.as_deref(),
+                },
+                &ui_shell::SpaceRenderPrefs {
+                    collapsed_categories: &cfg.collapsed_categories,
+                    user_notes: &cfg.user_notes,
+                    channel_notification_overrides: &cfg.channel_notification_overrides,
+                    favorite_channels: &cfg.favorite_channels,
+                    blocked_users: &cfg.blocked_users,
+                },
             );
         }
     });
@@ -1715,15 +1721,19 @@ pub fn setup_toggle_favorite_channel(
                 &w,
                 space,
                 &query,
-                &s.favorite_friends,
-                &s.incoming_friend_requests,
-                &s.outgoing_friend_requests,
-                s.self_user_id.as_deref(),
-                &cfg.collapsed_categories,
-                &cfg.user_notes,
-                &cfg.channel_notification_overrides,
-                &cfg.favorite_channels,
-                &cfg.blocked_users,
+                &ui_shell::SpaceSocialContext {
+                    favorites: &s.favorite_friends,
+                    incoming_requests: &s.incoming_friend_requests,
+                    outgoing_requests: &s.outgoing_friend_requests,
+                    self_user_id: s.self_user_id.as_deref(),
+                },
+                &ui_shell::SpaceRenderPrefs {
+                    collapsed_categories: &cfg.collapsed_categories,
+                    user_notes: &cfg.user_notes,
+                    channel_notification_overrides: &cfg.channel_notification_overrides,
+                    favorite_channels: &cfg.favorite_channels,
+                    blocked_users: &cfg.blocked_users,
+                },
             );
         }
     });
