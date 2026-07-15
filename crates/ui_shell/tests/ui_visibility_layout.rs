@@ -3,8 +3,11 @@ use std::path::PathBuf;
 
 fn read_ui_file(relative_path: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    // Normalize CRLF: Windows checkouts (core.autocrlf) would otherwise break
+    // the multi-line literal assertions below.
     fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+        .replace("\r\n", "\n")
 }
 
 fn snippet<'a>(content: &'a str, anchor: &str, radius: usize) -> &'a str {

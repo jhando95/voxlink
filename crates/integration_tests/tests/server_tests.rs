@@ -307,7 +307,8 @@ fn desktop_bin_path() -> std::path::PathBuf {
         .unwrap()
         .parent()
         .unwrap()
-        .join("target/debug/app_desktop")
+        .join("target/debug")
+        .join(format!("app_desktop{}", std::env::consts::EXE_SUFFIX))
 }
 
 // Test-only process spawner: each arg maps 1:1 onto a VOXLINK_AUTOMATION_* env
