@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.13.5 — Input-poll efficiency & trustworthy test suite
+
+Patch release: the last open item from the idle-CPU audit, plus the fix that
+lets CI stop skipping four integration tests.
+
+### In-call keyboard polling drops to 10 Hz for open-mic users
+- The OS keyboard poll (`device_query`) ran at the full 40 Hz tick rate for
+  the entire duration of every call. Only push-to-talk actually needs
+  sub-100 ms press/release latency; everything else the poll feeds (mute /
+  deafen hotkeys, soundboard combos, Esc, Ctrl+K, channel navigation) is an
+  edge-triggered toggle or shortcut.
+- In-call polling now runs at the 10 Hz out-of-call rate unless push-to-talk
+  is the active mic mode, a keybind is being captured in Settings, or the
+  quick switcher is open — those keep the full 40 Hz. Skipped ticks reuse the
+  previous OS sample, so edge detection never sees a phantom release and
+  hotkey cooldown timing is unchanged.
+- This closes the last THROTTLE item in `docs/IDLE_AUDIT.md`: a 4× reduction
+  in keyboard syscalls during calls for open-mic (default-mode) users.
+
+### Flaky-test root cause fixed; CI skip list removed
+- Integration tests reserve ephemeral ports by binding and dropping a probe
+  socket before spawning the server process. Under parallel load another test
+  could grab the port inside that window; the server then exited at startup
+  and the test burned its full 20 s timeout — the "startup timeout" flakes
+  that got `test_create_space`, `test_audio_after_leave_room`,
+  `test_channel_audio_relay`, and `test_authenticate_invalid_token_creates_new`
+  onto the CI skip list.
+- `TestServer::start` (both `server_tests.rs` and `voice_pipeline_test.rs`)
+  now detects the early server exit via `child.try_wait()` and respawns on
+  fresh ports (up to 3 attempts) instead of waiting out the timeout.
+- The four tests are back in the CI gate; only `live_stress` (needs the
+  remote production server) remains skipped. `docs/CI.md` refreshed to match
+  reality: strict clippy gate, release automation, and the simplified local
+  gate commands.
+
 ## v0.13.4 — Custom roles are now authoritative
 
 Server-side permission overhaul: the granular permission bitmask introduced

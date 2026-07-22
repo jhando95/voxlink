@@ -10,7 +10,9 @@ Runs on every push to any branch and every PR targeting `main`.
 
 Steps:
 - `cargo check --workspace --all-targets`
-- `cargo test --workspace --no-fail-fast` (with the flaky-test skip list — see the workflow file)
+- `cargo test --workspace --no-fail-fast` (skipping only `live_stress`, which needs the remote production server)
+
+The former flaky-test skip list (`test_create_space`, `test_audio_after_leave_room`, `test_channel_audio_relay`, `test_authenticate_invalid_token_creates_new`) was removed in v0.13.5. The flakiness was a port-reservation race in the test harness — the server could lose its reserved port to a parallel test and exit at startup; the harness now detects that early exit and respawns on fresh ports.
 
 If either OS fails, the gate is red. Both must pass.
 
@@ -20,7 +22,7 @@ Runs on the same triggers as `build-test`.
 
 Steps:
 - `cargo fmt --all -- --check` — fail on formatting drift.
-- `cargo clippy --workspace --all-targets` — fail if the total warning count exceeds **63** (the baseline at M10 completion).
+- `cargo clippy --workspace --all-targets -- -D warnings` — any clippy warning fails the gate (the workspace reached zero warnings in v0.13.3).
 
 ### `windows-installer` (windows-latest, tag-gated)
 
@@ -29,7 +31,7 @@ Runs ONLY on tag pushes matching `v*` (e.g., `v0.11.0`). Produces two downloadab
 - `Voxlink-Setup-<version>.exe` — Inno Setup installer
 - `Voxlink-<version>/` — portable zip contents
 
-Artifacts appear under the workflow run's "Artifacts" section in the GitHub Actions UI. They are NOT attached to a GitHub Release automatically; release-page automation is a separate future milestone.
+Artifacts appear under the workflow run's "Artifacts" section in the GitHub Actions UI. In addition, the separate `release.yml` ("Build & Release") workflow runs on the same tag push: it builds the Windows installer + portable zip, optionally code-signs them, and attaches both to a GitHub Release page automatically.
 
 ## Triggers
 
@@ -46,9 +48,9 @@ Artifacts appear under the workflow run's "Artifacts" section in the GitHub Acti
 3. Open the red step — the last ~50 lines of output usually pinpoint the failure.
 4. If a test failed, look for `test ... FAILED` in the `cargo test` output; the panic message follows.
 
-## Updating the clippy threshold
+## Clippy policy
 
-The threshold lives inline in `.github/workflows/ci.yml` under the `lint` job's `clippy (threshold 63)` step. If a genuine new warning lands (e.g., from a Rust compiler bump adding a new lint), update both the threshold in `ci.yml` and this document. Commit together with a justification.
+The workspace holds a zero-warning bar: `cargo clippy --workspace --all-targets -- -D warnings` must pass. If a toolchain bump introduces a genuinely new lint that needs time to fix, prefer fixing it in the same commit; only `#[allow]` with an inline justification as a last resort.
 
 ## Bumping the Rust toolchain
 
@@ -72,10 +74,8 @@ Mirror the CI gate before pushing:
 
 ```
 cargo check --workspace --all-targets
-cargo test --workspace --no-fail-fast -- \
-    --skip live_stress --skip test_create_space \
-    --skip test_audio_after_leave_room --skip test_channel_audio_relay \
-    --skip test_authenticate_invalid_token_creates_new
+cargo build -p signaling_server -p app_desktop   # test harness spawns these
+cargo test --workspace --no-fail-fast -- --skip live_stress
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets 2>&1 | grep -cE "^warning:"   # must be ≤ 63
+cargo clippy --workspace --all-targets -- -D warnings
 ```

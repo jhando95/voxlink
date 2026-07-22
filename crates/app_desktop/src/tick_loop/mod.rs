@@ -111,6 +111,8 @@ pub fn start(
     let peer_level_cache: Rc<RefCell<HashMap<String, f32>>> = Rc::new(RefCell::new(HashMap::new()));
     let last_input_time = Rc::new(RefCell::new(Instant::now()));
     let prev_keys_for_idle: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
+    // Last OS keyboard sample, reused between throttled polls (see keyboard input below)
+    let last_keys: Rc<RefCell<Vec<Keycode>>> = Rc::new(RefCell::new(Vec::new()));
     let is_idle = Rc::new(RefCell::new(false));
     let soundboard_was_held: Rc<RefCell<Vec<bool>>> = {
         let count = soundboard_combos.borrow().len();
@@ -211,8 +213,23 @@ pub fn start(
             let is_connected = w.get_is_connected();
             let listening_shared = w.get_listening_keybind();
             let need_keys = is_connected || !listening_shared.is_empty();
+            // Only push-to-talk needs press/release latency at the full 40Hz
+            // in-call rate; everything else here is an edge-triggered toggle or
+            // shortcut. In-call polling drops to the 10Hz out-of-call rate unless
+            // PTT is the mic mode, a keybind is being captured, or the quick
+            // switcher is open. Skipped ticks reuse the previous sample so edge
+            // detection never sees a phantom release.
+            let full_rate_poll = !listening_shared.is_empty()
+                || w.get_quick_switcher_visible()
+                || (in_call && voice.borrow().mic_mode == MicMode::PushToTalk);
             let keys = if need_keys {
-                device_state.get_keys()
+                if full_rate_poll || !in_call || tick.is_multiple_of(4) {
+                    let sampled = device_state.get_keys();
+                    last_keys.borrow_mut().clone_from(&sampled);
+                    sampled
+                } else {
+                    last_keys.borrow().clone()
+                }
             } else {
                 Vec::new()
             };

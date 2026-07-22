@@ -50,15 +50,15 @@ jobs:
       - name: build binaries needed by integration tests
         run: cargo build -p signaling_server -p app_desktop
 
-      - name: cargo test (skip flaky)
+      # live_stress tests hit the remote production server and cannot run in CI.
+      # The former flaky-test skip list was removed in v0.13.5: the startup
+      # timeouts were a port-reservation race in the test harness, fixed by
+      # detecting early server exit and respawning on fresh ports.
+      - name: cargo test
         shell: bash
         run: |
           cargo test --workspace --no-fail-fast -- \
-            --skip live_stress \
-            --skip test_create_space \
-            --skip test_audio_after_leave_room \
-            --skip test_channel_audio_relay \
-            --skip test_authenticate_invalid_token_creates_new
+            --skip live_stress
 
   lint:
     name: lint

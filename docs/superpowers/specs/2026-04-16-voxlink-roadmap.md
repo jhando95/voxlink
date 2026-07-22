@@ -1,6 +1,6 @@
 # Voxlink Roadmap — April 2026
 
-**Status:** Supersedes `docs/roadmap-2026-03.md` (which referenced v0.9.0 as next milestone). **Current shipping version: v0.12.0** — see `CHANGELOG.md` for the v0.11 → v0.12 deltas. The audit-driven sweep (waves 1–9) landed the entire P0/P1 short-list plus Group DMs end-to-end, server-side read state, the limits framework, and a perf pass over the audio relay + SQLite hot paths.
+**Status:** Supersedes `docs/roadmap-2026-03.md` (which referenced v0.9.0 as next milestone). **Current shipping version: v0.13.5** — see `CHANGELOG.md`. The v0.13.x series diverged from the "Intelligence Layer" theme planned below: it instead delivered the granular role-management API (v0.13.0), UI overhaul (v0.13.1–.2), a zero-clippy/green-CI hygiene bar (v0.13.3), authoritative custom-role permission gating across all 23 server capability checks (v0.13.4), and input-poll efficiency + a trustworthy (skip-list-free) test suite (v0.13.5). The Intelligence Layer features (transcription, captions, voice-channel text chat, semantic search) remain the next planned theme, now targeting v0.14, with "Trust & Extension" following.
 
 ## Goal
 

@@ -11,6 +11,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 // ─── Test Infrastructure ───
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const STARTUP_ATTEMPTS: u32 = 3;
 
 struct TestServer {
     child: Child,
@@ -20,6 +21,21 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        // The reserved ports below can be stolen by a parallel test between the
+        // probe-socket drop and the server binding them, in which case the
+        // server exits at startup. Detect that early exit and retry on fresh
+        // ports instead of burning the whole startup timeout.
+        let mut last_err = String::new();
+        for _ in 0..STARTUP_ATTEMPTS {
+            match Self::try_start().await {
+                Ok(server) => return server,
+                Err(e) => last_err = e,
+            }
+        }
+        panic!("Server did not start after {STARTUP_ATTEMPTS} attempts: {last_err}");
+    }
+
+    async fn try_start() -> Result<Self, String> {
         // Reserve both WS (TCP) and UDP ports to prevent collisions in parallel tests.
         // Bind both, extract ports, then drop so the server process can bind them.
         let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -57,7 +73,7 @@ impl TestServer {
                 )
             });
 
-        let server = TestServer {
+        let mut server = TestServer {
             child,
             port,
             db_path,
@@ -66,19 +82,22 @@ impl TestServer {
         // Wait for server to be ready by trying to connect
         let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
         loop {
+            if let Ok(Some(status)) = server.child.try_wait() {
+                return Err(format!(
+                    "server exited during startup ({status}) — port {port} was likely stolen by a parallel test"
+                ));
+            }
             if tokio::time::Instant::now() > deadline {
-                panic!(
-                    "Server did not start within {} seconds on port {port}",
+                return Err(format!(
+                    "server did not accept on port {port} within {} seconds",
                     STARTUP_TIMEOUT.as_secs()
-                );
+                ));
             }
             match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-                Ok(_) => break,
+                Ok(_) => return Ok(server),
                 Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
             }
         }
-
-        server
     }
 
     async fn connect(&self) -> TestClient {
