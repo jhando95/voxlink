@@ -305,14 +305,21 @@ fn assert_snapshot_has_content(
     let edges = edge_ratio(snapshot, full);
     let deviation = luma_deviation(snapshot, full);
     let min_deviation = match scenario {
-        UiScenario::IncomingCallOverlay => 7.0,
-        // Chat narrow-dark intentionally flattened by the Discord-modeled redesign:
-        // no drop-shadow depth, clean sidebar + composer. Lower bound matches the
-        // observed-but-still-readable tonal range.
-        UiScenario::Chat => 7.0,
+        // Wide layouts spread the flat v0.14 canvas around the overlay, so the
+        // full-frame average drops (measured ~4.2/4.1; blank frames ≈ 0-2).
+        UiScenario::IncomingCallOverlay => 3.5,
+        // The v0.14 graphite redesign flattens chat + space surfaces on
+        // purpose; observed healthy renders measure ~5-7, blank ones ~0-2.
+        UiScenario::Chat => 4.25,
         UiScenario::ChatThread => 4.5,
-        UiScenario::ChatMentionPopup => 6.25,
-        UiScenario::ToastBanner | UiScenario::ProfilePopup | UiScenario::WelcomeOverlay => 6.0,
+        UiScenario::ChatMentionPopup => 4.25,
+        UiScenario::Space => 6.0,
+        UiScenario::ToastBanner | UiScenario::ProfilePopup => 6.0,
+        UiScenario::WelcomeOverlay => 3.5,
+        // v0.14 graphite redesign: the login overlay sits on a deliberately
+        // flat canvas, so the full-frame average drops in the wide layout. The
+        // overlay's own region expectation still demands 10.0.
+        UiScenario::LoginOverlay => 4.5,
         _ => 8.0,
     };
 
@@ -324,8 +331,10 @@ fn assert_snapshot_has_content(
         theme.label(),
         buckets
     );
+    // 0.006 since the v0.14 graphite redesign — hairline-only borders produce
+    // fewer hard edges (quick-switcher wide measures ~0.0076; blank ≈ 0).
     assert!(
-        edges >= 0.008,
+        edges >= 0.006,
         "{} {} {} rendered too few edges: {:.4}",
         scenario.label(),
         width.label(),
@@ -954,7 +963,8 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
             rect: RelativeRect::new(0.22, 0.22, 0.78, 0.84),
             min_edge_ratio: 0.008,
             min_color_buckets: 8,
-            min_luma_deviation: 10.0,
+            // 9.0 since the v0.14 graphite redesign flattened the panel.
+            min_luma_deviation: 9.0,
         }],
         (UiScenario::Home, LayoutWidth::Narrow) => vec![
             RegionExpectation {
@@ -978,7 +988,8 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
                 rect: RelativeRect::new(0.04, 0.18, 0.58, 0.42),
                 min_edge_ratio: 0.008,
                 min_color_buckets: 8,
-                min_luma_deviation: 10.0,
+                // 6.5 since the v0.14 graphite redesign (measured ~7.8).
+                min_luma_deviation: 6.5,
             },
             RegionExpectation {
                 name: "quick-call",
@@ -994,7 +1005,8 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
                 rect: RelativeRect::new(0.04, 0.02, 0.96, 0.18),
                 min_edge_ratio: 0.008,
                 min_color_buckets: 8,
-                min_luma_deviation: 10.0,
+                // 7.0 since the v0.14 graphite redesign (measured ~8.4).
+                min_luma_deviation: 7.0,
             }]
         }
         (UiScenario::System, LayoutWidth::Narrow) => vec![RegionExpectation {
@@ -1017,7 +1029,9 @@ fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpec
                 rect: RelativeRect::new(0.04, 0.08, 0.72, 0.18),
                 min_edge_ratio: 0.010,
                 min_color_buckets: 8,
-                min_luma_deviation: 10.0,
+                // 4.5 since the v0.14 graphite redesign flattened the field
+                // (measured ~5.6 wide / ~9.9 narrow).
+                min_luma_deviation: 4.5,
             }]
         }
         (UiScenario::Chat, LayoutWidth::Narrow) => {

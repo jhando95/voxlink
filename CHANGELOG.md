@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.14.0 — Visual redesign: quiet graphite, violet accent
+
+Complete visual overhaul in response to the shell reading as janky and
+cluttered on Windows: clipped text boxes, stray lines through text, three
+competing button styles, native gray input chrome, and pill/status overload.
+
+### One design system
+- **Neutral graphite base for every theme preset** (dark + light). The seven
+  presets are now accent-hue variants (violet default, green, blue, mint,
+  amber, steel, cyan) on one tuned base instead of seven full-canvas tints —
+  the biggest source of visual inconsistency. Per-preset shape gimmicks
+  (radius, border weights, uppercase buttons, logo art) are gone; one radius
+  scale (12/8), 1px hairlines, tonal depth only. Brand accent returns to
+  Voxlink violet.
+- **One button language.** Filled accent/danger, outline default, tonal soft,
+  text ghost. Icon plates inside buttons removed. Buttons hug their content —
+  the full-width slab primaries are gone (buttons and status pills now default
+  to `horizontal-stretch: 0`, which also kills the stretched-pill borders that
+  read as random lines through text).
+- **Custom-drawn inputs on the raw `TextInput` primitive.** The std `LineEdit`
+  painted platform-style chrome that fought the theme and clipped descenders
+  at some DPI/font combinations — the "cut off text boxes". Same API,
+  plus `forward-focus` and full-field click-to-focus. The std-widget style is
+  pinned to `fluent-dark` in build.rs so the remaining std widgets (multi-line
+  chat composer, scrollbars) match the theme on every platform.
+- **Shell simplified.** TopBar is one flat 52px bar with a single hairline —
+  the multi-hue gradient underline (the most-reported "line through text") is
+  gone, as is the breadcrumb strip below it. The rail drops the SESSION
+  marketing card (whose fixed-width content clipped mid-word), uses compact
+  34px nav rows via a shared RailItem component, keeps a one-row live-room
+  shortcut, and ends in a flat user footer. Reconnect banner is now a quiet
+  warning strip instead of a red alarm.
+- **Views swept**: hero cards trimmed, redundant description lines and counter
+  pills removed, profile forms pair input + compact action, chat composer
+  surface flattened, welcome/onboarding restyled, theme-preset cards show the
+  new accent swatches.
+
+### Tests
+- Source-shape and snapshot tests recalibrated to the intentionally flatter
+  design: measured-value-informed luma/edge floors (blank frames still fail by
+  a wide margin), new assertions locking in the TextInput-based field and
+  hugging action buttons.
+- New `VOXLINK_START_VIEW` env var opens the app on a given view — used for
+  screenshot-driven visual review, harmless in production.
+
 ## v0.13.5 — Input-poll efficiency & trustworthy test suite
 
 Patch release: the last open item from the idle-CPU audit, plus the fix that

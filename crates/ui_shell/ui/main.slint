@@ -1,6 +1,6 @@
 import { AuditEntryData, AutomodWordData, ChatMessage, ChannelData, DirectMessageThreadData, FriendData, FriendRequestData, GroupDMThreadData, MemberData, ParticipantData, PerfData, PublicSpaceData, SavedServerData, ScheduledEventData, ShareSourceData, SoundboardClipData, SpaceData, StartupPhaseData, VxTheme } from "theme.slint";
 import { VxButton, VxCard, VxInput } from "components.slint";
-import { BottomNav, NavBreadcrumb, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
+import { BottomNav, TopBar, VoiceCallBar, WorkspaceRail } from "shell.slint";
 import { ChatView } from "views/chat_view.slint";
 import { HomeView } from "views/home_view.slint";
 import { RoomView } from "views/room_view.slint";
@@ -597,38 +597,20 @@ export component MainWindow inherits Window {
                         nav-toggle => { root.sidebar-expanded = !root.sidebar-expanded; }
                     }
 
+                    // Quiet offline strip — no red alarm border, no shouting.
                     if !root.is-connected && root.current-view != 0 : Rectangle {
-                        height: 28px;
-                        background: VxTheme.danger.transparentize(0.85);
-                        border-color: VxTheme.danger.transparentize(0.6);
-                        border-width: 1px;
+                        height: 26px;
+                        background: VxTheme.warning-soft;
                         HorizontalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
                             alignment: center;
-                            spacing: 8px;
                             Text {
-                                text: "Connection lost — attempting to reconnect...";
-                                color: VxTheme.danger;
-                                font-size: 12px;
-                                font-weight: 700;
+                                text: "Offline — reconnecting…";
+                                color: VxTheme.warning;
+                                font-size: 11px;
+                                font-weight: 500;
                                 vertical-alignment: center;
                             }
                         }
-                    }
-
-                    // Hide the breadcrumb in the chat view — the chat header already
-                    // shows the channel, so the breadcrumb is redundant there.
-                    if root.current-view != 5 : NavBreadcrumb {
-                        current-view: root.current-view;
-                        previous-view: root.previous-view;
-                        space-name: root.current-space-name;
-                        channel-name: root.chat-channel-name;
-                        room-code: root.room-code;
-                        in-space-channel: root.in-space-channel;
-                        chat-is-dm: root.chat-is-direct-message;
-                        chat-back-view: root.chat-back-view;
-                        navigate(view-index) => { root.navigate(view-index); }
                     }
 
                     Rectangle {

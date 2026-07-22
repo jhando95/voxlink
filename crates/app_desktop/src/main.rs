@@ -291,6 +291,14 @@ fn main() {
         log::info!("Auto-connect disabled by environment");
     }
 
+    // Dev affordance: open directly on a given view (0=Home 1=Room 2=Settings
+    // 3=System 4=Space 5=TextChat) for visual review without click-driving.
+    if let Ok(v) = std::env::var("VOXLINK_START_VIEW") {
+        if let Ok(v) = v.parse::<i32>() {
+            window.set_current_view(v.clamp(0, 5));
+        }
+    }
+
     // Rich presence (opt-in, default off): broadcast the foreground app as
     // activity. The poll task idles cheaply until enabled; the settings UI
     // flips the shared toggle/allowlist at runtime.

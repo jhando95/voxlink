@@ -120,12 +120,11 @@ export component SpaceView inherits Rectangle {
                         font-size: 24px;
                         font-weight: 700;
                     }
-                    Text {
-                        text: root.space-description != ""
-                            ? root.space-description
-                            : "Channels, members, and moderation in one focused space.";
+                    if root.space-description != "" : Text {
+                        text: root.space-description;
                         color: VxTheme.text-muted;
                         font-size: 12px;
+                        overflow: elide;
                     }
                     HorizontalLayout {
                         spacing: 8px;
@@ -144,15 +143,14 @@ export component SpaceView inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: 10px;
+                    alignment: end;
                     VxButton {
                         label: "Back";
-                        glyph: "BK";
-                        soft: true;
+                        ghost: true;
                         clicked => { root.navigate(0); }
                     }
                     VxButton {
                         label: root.invite-copied ? "Copied!" : "Copy invite";
-                        glyph: root.invite-copied ? "OK" : "CP";
                         accent: true;
                         clicked => {
                             root.copy-invite-code();
@@ -162,24 +160,10 @@ export component SpaceView inherits Rectangle {
                 }
             }
 
-            HorizontalLayout {
-                spacing: 8px;
-                VxInput {
-                    prominent: true;
-                    text <=> root.search-query;
-                    placeholder: "Search channels and members...";
-                    horizontal-stretch: 1;
-                }
-                VxStatusPill {
-                    label: root.visible-text-channels + " text";
-                    tone: VxTheme.accent;
-                    fill: VxTheme.accent-subtle;
-                }
-                VxStatusPill {
-                    label: root.visible-voice-channels + " voice";
-                    tone: VxTheme.success;
-                    fill: VxTheme.success-dim;
-                }
+            VxInput {
+                prominent: true;
+                text <=> root.search-query;
+                placeholder: "Search channels and members...";
             }
 
             if root.wide : HorizontalLayout {
@@ -1260,10 +1244,9 @@ export component SpaceView inherits Rectangle {
                             padding: 14px;
                             spacing: 8px;
                             SectionLabel { text: "YOUR PROFILE"; }
-                            VerticalLayout {
+                            HorizontalLayout {
                                 spacing: 8px;
                                 VxInput {
-                                    prominent: true;
                                     text <=> root.user-status-input;
                                     placeholder: "Set status";
                                     horizontal-stretch: 1;
@@ -1276,9 +1259,8 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Set";
-                                    glyph: "ST";
+                                    small: true;
                                     soft: true;
-                                    horizontal-stretch: 1;
                                     enabled: root.user-status-input != "";
                                     clicked => {
                                         if root.user-status-input != "" {
@@ -1288,10 +1270,9 @@ export component SpaceView inherits Rectangle {
                                     }
                                 }
                             }
-                            VerticalLayout {
+                            HorizontalLayout {
                                 spacing: 8px;
                                 VxInput {
-                                    prominent: true;
                                     text <=> root.user-bio-input;
                                     placeholder: "Set bio";
                                     horizontal-stretch: 1;
@@ -1304,9 +1285,8 @@ export component SpaceView inherits Rectangle {
                                 }
                                 VxButton {
                                     label: "Save";
-                                    glyph: "SV";
+                                    small: true;
                                     soft: true;
-                                    horizontal-stretch: 1;
                                     enabled: root.user-bio-input != "";
                                     clicked => {
                                         if root.user-bio-input != "" {
@@ -1375,6 +1355,7 @@ export component SpaceView inherits Rectangle {
                                     : "No members match this filter.";
                                 color: VxTheme.text-muted;
                                 font-size: 12px;
+                                wrap: word-wrap;
                             }
 
                             for member in root.members : Rectangle {

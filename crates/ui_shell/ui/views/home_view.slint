@@ -63,32 +63,11 @@ export component HomeView inherits Rectangle {
                     spacing: 14px;
                     alignment: center;
 
-                    Rectangle {
-                        width: root.wide ? 72px : 60px;
-                        height: root.wide ? 72px : 60px;
-                        border-radius: VxTheme.radius-card;
-                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
-                        border-color: VxTheme.accent-border;
-                        border-width: 1px;
-                        clip: true;
-
-                        Rectangle {
-                            width: parent.width;
-                            height: 2px;
-                            background: VxTheme.accent;
-                            opacity: 0.85;
-                        }
-
-                        VxLogo {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            logo-size: root.wide ? 42px : 34px;
-                        }
-                    }
+                    VxLogo { logo-size: root.wide ? 56px : 44px; }
 
                     VerticalLayout {
                         alignment: center;
-                        spacing: 8px;
+                        spacing: 6px;
                         horizontal-stretch: 1;
 
                         Text {
@@ -96,22 +75,14 @@ export component HomeView inherits Rectangle {
                                 ? "Welcome back, " + root.user-name
                                 : "Voice without the drag";
                             color: VxTheme.text-primary;
-                            font-size: root.wide ? 25px : 22px;
-                            font-weight: VxTheme.is-noir ? 500 : 700;
-                            wrap: word-wrap;
-                        }
-
-                        Text {
-                            text: "Fast native calls, persistent spaces, and direct chat in a calm desktop shell that stays out of the way.";
-                            color: VxTheme.text-secondary;
-                            font-size: 12px;
+                            font-size: root.wide ? 22px : 19px;
+                            font-weight: 600;
                             wrap: word-wrap;
                         }
 
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: start;
-                            StatusDot { active: root.is-connected; }
                             VxStatusPill {
                                 label: root.status-text;
                                 tone: root.is-connected ? VxTheme.success :
@@ -119,20 +90,8 @@ export component HomeView inherits Rectangle {
                                 fill: root.is-connected ? VxTheme.success-dim :
                                       root.status-text == "Connecting..." ? VxTheme.warning-soft : VxTheme.bg-soft;
                             }
-                            if root.spaces.length > 0 : VxStatusPill {
-                                label: root.spaces.length + " spaces";
-                                tone: VxTheme.accent;
-                                fill: VxTheme.accent-subtle;
-                            }
                             if root.unread-direct-messages-count > 0 : VxStatusPill {
                                 label: root.unread-direct-messages-count + " unread";
-                                tone: VxTheme.accent;
-                                fill: VxTheme.accent-subtle;
-                            }
-                            if root.direct-message-threads.length > 0 : VxStatusPill {
-                                label: root.direct-message-threads.length + " chats";
-                                tone: VxTheme.text-secondary;
-                                fill: VxTheme.bg-soft;
                             }
                         }
                     }
@@ -175,7 +134,7 @@ export component HomeView inherits Rectangle {
 
                     Text {
                         text: "Welcome to Voxlink";
-                        color: VxTheme.accent;
+                        color: VxTheme.text-primary;
                         font-size: 20px;
                         font-weight: 700;
                     }
@@ -327,11 +286,14 @@ export component HomeView inherits Rectangle {
                         }
                     }
 
-                    VxButton {
-                        label: "Got it!";
-                        accent: true;
-                        clicked => {
-                            root.dismiss-welcome();
+                    HorizontalLayout {
+                        alignment: end;
+                        VxButton {
+                            label: "Got it";
+                            accent: true;
+                            clicked => {
+                                root.dismiss-welcome();
+                            }
                         }
                     }
                 }
@@ -453,23 +415,24 @@ export component HomeView inherits Rectangle {
 
                             HorizontalLayout {
                                 spacing: 10px;
+                                alignment: end;
+                                if !root.is-connected : VxButton {
+                                    label: "Find on LAN";
+                                    ghost: true;
+                                    clicked => { root.find-server(); }
+                                }
                                 if !root.is-connected : VxButton {
                                     label: root.status-text == "Connecting..." ? "Connecting..." : "Connect";
                                     accent: true;
                                     enabled: root.status-text != "Connecting...";
-                                    horizontal-stretch: 1;
+                                    min-width: 140px;
                                     clicked => { root.connect-server(); }
                                 }
                                 if root.is-connected : VxButton {
                                     label: "Disconnect";
                                     danger: true;
-                                    horizontal-stretch: 1;
+                                    min-width: 140px;
                                     clicked => { root.disconnect-server(); }
-                                }
-                                if !root.is-connected : VxButton {
-                                    label: "Find on LAN";
-                                    soft: true;
-                                    clicked => { root.find-server(); }
                                 }
                             }
 

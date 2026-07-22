@@ -23,8 +23,11 @@ fn snippet<'a>(content: &'a str, anchor: &str, radius: usize) -> &'a str {
 fn shared_input_supports_prominent_visibility_variant() {
     let components = read_ui_file("ui/components.slint");
     assert!(components.contains("in property <bool> prominent: false;"));
-    assert!(components.contains("height: (root.prominent ? 56px : 48px) * VxTheme.s;"));
-    assert!(components.contains("font-size: (root.prominent ? 15px : 14px) * VxTheme.s;"));
+    assert!(components.contains("height: (root.prominent ? 44px : 36px) * VxTheme.s;"));
+    assert!(components.contains("font-size: (root.prominent ? 14px : 13px) * VxTheme.s;"));
+    // The field is custom-drawn on the TextInput primitive — std LineEdit
+    // painted platform chrome that fought the theme and clipped descenders.
+    assert!(components.contains("inner := TextInput {"));
 }
 
 #[test]
@@ -61,13 +64,15 @@ fn compact_forms_keep_full_width_inputs_and_actions() {
     assert!(space_ui.contains("text <=> root.new-channel-name;\n                                    placeholder: \"channel-name\";\n                                    horizontal-stretch: 1;"));
     assert!(space_ui.contains("label: \"Create\";\n                                    accent: true;\n                                    horizontal-stretch: 1;"));
 
+    // Profile rows pair a stretching input with a hugging action button —
+    // full-width action slabs were part of the pre-v0.14 jank.
     assert!(space_ui.contains("text <=> root.user-status-input;"));
     assert!(space_ui.contains("text <=> root.user-status-input;\n                                    placeholder: \"Set status\";\n                                    horizontal-stretch: 1;"));
-    assert!(space_ui.contains("label: \"Set\";\n                                    glyph: \"ST\";\n                                    soft: true;\n                                    horizontal-stretch: 1;"));
+    assert!(space_ui.contains("label: \"Set\";\n                                    small: true;\n                                    soft: true;"));
 
     assert!(space_ui.contains("text <=> root.user-bio-input;"));
     assert!(space_ui.contains("text <=> root.user-bio-input;\n                                    placeholder: \"Set bio\";\n                                    horizontal-stretch: 1;"));
-    assert!(space_ui.contains("label: \"Save\";\n                                    glyph: \"SV\";\n                                    soft: true;\n                                    horizontal-stretch: 1;"));
+    assert!(space_ui.contains("label: \"Save\";\n                                    small: true;\n                                    soft: true;"));
 
     let settings_ui = read_ui_file("ui/views/settings_view.slint");
     assert!(settings_ui.contains("text <=> root.new-clip-path;"));

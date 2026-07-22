@@ -1,4 +1,3 @@
-import { LineEdit } from "std-widgets.slint";
 import { VxTheme } from "theme.slint";
 import { VxIcons } from "icons.slint";
 
@@ -83,47 +82,35 @@ export component VxButton inherits Rectangle {
     in property <bool> soft: false;
     callback clicked();
 
-    height: (root.small ? 34px : 40px) * VxTheme.s;
-    min-width: (root.small ? 56px : 92px) * VxTheme.s;
-    border-radius: root.small ? (10px * VxTheme.s) : VxTheme.radius-control;
+    // One button language: filled (accent/danger), outline (default),
+    // tonal (soft), and text-only (ghost). No icon plates, no edge sheens.
+    property <color> fg: !root.enabled ? VxTheme.text-muted :
+        root.accent || root.danger ? #ffffff :
+        root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
+        VxTheme.text-primary;
+
+    height: (root.small ? 30px : 36px) * VxTheme.s;
+    min-width: (root.small ? 56px : 80px) * VxTheme.s;
+    // Buttons hug their content; call sites opt in to stretching explicitly.
+    horizontal-stretch: 0;
+    border-radius: VxTheme.radius-control;
     clip: true;
-    background: root.ghost ? transparent :
-                !root.enabled ? VxTheme.bg-raised :
+    background: !root.enabled ? (root.ghost ? transparent : VxTheme.bg-raised) :
                 touch.pressed ? (root.danger ? VxTheme.danger-pressed :
                                 root.accent ? VxTheme.accent-pressed :
-                                root.soft ? VxTheme.surface-active : VxTheme.bg-raised) :
+                                root.soft ? VxTheme.surface-active : VxTheme.btn-hover-bg) :
                 touch.has-hover ? (root.danger ? VxTheme.danger-hover :
                                   root.accent ? VxTheme.accent-hover :
-                                  root.soft ? VxTheme.card-hover-bg : VxTheme.btn-hover-bg) :
+                                  root.soft ? VxTheme.btn-hover-bg : VxTheme.btn-hover-bg) :
                 root.danger ? VxTheme.danger :
                 root.accent ? VxTheme.accent :
-                root.soft ? VxTheme.bg-soft : VxTheme.bg-raised;
-    border-color: root.ghost ? transparent :
-                  root.danger ? VxTheme.danger :
-                  root.accent ? VxTheme.accent-border :
-                  root.soft ? VxTheme.border-strong : VxTheme.border-subtle;
-    border-width: root.ghost ? 0px : VxTheme.btn-border-width;
+                root.soft ? VxTheme.bg-soft : transparent;
+    border-color: root.accent || root.danger || root.soft || !root.enabled ? transparent :
+                  root.ghost ? transparent : VxTheme.border-strong;
+    border-width: 1px;
 
     animate background { duration: VxTheme.dur-fast; easing: ease-out; }
     animate border-color { duration: VxTheme.dur-fast; easing: ease-out; }
-
-    // Lean depth: a single 1px top edge-highlight (no glossy gradient sheen).
-    Rectangle {
-        width: parent.width;
-        height: 1px;
-        background: root.accent || root.danger ? #ffffff30 : VxTheme.edge-highlight;
-        opacity: root.ghost || !root.enabled ? 0 : 1;
-    }
-
-    // ...grounded by a hairline bottom edge.
-    Rectangle {
-        y: parent.height - 1px;
-        width: parent.width;
-        height: 1px;
-        background: root.ghost ? transparent :
-            (root.accent || root.danger ? #00000022 : VxTheme.edge-shadow);
-        opacity: root.enabled ? 1.0 : 0.45;
-    }
 
     touch := TouchArea {
         mouse-cursor: root.enabled ? pointer : default;
@@ -139,36 +126,22 @@ export component VxButton inherits Rectangle {
         padding-right: root.small ? 10px : 14px;
 
         if root.glyph != "" || (root.icon-source.width > 0 && root.icon-source.height > 0) : Rectangle {
-            width: root.small ? 16px : 18px;
-            height: root.small ? 16px : 18px;
-            border-radius: root.small ? 4px : 5px;
-            background: root.ghost ? VxTheme.bg-soft :
-                root.accent || root.danger ? #ffffff1e :
-                VxTheme.accent-subtle;
-            border-color: root.ghost ? VxTheme.border-subtle :
-                root.accent || root.danger ? #ffffff26 :
-                VxTheme.accent-border;
-            border-width: 1px;
+            width: root.small ? 14px : 16px;
 
             icon-preview := VxIcon {
                 x: (parent.width - self.width) * 0.5;
                 y: (parent.height - self.height) * 0.5;
                 glyph: root.glyph;
                 icon-source: root.icon-source;
-                icon-size: root.small ? 12px : 13px;
-                tone: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
-                    !root.enabled ? VxTheme.text-muted :
-                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
+                icon-size: root.small ? 13px : 15px;
+                tone: root.fg;
             }
 
             if !icon-preview.available && root.glyph != "" : Text {
                 text: root.glyph;
-                color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
-                    !root.enabled ? VxTheme.text-muted :
-                    root.accent || root.danger ? VxTheme.text-inverse : VxTheme.accent;
+                color: root.fg;
                 font-size: (root.small ? 9px : 10px) * VxTheme.s;
-                font-weight: 800;
-                letter-spacing: 0.6px;
+                font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -176,12 +149,9 @@ export component VxButton inherits Rectangle {
 
         Text {
             text: root.label;
-            color: root.ghost ? (touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary) :
-                   !root.enabled ? VxTheme.text-muted :
-                   root.accent || root.danger ? VxTheme.text-inverse : VxTheme.text-primary;
+            color: root.fg;
             font-size: (root.small ? VxTheme.font-caption : VxTheme.font-body) * VxTheme.s;
-            font-weight: root.accent || root.danger ? VxTheme.weight-bold : VxTheme.weight-semibold;
-            letter-spacing: VxTheme.btn-uppercase ? 1.0px : (root.small ? 0.1px : 0.15px);
+            font-weight: VxTheme.weight-semibold;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -189,132 +159,93 @@ export component VxButton inherits Rectangle {
 }
 
 export component VxCard inherits Rectangle {
-    // Clean, near-flat surface (one subtle top lift in dark mode) — modern and
-    // lean: no stacked decorative gradients/glows to render.
-    background: @linear-gradient(180deg,
-        VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.025 : 0.0) 0%,
-        VxTheme.bg-card 100%);
+    // Flat surface: one tonal step above the panel, one hairline. Depth is
+    // tonal, never decorative.
+    background: VxTheme.bg-card;
     border-radius: VxTheme.radius-card;
-    border-color: VxTheme.card-border;
-    border-width: VxTheme.btn-border-width;
+    border-color: VxTheme.border-subtle;
+    border-width: 1px;
     clip: true;
+}
 
-    // Lean depth: a 1px inner top edge-highlight (no drop shadows, no glows).
+export component VxInput inherits Rectangle {
+    // Custom-drawn field on the raw TextInput primitive: the std LineEdit
+    // paints its own platform-style chrome, which fought the theme and
+    // clipped descenders at some DPI/font combinations.
+    in-out property <string> text <=> inner.text;
+    in property <string> placeholder: "";
+    in property <InputType> input-type <=> inner.input-type;
+    in property <bool> enabled: true;
+    in property <bool> prominent: false;
+    callback accepted();
+    forward-focus: inner;
+
+    height: (root.prominent ? 44px : 36px) * VxTheme.s;
+    border-radius: VxTheme.radius-control;
+    background: VxTheme.bg-input;
+    border-color: inner.has-focus ? VxTheme.accent : VxTheme.border-subtle;
+    border-width: 1px;
+    clip: true;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    animate border-color { duration: 100ms; easing: ease-out; }
+
+    // Focus ring: a soft inner outline in the accent, no width jump.
     Rectangle {
         x: 1px;
         y: 1px;
         width: parent.width - 2px;
         height: parent.height - 2px;
-        border-radius: VxTheme.radius-card;
+        border-radius: parent.border-radius - 1px;
         background: transparent;
-        border-color: VxTheme.edge-highlight;
-        border-width: 1px;
-        opacity: 0.6;
+        border-color: VxTheme.accent-glow;
+        border-width: inner.has-focus ? 2px : 0px;
     }
 
-    // Subtle accent top-bar — the Voxlink signature.
-    Rectangle {
-        width: parent.width;
-        height: VxTheme.card-accent-height;
-        background: @linear-gradient(90deg, transparent 0%, VxTheme.accent-border 20%, transparent 100%);
-        opacity: 0.7;
+    // Click anywhere in the field (padding included) to focus.
+    TouchArea {
+        mouse-cursor: root.enabled ? MouseCursor.text : MouseCursor.default;
+        clicked => {
+            if root.enabled { inner.focus(); }
+        }
     }
 
-    // ── Party/360: Blade-style double accent stripe ──
-    if VxTheme.is-party : Rectangle {
-        y: VxTheme.card-accent-height;
-        width: parent.width * 0.6;
-        height: 1px;
-        background: #8be14f20;
+    HorizontalLayout {
+        padding-left: 12px * VxTheme.s;
+        padding-right: 12px * VxTheme.s;
+
+        inner := TextInput {
+            vertical-alignment: center;
+            single-line: true;
+            wrap: no-wrap;
+            enabled: root.enabled;
+            font-size: (root.prominent ? 14px : 13px) * VxTheme.s;
+            color: VxTheme.text-primary;
+            selection-background-color: VxTheme.accent.transparentize(0.72);
+            selection-foreground-color: VxTheme.text-primary;
+            accepted => { root.accepted(); }
+        }
     }
 
-    // ── Retro/Amber: CRT scanline overlay ──
-    if VxTheme.is-retro || VxTheme.is-amber : Rectangle {
-        y: parent.height * 0.33;
-        width: parent.width;
-        height: 1px;
-        background: VxTheme.is-amber ? #ffbe4f06 : #5cf3a606;
-    }
-    if VxTheme.is-retro || VxTheme.is-amber : Rectangle {
-        y: parent.height * 0.66;
-        width: parent.width;
-        height: 1px;
-        background: VxTheme.is-amber ? #ffbe4f06 : #5cf3a606;
-    }
-
-    // ── Space: tiny star dots in corner ──
-    if VxTheme.is-space : Rectangle {
-        x: parent.width - 12px; y: 8px;
-        width: 2px; height: 2px; border-radius: 1px; background: #ffffff18;
-    }
-    if VxTheme.is-space : Rectangle {
-        x: parent.width - 24px; y: 14px;
-        width: 2px; height: 2px; border-radius: 1px; background: #ffffff10;
-    }
-
-    // ── Arctic: frost edge glow ──
-    if VxTheme.is-arctic : Rectangle {
-        width: parent.width;
-        height: 3px;
-        background: @linear-gradient(90deg, transparent 0%, #5fdaf40a 30%, #5fdaf40e 50%, #5fdaf40a 70%, transparent 100%);
-    }
-}
-
-export component VxInput inherits Rectangle {
-    in-out property <string> text <=> inner.text;
-    in property <string> placeholder: "";
-    in property <InputType> input-type: InputType.text;
-    in property <bool> enabled: true;
-    in property <bool> prominent: false;
-    callback accepted();
-
-    height: (root.prominent ? 56px : 48px) * VxTheme.s;
-    border-radius: VxTheme.radius-control;
-    background: @linear-gradient(180deg,
-        VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
-        VxTheme.bg-input 100%);
-    border-color: inner.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
-    border-width: inner.has-focus ? 2px : 1px;
-    clip: true;
-    opacity: root.enabled ? 1.0 : 0.5;
-
-    animate border-color { duration: 100ms; easing: ease-out; }
-    animate border-width { duration: 100ms; easing: ease-out; }
-
-    Rectangle {
-        width: parent.width;
-        height: 1px;
-        background: inner.has-focus ? VxTheme.accent-border : VxTheme.accent-subtle;
-    }
-
-    Rectangle {
-        width: 3px;
+    if root.text == "" : Text {
+        x: 13px * VxTheme.s;
+        width: parent.width - 26px * VxTheme.s;
         height: parent.height;
-        background: inner.has-focus ? VxTheme.border-focus : transparent;
-        opacity: inner.has-focus ? 1.0 : 0.0;
-        animate opacity { duration: 100ms; easing: ease-out; }
-    }
-
-    inner := LineEdit {
-        x: (root.prominent ? 16px : 14px) * VxTheme.s;
-        y: (root.prominent ? 12px : 10px) * VxTheme.s;
-        width: parent.width - (root.prominent ? 32px : 28px) * VxTheme.s;
-        height: parent.height - (root.prominent ? 24px : 20px) * VxTheme.s;
-        placeholder-text: root.placeholder;
-        input-type: root.input-type;
-        enabled: root.enabled;
-        font-size: (root.prominent ? 15px : 14px) * VxTheme.s;
-        accepted => { root.accepted(); }
+        text: root.placeholder;
+        color: VxTheme.text-muted;
+        font-size: (root.prominent ? 14px : 13px) * VxTheme.s;
+        vertical-alignment: center;
+        overflow: elide;
     }
 }
 
 export component SectionLabel inherits Text {
-    // Slightly stronger eyebrow — more weight + wider tracking so section
-    // boundaries read as deliberate dividers, not afterthoughts.
-    color: VxTheme.text-secondary;
-    font-size: 10px * VxTheme.s;
-    font-weight: 800;
-    letter-spacing: 1.4px;
+    // Quiet overline: muted, small, lightly tracked.
+    color: VxTheme.text-muted;
+    font-size: 11px * VxTheme.s;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    overflow: elide;
 }
 
 export component FieldLabel inherits Text {
@@ -350,39 +281,19 @@ export component KeyPill inherits Rectangle {
 export component StatusDot inherits Rectangle {
     in property <bool> active: false;
 
-    width: 10px;
-    height: 10px;
-    border-radius: 5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
     background: root.active ? VxTheme.success : VxTheme.text-muted;
-    border-color: root.active ? VxTheme.success-dim : transparent;
-    border-width: root.active ? 3px : 0px;
 
     animate background { duration: 160ms; }
-    animate border-color { duration: 160ms; }
-    animate border-width { duration: 160ms; }
 }
 
 export component AccentBar inherits Rectangle {
-    height: 2px;
-
-    Rectangle {
-        x: 0px;
-        width: parent.width * 0.42;
-        height: parent.height;
-        background: VxTheme.header-accent-left;
-    }
-    Rectangle {
-        x: parent.width * 0.42;
-        width: parent.width * 0.28;
-        height: parent.height;
-        background: VxTheme.header-accent-mid;
-    }
-    Rectangle {
-        x: parent.width * 0.70;
-        width: parent.width * 0.30;
-        height: parent.height;
-        background: VxTheme.header-accent-right;
-    }
+    // Single quiet hairline — the multi-hue gradient bar read as a stray
+    // line through nearby text.
+    height: 1px;
+    background: VxTheme.border-subtle;
 }
 
 export component VxStatusPill inherits Rectangle {
@@ -392,36 +303,22 @@ export component VxStatusPill inherits Rectangle {
     in property <color> tone: kind == "warning" ? VxTheme.warning :
                                kind == "danger"  ? VxTheme.danger  :
                                kind == "success" ? VxTheme.success : VxTheme.accent;
-    in property <color> fill: root.tone.transparentize(0.82);
+    in property <color> fill: root.tone.transparentize(0.88);
 
-    height: 24px;
-    border-radius: VxTheme.radius-pill;
-    background: @linear-gradient(180deg, root.fill.brighter(0.03) 0%, root.fill 100%);
-    border-color: root.tone.transparentize(0.45);
-    border-width: 1px;
-
-    Rectangle {
-        width: parent.width;
-        height: 1px;
-        background: root.tone.transparentize(0.76);
-        opacity: 0.7;
-    }
+    height: 22px;
+    // A pill never stretches — stretched pill borders read as stray lines.
+    horizontal-stretch: 0;
+    border-radius: 6px;
+    background: root.fill;
 
     HorizontalLayout {
-        padding-left: 9px;
-        padding-right: 10px;
-        spacing: 5px;
-        Rectangle {
-            width: 5px;
-            height: 5px;
-            border-radius: 2.5px;
-            background: root.tone;
-        }
+        padding-left: 8px;
+        padding-right: 8px;
         Text {
             text: root.label;
             color: root.tone;
-            font-size: 10px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 600;
             vertical-alignment: center;
         }
     }
@@ -473,25 +370,8 @@ export component VxGlyphTile inherits Rectangle {
     width: root.tile-size;
     height: root.tile-size;
     border-radius: root.tile-size * 0.28;
-    background: @linear-gradient(160deg,
-        root.tone.transparentize(0.84) 0%,
-        root.tone.transparentize(0.91) 100%);
-    border-color: root.tone.transparentize(0.48);
-    border-width: 1px;
+    background: root.tone.transparentize(0.90);
     clip: true;
-
-    Rectangle {
-        width: parent.width;
-        height: 2px;
-        background: @linear-gradient(90deg, #ffffff20 0%, root.tone 100%);
-        opacity: 0.9;
-    }
-
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: @linear-gradient(180deg, #ffffff14 0%, transparent 42%, #00000010 100%);
-    }
 
     tile-icon := VxIcon {
         x: (parent.width - self.width) * 0.5;
@@ -761,380 +641,42 @@ export component Divider inherits Rectangle {
 }
 
 export component VxLogo inherits Rectangle {
+    // One brand mark for every preset: accent tile, three white wave bars.
     in property <length> logo-size: 28px;
 
     width: root.logo-size;
     height: root.logo-size;
-    border-radius:
-        VxTheme.is-party ? root.logo-size / 2 :   // 360: circle
-        VxTheme.is-retro ? 2px :                   // Retro: sharp CRT
-        VxTheme.is-amber ? 2px :                   // Amber: hard terminal
-        VxTheme.is-noir  ? root.logo-size / 2 :    // Noir: monocle circle
-        VxTheme.is-arctic ? root.logo-size * 0.35 : // Arctic: hexagonal feel
-        root.logo-size * 0.26;                      // Default + Space
-    background:
-        VxTheme.is-party ? #1a1a1a :                                // 360: dark circle
-        VxTheme.is-retro ? #0a1a10 :                                // Retro: dark CRT screen
-        VxTheme.is-amber ? #1a1000 :                                // Amber: dark terminal
-        VxTheme.is-noir  ? #16192240 :                              // Noir: translucent lens
-        VxTheme.is-arctic ? #0d2530 :                               // Arctic: dark ice
-        VxTheme.is-space ? #080818 :                                // Space: deep space
-        @linear-gradient(145deg, VxTheme.header-accent-left 0%, VxTheme.header-accent-mid 55%, VxTheme.header-accent-right 100%);
-    border-color:
-        VxTheme.is-party ? #8be14f60 :
-        VxTheme.is-retro ? #5cf3a640 :
-        VxTheme.is-amber ? #ffbe4f40 :
-        VxTheme.is-noir  ? #90a8ff30 :
-        VxTheme.is-arctic ? #5fdaf440 :
-        VxTheme.is-space ? #6cc9ff40 :
-        transparent;
-    border-width:
-        VxTheme.is-party || VxTheme.is-retro || VxTheme.is-amber || VxTheme.is-noir || VxTheme.is-arctic || VxTheme.is-space
-        ? 1px : 0px;
+    border-radius: root.logo-size * 0.26;
+    background: VxTheme.accent;
     clip: true;
 
-    // ── Default Voxlink: gradient overlay + audio wave bars ──
-    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
-        width: parent.width;
-        height: parent.height;
-        border-radius: parent.border-radius;
-        background: @radial-gradient(circle, #ffffff20 0%, transparent 70%);
-    }
-
     property <length> band-w: root.logo-size * 0.12;
-    property <length> band-gap: root.logo-size * 0.07;
+    property <length> band-gap: root.logo-size * 0.09;
     property <length> band-start-x: (root.logo-size - (band-w * 3 + band-gap * 2)) / 2;
 
-    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
+    Rectangle {
         x: root.band-start-x;
-        y: root.logo-size * 0.34;
+        y: root.logo-size * 0.36;
         width: root.band-w;
-        height: root.logo-size * 0.34;
+        height: root.logo-size * 0.28;
         border-radius: root.band-w / 2;
-        background: #f3fbffcc;
+        background: #ffffffd8;
     }
-    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
+    Rectangle {
         x: root.band-start-x + root.band-w + root.band-gap;
-        y: root.logo-size * 0.20;
+        y: root.logo-size * 0.22;
         width: root.band-w;
-        height: root.logo-size * 0.60;
+        height: root.logo-size * 0.56;
         border-radius: root.band-w / 2;
-        background: #f5fdff;
+        background: #ffffff;
     }
-    if !VxTheme.is-party && !VxTheme.is-retro && !VxTheme.is-amber && !VxTheme.is-noir && !VxTheme.is-arctic && !VxTheme.is-space : Rectangle {
+    Rectangle {
         x: root.band-start-x + (root.band-w + root.band-gap) * 2;
-        y: root.logo-size * 0.28;
-        width: root.band-w;
-        height: root.logo-size * 0.44;
-        border-radius: root.band-w / 2;
-        background: #f3fbffe0;
-    }
-
-    // ── Party 360: Ring of Light ──
-    // Outer ring
-    if VxTheme.is-party : Rectangle {
-        x: root.logo-size * 0.15;
-        y: root.logo-size * 0.15;
-        width: root.logo-size * 0.70;
-        height: root.logo-size * 0.70;
-        border-radius: root.logo-size * 0.35;
-        background: transparent;
-        border-color: #4a6a3a;
-        border-width: root.logo-size * 0.04;
-    }
-    // Ring of Light — top quadrant LED
-    if VxTheme.is-party : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.18) / 2;
-        y: root.logo-size * 0.10;
-        width: root.logo-size * 0.18;
-        height: root.logo-size * 0.12;
-        border-radius: root.logo-size * 0.06;
-        background: #8be14f;
-    }
-    // Ring of Light — bottom quadrant LED
-    if VxTheme.is-party : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.18) / 2;
-        y: root.logo-size * 0.78;
-        width: root.logo-size * 0.18;
-        height: root.logo-size * 0.12;
-        border-radius: root.logo-size * 0.06;
-        background: #8be14f;
-    }
-    // Ring of Light — left quadrant LED
-    if VxTheme.is-party : Rectangle {
-        x: root.logo-size * 0.10;
-        y: (root.logo-size - root.logo-size * 0.12) / 2;
-        width: root.logo-size * 0.12;
-        height: root.logo-size * 0.18;
-        border-radius: root.logo-size * 0.06;
-        background: #8be14f;
-    }
-    // Ring of Light — right quadrant LED
-    if VxTheme.is-party : Rectangle {
-        x: root.logo-size * 0.78;
-        y: (root.logo-size - root.logo-size * 0.12) / 2;
-        width: root.logo-size * 0.12;
-        height: root.logo-size * 0.18;
-        border-radius: root.logo-size * 0.06;
-        background: #8be14f;
-    }
-    // Central "X"
-    if VxTheme.is-party : Text {
-        text: "X";
-        color: #8be14f;
-        font-size: root.logo-size * 0.30;
-        font-weight: 900;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    // Glow overlay
-    if VxTheme.is-party : Rectangle {
-        width: parent.width;
-        height: parent.height;
-        border-radius: parent.border-radius;
-        background: @radial-gradient(circle, #8be14f0c 0%, transparent 65%);
-    }
-
-    // ── Space: Planet with orbit rings ──
-    // Center planet
-    if VxTheme.is-space : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.30) / 2;
-        y: (root.logo-size - root.logo-size * 0.30) / 2;
-        width: root.logo-size * 0.30;
-        height: root.logo-size * 0.30;
-        border-radius: root.logo-size * 0.15;
-        background: @radial-gradient(circle, #6cc9ff 0%, #3a6ea8 100%);
-    }
-    // Inner orbit ring
-    if VxTheme.is-space : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.55) / 2;
-        y: (root.logo-size - root.logo-size * 0.55) / 2;
-        width: root.logo-size * 0.55;
-        height: root.logo-size * 0.55;
-        border-radius: root.logo-size * 0.275;
-        background: transparent;
-        border-color: #6cc9ff30;
-        border-width: 1px;
-    }
-    // Outer orbit ring
-    if VxTheme.is-space : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.80) / 2;
-        y: (root.logo-size - root.logo-size * 0.80) / 2;
-        width: root.logo-size * 0.80;
-        height: root.logo-size * 0.80;
-        border-radius: root.logo-size * 0.40;
-        background: transparent;
-        border-color: #6cc9ff1a;
-        border-width: 1px;
-    }
-    // Moon dot on inner orbit (top-right)
-    if VxTheme.is-space : Rectangle {
-        x: root.logo-size * 0.68;
-        y: root.logo-size * 0.22;
-        width: root.logo-size * 0.08;
-        height: root.logo-size * 0.08;
-        border-radius: root.logo-size * 0.04;
-        background: #bb8cff;
-    }
-    // Moon dot on outer orbit (bottom-left)
-    if VxTheme.is-space : Rectangle {
-        x: root.logo-size * 0.16;
-        y: root.logo-size * 0.70;
-        width: root.logo-size * 0.06;
-        height: root.logo-size * 0.06;
-        border-radius: root.logo-size * 0.03;
-        background: #f2b36c;
-    }
-    // Starfield twinkle dots
-    if VxTheme.is-space : Rectangle {
-        x: root.logo-size * 0.82; y: root.logo-size * 0.14;
-        width: 2px; height: 2px; border-radius: 1px; background: #ffffff60;
-    }
-    if VxTheme.is-space : Rectangle {
-        x: root.logo-size * 0.12; y: root.logo-size * 0.18;
-        width: 2px; height: 2px; border-radius: 1px; background: #ffffff40;
-    }
-    if VxTheme.is-space : Rectangle {
-        x: root.logo-size * 0.80; y: root.logo-size * 0.78;
-        width: 2px; height: 2px; border-radius: 1px; background: #ffffff30;
-    }
-
-    // ── Retro-tech: CRT terminal with >_ prompt ──
-    // CRT screen inset glow
-    if VxTheme.is-retro : Rectangle {
-        x: 2px; y: 2px;
-        width: root.logo-size - 4px;
-        height: root.logo-size - 4px;
-        border-radius: 1px;
-        background: @radial-gradient(circle, #5cf3a60a 0%, transparent 80%);
-    }
-    // Horizontal scanline 1
-    if VxTheme.is-retro : Rectangle {
         y: root.logo-size * 0.30;
-        width: parent.width;
-        height: 1px;
-        background: #5cf3a60c;
-    }
-    // Horizontal scanline 2
-    if VxTheme.is-retro : Rectangle {
-        y: root.logo-size * 0.55;
-        width: parent.width;
-        height: 1px;
-        background: #5cf3a60c;
-    }
-    // Horizontal scanline 3
-    if VxTheme.is-retro : Rectangle {
-        y: root.logo-size * 0.80;
-        width: parent.width;
-        height: 1px;
-        background: #5cf3a60c;
-    }
-    // Prompt ">_"
-    if VxTheme.is-retro : Text {
-        x: root.logo-size * 0.18;
-        text: ">_";
-        color: #5cf3a6;
-        font-size: root.logo-size * 0.36;
-        font-weight: 800;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-
-    // ── Amber CRT: Phosphor terminal ──
-    // Warm CRT glow
-    if VxTheme.is-amber : Rectangle {
-        x: 2px; y: 2px;
-        width: root.logo-size - 4px;
-        height: root.logo-size - 4px;
-        border-radius: 1px;
-        background: @radial-gradient(circle, #ffbe4f08 0%, transparent 80%);
-    }
-    // Scanlines
-    if VxTheme.is-amber : Rectangle {
-        y: root.logo-size * 0.25;
-        width: parent.width; height: 1px; background: #ffbe4f0c;
-    }
-    if VxTheme.is-amber : Rectangle {
-        y: root.logo-size * 0.50;
-        width: parent.width; height: 1px; background: #ffbe4f0c;
-    }
-    if VxTheme.is-amber : Rectangle {
-        y: root.logo-size * 0.75;
-        width: parent.width; height: 1px; background: #ffbe4f0c;
-    }
-    // Amber prompt ">_"
-    if VxTheme.is-amber : Text {
-        x: root.logo-size * 0.18;
-        text: ">_";
-        color: #ffbe4f;
-        font-size: root.logo-size * 0.36;
-        font-weight: 800;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-
-    // ── Noir: Film monocle / detective lens ──
-    // Outer lens rim
-    if VxTheme.is-noir : Rectangle {
-        x: root.logo-size * 0.12;
-        y: root.logo-size * 0.12;
-        width: root.logo-size * 0.76;
-        height: root.logo-size * 0.76;
-        border-radius: root.logo-size * 0.38;
-        background: transparent;
-        border-color: #90a8ff40;
-        border-width: root.logo-size * 0.035;
-    }
-    // Inner lens highlight (top-left reflection)
-    if VxTheme.is-noir : Rectangle {
-        x: root.logo-size * 0.26;
-        y: root.logo-size * 0.22;
-        width: root.logo-size * 0.20;
-        height: root.logo-size * 0.10;
-        border-radius: root.logo-size * 0.05;
-        background: #90a8ff18;
-    }
-    // "Vx" monogram
-    if VxTheme.is-noir : Text {
-        text: "Vx";
-        color: #cfd8f4;
-        font-size: root.logo-size * 0.26;
-        font-weight: 600;
-        letter-spacing: -0.5px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-
-    // ── Arctic: Ice crystal / snowflake ──
-    // Center crystal dot
-    if VxTheme.is-arctic : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.16) / 2;
-        y: (root.logo-size - root.logo-size * 0.16) / 2;
-        width: root.logo-size * 0.16;
-        height: root.logo-size * 0.16;
-        border-radius: root.logo-size * 0.08;
-        background: #5fdaf4;
-    }
-    // Vertical crystal arm
-    if VxTheme.is-arctic : Rectangle {
-        x: (root.logo-size - root.logo-size * 0.06) / 2;
-        y: root.logo-size * 0.12;
-        width: root.logo-size * 0.06;
-        height: root.logo-size * 0.76;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf450;
-    }
-    // Horizontal crystal arm
-    if VxTheme.is-arctic : Rectangle {
-        x: root.logo-size * 0.12;
-        y: (root.logo-size - root.logo-size * 0.06) / 2;
-        width: root.logo-size * 0.76;
-        height: root.logo-size * 0.06;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf450;
-    }
-    // Diagonal arm hint (top-right branch)
-    if VxTheme.is-arctic : Rectangle {
-        x: root.logo-size * 0.62;
-        y: root.logo-size * 0.18;
-        width: root.logo-size * 0.06;
-        height: root.logo-size * 0.20;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf430;
-    }
-    // Diagonal arm hint (bottom-left branch)
-    if VxTheme.is-arctic : Rectangle {
-        x: root.logo-size * 0.32;
-        y: root.logo-size * 0.62;
-        width: root.logo-size * 0.06;
-        height: root.logo-size * 0.20;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf430;
-    }
-    // Diagonal arm hint (top-left branch)
-    if VxTheme.is-arctic : Rectangle {
-        x: root.logo-size * 0.22;
-        y: root.logo-size * 0.18;
-        width: root.logo-size * 0.16;
-        height: root.logo-size * 0.06;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf428;
-    }
-    // Diagonal arm hint (bottom-right branch)
-    if VxTheme.is-arctic : Rectangle {
-        x: root.logo-size * 0.62;
-        y: root.logo-size * 0.76;
-        width: root.logo-size * 0.16;
-        height: root.logo-size * 0.06;
-        border-radius: root.logo-size * 0.03;
-        background: #5fdaf428;
-    }
-    // Frost glow
-    if VxTheme.is-arctic : Rectangle {
-        width: parent.width;
-        height: parent.height;
-        border-radius: parent.border-radius;
-        background: @radial-gradient(circle, #5fdaf40a 0%, transparent 70%);
+        width: root.band-w;
+        height: root.logo-size * 0.40;
+        border-radius: root.band-w / 2;
+        background: #ffffffd8;
     }
 }
 

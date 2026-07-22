@@ -1286,11 +1286,9 @@ export component ChatView inherits Rectangle {
                             composer-surface-stacked := Rectangle {
                                 height: 68px;
                                 border-radius: VxTheme.radius-control;
-                                background: @linear-gradient(180deg,
-                                    VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.04 : 0.02) 0%,
-                                    VxTheme.bg-input 100%);
-                                border-color: composer-edit-stacked-main.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
-                                border-width: composer-edit-stacked-main.has-focus ? 2px : 1px;
+                                background: VxTheme.bg-input;
+                                border-color: composer-edit-stacked-main.has-focus ? VxTheme.accent : VxTheme.border-subtle;
+                                border-width: 1px;
                                 clip: true;
 
                                 Text {
@@ -1464,11 +1462,9 @@ export component ChatView inherits Rectangle {
                                 width: send-slot.x - 110px;
                                 height: 64px;
                                 border-radius: VxTheme.radius-control;
-                                background: @linear-gradient(180deg,
-                                    VxTheme.bg-input.brighter(VxTheme.dark-mode ? 0.04 : 0.02) 0%,
-                                    VxTheme.bg-input 100%);
-                                border-color: composer-edit-wide-main.has-focus ? VxTheme.border-focus : VxTheme.border-subtle;
-                                border-width: composer-edit-wide-main.has-focus ? 2px : 1px;
+                                background: VxTheme.bg-input;
+                                border-color: composer-edit-wide-main.has-focus ? VxTheme.accent : VxTheme.border-subtle;
+                                border-width: 1px;
                                 clip: true;
 
                                 Text {
