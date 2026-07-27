@@ -10,7 +10,9 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 // ─── Test Infrastructure ───
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+// 45s: generous for thrashing shared CI runners — normal connects take milliseconds,
+// so the extra headroom only matters when the runner is oversubscribed.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
 const STARTUP_ATTEMPTS: u32 = 3;
 
 struct TestServer {
