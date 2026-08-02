@@ -55,7 +55,11 @@ jobs:
           sudo apt-get update
           # glib/gtk/xdo/appindicator: needed by rfd (file dialogs) and the
           # tray-icon/muda stack on Linux — glib-sys fails the build without them.
-          sudo apt-get install -y libasound2-dev libdbus-1-dev libfontconfig1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libx11-dev libpipewire-0.3-dev pkg-config libglib2.0-dev libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+          # gbm/drm: xcap (screen capture) links against libgbm, so app_desktop
+          # fails at link time with `unable to find library -lgbm` without them.
+          # Note CI only builds macOS and Windows, so Linux link errors surface
+          # here and nowhere else.
+          sudo apt-get install -y libasound2-dev libdbus-1-dev libfontconfig1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libx11-dev libpipewire-0.3-dev pkg-config libglib2.0-dev libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libgbm-dev libdrm-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
