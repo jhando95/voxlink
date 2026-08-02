@@ -9,7 +9,7 @@
 ; workflow's tag-derived version was silently ignored and every installer was
 ; named after this hard-coded string.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.14.1"
+  #define MyAppVersion "0.14.2"
 #endif
 #define MyAppPublisher "Voxlink"
 #define MyAppURL "https://github.com/jhando95/voxlink"

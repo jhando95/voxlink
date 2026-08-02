@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { DirectMessageThreadData, FriendData, FriendRequestData, ParticipantData, PerfData, StartupPhaseData, VxTheme } from "../theme.slint";
-import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatusPill } from "../components.slint";
+import { MetricRow, SectionLabel, VxAvatar, VxButton, VxCallButton, VxCard, VxGlyphTile, VxInput, VxLogo, VxStatusPill } from "../components.slint";
 
 export component SystemView inherits Rectangle {
     in property <bool> wide: false;
@@ -49,7 +49,6 @@ export component SystemView inherits Rectangle {
                 HorizontalLayout {
                     padding: 16px;
                     spacing: 14px;
-                    alignment: center;
 
                     Rectangle {
                         width: root.wide ? 52px : 46px;
@@ -81,6 +80,7 @@ export component SystemView inherits Rectangle {
                         // before any actual status.
                         SectionLabel { text: "SESSION HEALTH"; }
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.perf.network-connected ? "Network online" : "Network offline";
@@ -117,6 +117,7 @@ export component SystemView inherits Rectangle {
                 spacing: 12px;
 
                 VerticalLayout {
+                    alignment: start;
                     horizontal-stretch: 1;
                     spacing: 12px;
 
@@ -160,6 +161,7 @@ export component SystemView inherits Rectangle {
                                 clicked => { root.toggle-member-widget(); }
                             }
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 VxStatusPill {
                                     label: root.room-code != "" ? "Room live" : "Room idle";
@@ -359,6 +361,7 @@ export component SystemView inherits Rectangle {
                             padding: 18px;
                             spacing: 10px;
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 SectionLabel { text: "CONVERSATIONS"; }
                                 if root.unread-direct-messages-count > 0 : VxStatusPill {
@@ -395,7 +398,6 @@ export component SystemView inherits Rectangle {
                                 HorizontalLayout {
                                     padding: 12px;
                                     spacing: 10px;
-                                    alignment: center;
 
                                     VxAvatar {
                                         avatar-size: 30px;
@@ -452,6 +454,7 @@ export component SystemView inherits Rectangle {
                 }
 
                 VerticalLayout {
+                    alignment: start;
                     width: root.side-column-width;
                     spacing: 12px;
 
@@ -547,28 +550,15 @@ export component SystemView inherits Rectangle {
                             padding: 18px;
                             spacing: 10px;
                             SectionLabel { text: "FRIENDS"; }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                VxStatusPill {
-                                    label: root.favorite-friends-count + " total";
-                                    tone: VxTheme.accent;
-                                    fill: VxTheme.accent-subtle;
-                                }
-                                VxStatusPill {
-                                    label: root.unread-direct-messages-count + " unread";
-                                    tone: root.unread-direct-messages-count > 0 ? VxTheme.accent : VxTheme.text-muted;
-                                    fill: root.unread-direct-messages-count > 0 ? VxTheme.accent-subtle : VxTheme.bg-soft;
-                                }
-                                VxStatusPill {
-                                    label: root.online-friends-count + " online";
-                                    tone: root.online-friends-count > 0 ? VxTheme.success : VxTheme.text-muted;
-                                    fill: root.online-friends-count > 0 ? VxTheme.success-dim : VxTheme.bg-soft;
-                                }
-                                VxStatusPill {
-                                    label: root.live-friends-count + " in voice";
-                                    tone: root.live-friends-count > 0 ? VxTheme.warning : VxTheme.text-muted;
-                                    fill: root.live-friends-count > 0 ? VxTheme.warning-soft : VxTheme.bg-soft;
-                                }
+                            // One elidable summary line. Four chips could not fit
+                            // the sidebar column and overflowed past the card edge.
+                            Text {
+                                text: root.favorite-friends-count + " friends \u{b7} " + root.online-friends-count + " online"
+                                    + (root.live-friends-count > 0 ? " \u{b7} " + root.live-friends-count + " in voice" : "")
+                                    + (root.unread-direct-messages-count > 0 ? " \u{b7} " + root.unread-direct-messages-count + " unread" : "");
+                                color: VxTheme.text-muted;
+                                font-size: VxTheme.font-caption;
+                                overflow: elide;
                             }
                             if root.favorite-friends.length == 0 : VerticalLayout {
                                 spacing: 4px;
@@ -608,7 +598,6 @@ export component SystemView inherits Rectangle {
                                     HorizontalLayout {
                                         padding: 12px;
                                         spacing: 10px;
-                                        alignment: center;
 
                                         VxAvatar {
                                             avatar-size: 28px;
@@ -641,25 +630,24 @@ export component SystemView inherits Rectangle {
                                                 font-size: 10px;
                                             }
                                         }
-                                        VxStatusPill {
-                                            label: friend.status-label;
-                                            tone: friend.is-in-voice ? VxTheme.success :
-                                                  friend.is-online ? VxTheme.text-secondary : VxTheme.text-muted;
-                                            fill: friend.is-in-voice ? VxTheme.success-dim :
-                                                  friend.is-online ? VxTheme.bg-panel : VxTheme.bg-soft;
-                                        }
-                                        VxButton {
-                                            label: "Message";
+                                        // Compact icon actions. This row used to
+                                        // carry a status pill plus two labelled
+                                        // buttons, whose fixed widths exceeded the
+                                        // sidebar column — the name column was
+                                        // squeezed to nothing and rendered as "…".
+                                        // The pill was redundant besides: the left
+                                        // bar, the avatar status dot and the detail
+                                        // line already carry presence.
+                                        VxCallButton {
                                             glyph: "DM";
-                                            small: true;
-                                            accent: true;
+                                            label: "Message " + friend.name;
+                                            control-size: 26px;
                                             clicked => { root.open-direct-message(friend.user-id); }
                                         }
-                                        VxButton {
-                                            label: "Remove";
+                                        VxCallButton {
                                             glyph: "RM";
-                                            small: true;
-                                            soft: true;
+                                            label: "Remove " + friend.name;
+                                            control-size: 26px;
                                             clicked => { root.remove-friend(friend.user-id); }
                                         }
                                     }
@@ -683,7 +671,6 @@ export component SystemView inherits Rectangle {
                                     HorizontalLayout {
                                         padding: 12px;
                                         spacing: 10px;
-                                        alignment: center;
                                         VxAvatar {
                                             avatar-size: 28px;
                                             initial: request.initial;
@@ -710,14 +697,12 @@ export component SystemView inherits Rectangle {
                                         }
                                         VxButton {
                                             label: "Accept";
-                                            glyph: "OK";
                                             small: true;
                                             accent: true;
                                             clicked => { root.accept-friend-request(request.user-id); }
                                         }
                                         VxButton {
                                             label: "Decline";
-                                            glyph: "NO";
                                             small: true;
                                             soft: true;
                                             clicked => { root.decline-friend-request(request.user-id); }
@@ -737,7 +722,6 @@ export component SystemView inherits Rectangle {
                                     HorizontalLayout {
                                         padding: 12px;
                                         spacing: 10px;
-                                        alignment: center;
                                         VxAvatar {
                                             avatar-size: 28px;
                                             initial: request.initial;
@@ -762,14 +746,8 @@ export component SystemView inherits Rectangle {
                                                 overflow: elide;
                                             }
                                         }
-                                        VxStatusPill {
-                                            label: "Pending";
-                                            tone: VxTheme.text-secondary;
-                                            fill: VxTheme.bg-panel;
-                                        }
                                         VxButton {
                                             label: "Cancel";
-                                            glyph: "CN";
                                             small: true;
                                             soft: true;
                                             clicked => { root.cancel-friend-request(request.user-id); }
@@ -802,6 +780,7 @@ export component SystemView inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 VxStatusPill {
                                     label: root.member-widget-visible ? "Pop-out live" : "Pop-out hidden";
@@ -828,6 +807,7 @@ export component SystemView inherits Rectangle {
             }
 
             if !root.wide : VerticalLayout {
+                alignment: start;
                 spacing: 12px;
 
                 VxCard {
@@ -866,6 +846,7 @@ export component SystemView inherits Rectangle {
                             clicked => { root.toggle-member-widget(); }
                         }
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.unread-direct-messages-count > 0
@@ -1137,6 +1118,7 @@ export component SystemView inherits Rectangle {
                         spacing: 10px;
                         SectionLabel { text: "FRIENDS"; }
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.favorite-friends-count + " total";
@@ -1363,6 +1345,7 @@ export component SystemView inherits Rectangle {
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.member-widget-visible ? "Pop-out live" : "Pop-out hidden";

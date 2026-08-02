@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.14.2 — Layout sweep: rows, columns, and the cost of Slint's default alignment
+
+A second visual pass, driven by reading the rendered frames rather than the
+source. Three systemic layout defects turned up, each one instance of the same
+misunderstanding: **Slint layouts default to `stretch` alignment**, which
+silently overrides what the children asked for.
+
+- **`alignment: center` defeats `horizontal-stretch` on children** — the layout
+  sizes them to their preferred width and centres the group. 53 rows across 10
+  files did both at once, so saved servers, spaces, direct messages, member
+  rows and device pickers rendered their content floating in the middle of the
+  row with the selection bar stranded at the far left edge. Removed the
+  contradictory binding everywhere it appeared.
+- **`horizontal-stretch: 0` does not stop a control from being stretched** if
+  the parent has no `alignment` and nothing else absorbs the space. 30 rows
+  stretched status pills and buttons into full-width slabs — the exact defect
+  v0.14.0 set out to remove, reappearing from the parent side. Those rows now
+  hug.
+- **Columns of cards were stretched to fill their height**, spreading each
+  card's contents apart: the space sidebar showed roughly 60px of dead space
+  between a card's heading and its first row. 14 columns now pack to the top,
+  which fits an extra card in the same viewport.
+
+Also, in the space/system sidebars, rows whose fixed-width contents exceeded
+the 276px column squeezed their name column to nothing and rendered it as "…".
+The friends list drops a status pill that duplicated the row's left bar, avatar
+dot and detail line, and uses compact icon actions; the request rows drop their
+button glyphs and a redundant "Pending" chip. The friends header's four chips —
+which overflowed the card entirely — are now one elidable summary line.
+
 ## v0.14.1 — Call screen, and a visual test suite that was testing one thing four times
 
 Follow-up pass over the v0.14.0 redesign. The room (live call) view had been

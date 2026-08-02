@@ -54,6 +54,7 @@ export component HomeView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
+            alignment: start;
             padding: (root.wide ? 16px : 12px) * VxTheme.s;
             spacing: 12px * VxTheme.s;
 
@@ -61,7 +62,6 @@ export component HomeView inherits Rectangle {
                 HorizontalLayout {
                     padding: root.wide ? 20px : 16px;
                     spacing: 14px;
-                    alignment: center;
 
                     VxLogo { logo-size: root.wide ? 56px : 44px; }
 
@@ -303,6 +303,7 @@ export component HomeView inherits Rectangle {
                 spacing: 12px;
 
                 VerticalLayout {
+                    alignment: start;
                     horizontal-stretch: 1;
                     spacing: 12px;
 
@@ -370,7 +371,6 @@ export component HomeView inherits Rectangle {
                                         padding-left: 10px;
                                         padding-right: 6px;
                                         spacing: 8px;
-                                        alignment: center;
 
                                         if server.is-default : Rectangle {
                                             width: 6px;
@@ -515,7 +515,6 @@ export component HomeView inherits Rectangle {
                                     padding-left: 12px;
                                     padding-right: 12px;
                                     spacing: 12px;
-                                    alignment: center;
 
                                     VxAvatar {
                                         avatar-size: 36px;
@@ -566,6 +565,7 @@ export component HomeView inherits Rectangle {
                                 alignment: space-between;
                                 SectionLabel { text: "DIRECT MESSAGES"; }
                                 HorizontalLayout {
+                                    alignment: start;
                                     spacing: 6px;
                                     if root.unread-direct-messages-count > 0 : VxStatusPill {
                                         label: root.unread-direct-messages-count + " unread";
@@ -615,7 +615,6 @@ export component HomeView inherits Rectangle {
                                             padding-left: 8px;
                                             padding-right: 8px;
                                             spacing: 10px;
-                                            alignment: center;
                                             Rectangle {
                                                 width: 16px;
                                                 height: 16px;
@@ -683,7 +682,6 @@ export component HomeView inherits Rectangle {
                                 HorizontalLayout {
                                     padding: 10px;
                                     spacing: 10px;
-                                    alignment: center;
                                     VxGlyphTile {
                                         tile-size: 28px;
                                         glyph: "GP";
@@ -775,7 +773,6 @@ export component HomeView inherits Rectangle {
                                 HorizontalLayout {
                                     padding: 12px;
                                     spacing: 10px;
-                                    alignment: center;
 
                                     VxAvatar {
                                         avatar-size: 32px;
@@ -866,6 +863,7 @@ export component HomeView inherits Rectangle {
                 }
 
                 VerticalLayout {
+                    alignment: start;
                     width: root.side-column-width;
                     spacing: 12px;
 
@@ -1027,6 +1025,7 @@ export component HomeView inherits Rectangle {
             }
 
             if !root.wide : VerticalLayout {
+                alignment: start;
                 spacing: 12px;
 
                 VxCard {
@@ -1328,7 +1327,6 @@ export component HomeView inherits Rectangle {
                                 padding-left: 12px;
                                 padding-right: 12px;
                                 spacing: 10px;
-                                alignment: center;
 
                                 VxAvatar {
                                     avatar-size: 32px;
@@ -1421,7 +1419,6 @@ export component HomeView inherits Rectangle {
                                     padding-left: 12px;
                                     padding-right: 12px;
                                     spacing: 10px;
-                                    alignment: center;
 
                                     VxAvatar {
                                         avatar-size: 36px;
@@ -1532,7 +1529,6 @@ export component HomeView inherits Rectangle {
 
                                 HorizontalLayout {
                                     spacing: 8px;
-                                    alignment: center;
 
                                     VxAvatar {
                                         avatar-size: 28px;

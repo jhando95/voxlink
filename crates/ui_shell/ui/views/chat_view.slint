@@ -215,6 +215,7 @@ export component ChatView inherits Rectangle {
             }
 
             HorizontalLayout {
+                alignment: start;
                 spacing: 6px;
                 VxButton {
                     label: "Back";
@@ -239,6 +240,7 @@ export component ChatView inherits Rectangle {
         }
 
         HorizontalLayout {
+            alignment: start;
             spacing: 6px;
             padding-left: 2px;
 
@@ -325,6 +327,7 @@ export component ChatView inherits Rectangle {
                         spacing: 8px;
 
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             SectionLabel { text: "PINNED"; }
                             VxStatusPill {
@@ -371,6 +374,7 @@ export component ChatView inherits Rectangle {
                         spacing: 8px;
 
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             SectionLabel { text: "SEARCH"; }
                             VxStatusPill {
@@ -642,6 +646,7 @@ export component ChatView inherits Rectangle {
 
                                     // Sender header — hidden for grouped messages
                                     if msg.show-header : HorizontalLayout {
+                                        alignment: start;
                                         spacing: 8px;
                                         Rectangle {
                                             width: sender-name-text.preferred-width;
@@ -793,6 +798,7 @@ export component ChatView inherits Rectangle {
                                         height: 52px;
 
                                         HorizontalLayout {
+                                            alignment: start;
                                             padding: 10px;
                                             spacing: 10px;
 
@@ -850,6 +856,7 @@ export component ChatView inherits Rectangle {
                                         min-height: 44px;
 
                                         HorizontalLayout {
+                                            alignment: start;
                                             padding: 8px;
                                             spacing: 8px;
 
@@ -1159,7 +1166,6 @@ export component ChatView inherits Rectangle {
                                 padding-left: 10px;
                                 padding-right: 8px;
                                 spacing: 8px;
-                                alignment: center;
 
                                 Text {
                                     text: "Replying to " + root.reply-target-sender-name;
@@ -1214,7 +1220,6 @@ export component ChatView inherits Rectangle {
                                         padding-left: 8px;
                                         padding-right: 8px;
                                         spacing: 10px;
-                                        alignment: center;
                                         Text {
                                             text: cmd.slash;
                                             color: VxTheme.accent;
@@ -1268,7 +1273,6 @@ export component ChatView inherits Rectangle {
                                         padding-left: 10px;
                                         padding-right: 10px;
                                         spacing: 8px;
-                                        alignment: center;
                                         VxGlyphTile {
                                             tile-size: 18px;
                                             glyph: "AT";
@@ -1325,7 +1329,6 @@ export component ChatView inherits Rectangle {
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                alignment: center;
 
                                 Rectangle {
                                     width: 42px;

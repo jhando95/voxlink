@@ -790,6 +790,7 @@ export component RoomView inherits Rectangle {
                             alignment: space-between;
                             SectionLabel { text: "PEER MIX"; }
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 6px;
                                 VxStatusPill {
                                     label: "Local only";
@@ -817,7 +818,6 @@ export component RoomView inherits Rectangle {
                         HorizontalLayout {
                             height: 28px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: "Volume";
@@ -855,7 +855,6 @@ export component RoomView inherits Rectangle {
                         HorizontalLayout {
                             height: 24px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: "Bass";
@@ -890,7 +889,6 @@ export component RoomView inherits Rectangle {
                         HorizontalLayout {
                             height: 24px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: "Mid";
@@ -925,7 +923,6 @@ export component RoomView inherits Rectangle {
                         HorizontalLayout {
                             height: 24px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: "Treble";
@@ -962,7 +959,6 @@ export component RoomView inherits Rectangle {
                         HorizontalLayout {
                             height: 24px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: "Pan";
@@ -1020,6 +1016,7 @@ export component RoomView inherits Rectangle {
                                 SectionLabel { text: "SHARE SOURCE"; }
                             }
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 VxButton {
                                     label: "Start";
@@ -1045,6 +1042,7 @@ export component RoomView inherits Rectangle {
                         }
 
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.screen-share-source-label != "" ? root.screen-share-source-label : "Choose a source";

@@ -176,6 +176,7 @@ export component SettingsView inherits Rectangle {
         vertical-stretch: 1;
 
         VerticalLayout {
+            alignment: start;
             padding: root.wide ? 16px : 12px;
             spacing: 12px;
 
@@ -183,7 +184,6 @@ export component SettingsView inherits Rectangle {
                 HorizontalLayout {
                     padding: 18px;
                     spacing: 14px;
-                    alignment: center;
 
                     Rectangle {
                         width: root.wide ? 66px : 56px;
@@ -221,6 +221,7 @@ export component SettingsView inherits Rectangle {
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
+                            alignment: start;
                             spacing: 8px;
                             VxStatusPill {
                                 label: root.dark-mode ? "Dark shell" : "Light shell";
@@ -253,6 +254,7 @@ export component SettingsView inherits Rectangle {
                 spacing: 12px;
 
                 VerticalLayout {
+                    alignment: start;
                     horizontal-stretch: 1;
                     spacing: 12px;
 
@@ -653,6 +655,7 @@ export component SettingsView inherits Rectangle {
                 }
 
                 VerticalLayout {
+                    alignment: start;
                     width: root.side-column-width;
                     spacing: 12px;
 
@@ -664,7 +667,6 @@ export component SettingsView inherits Rectangle {
 
                             HorizontalLayout {
                                 spacing: 10px;
-                                alignment: center;
 
                                 VxGlyphTile {
                                     glyph: "SP";
@@ -704,6 +706,7 @@ export component SettingsView inherits Rectangle {
                             }
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 VxStatusPill {
                                     label: root.speaker-test-active ? "Playing sample" : "Ready";
@@ -742,7 +745,6 @@ export component SettingsView inherits Rectangle {
 
                             HorizontalLayout {
                                 spacing: 10px;
-                                alignment: center;
 
                                 VxGlyphTile {
                                     glyph: "MC";
@@ -800,6 +802,7 @@ export component SettingsView inherits Rectangle {
                             }
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 VxStatusPill {
                                     label: root.mic-preview-active ? "Live preview" : "Idle";
@@ -838,7 +841,6 @@ export component SettingsView inherits Rectangle {
                             SectionLabel { text: "VOICE MODE"; }
                             HorizontalLayout {
                                 spacing: 10px;
-                                alignment: center;
 
                                 VxGlyphTile {
                                     glyph: "VM";
@@ -1059,7 +1061,6 @@ export component SettingsView inherits Rectangle {
                             SectionLabel { text: "PRIVACY"; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                alignment: center;
                                 Text {
                                     text: "Streamer mode";
                                     color: VxTheme.text-primary;
@@ -1080,7 +1081,6 @@ export component SettingsView inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: 8px;
-                                alignment: center;
                                 Text {
                                     text: "Rich presence";
                                     color: VxTheme.text-primary;
@@ -1130,6 +1130,7 @@ export component SettingsView inherits Rectangle {
                                 font-size: 11px;
                             }
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 6px;
                                 VxButton {
                                     label: "Online";
@@ -1233,6 +1234,7 @@ export component SettingsView inherits Rectangle {
                             }
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 FieldLabel { text: "Push to talk"; horizontal-stretch: 1; }
                                 if root.listening-keybind == "ptt" : Text {
@@ -1260,6 +1262,7 @@ export component SettingsView inherits Rectangle {
                             Divider {}
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 FieldLabel { text: "Toggle mute"; horizontal-stretch: 1; }
                                 if root.listening-keybind == "mute" : Text {
@@ -1287,6 +1290,7 @@ export component SettingsView inherits Rectangle {
                             Divider {}
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 FieldLabel { text: "Toggle deafen"; horizontal-stretch: 1; }
                                 if root.listening-keybind == "deafen" : Text {
@@ -1315,6 +1319,7 @@ export component SettingsView inherits Rectangle {
                             Divider {}
 
                             HorizontalLayout {
+                                alignment: start;
                                 spacing: 8px;
                                 FieldLabel { text: "Quick back"; horizontal-stretch: 1; }
                                 KeyPill { key-text: "Esc"; }
@@ -1325,6 +1330,7 @@ export component SettingsView inherits Rectangle {
             }
 
             if !root.wide : VerticalLayout {
+                alignment: start;
                 spacing: 12px;
 
                 VxCard {
@@ -1470,7 +1476,6 @@ export component SettingsView inherits Rectangle {
                         SectionLabel { text: "OUTPUT CHECK"; }
                         HorizontalLayout {
                             spacing: 10px;
-                            alignment: center;
                             VxGlyphTile {
                                 glyph: "SP";
                                 tone: root.speaker-test-active ? VxTheme.success : VxTheme.accent;
@@ -1520,7 +1525,6 @@ export component SettingsView inherits Rectangle {
                         SectionLabel { text: "MIC CHECK"; }
                         HorizontalLayout {
                             spacing: 10px;
-                            alignment: center;
                             VxGlyphTile {
                                 glyph: "MC";
                                 tone: root.mic-preview-active ? VxTheme.success : VxTheme.accent;
@@ -1577,7 +1581,6 @@ export component SettingsView inherits Rectangle {
                         SectionLabel { text: "VOICE MODE"; }
                         HorizontalLayout {
                             spacing: 10px;
-                            alignment: center;
                             VxGlyphTile {
                                 glyph: "VM";
                                 tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
@@ -1830,7 +1833,6 @@ export component SettingsView inherits Rectangle {
                             padding-left: 10px;
                             padding-right: 6px;
                             spacing: 8px;
-                            alignment: center;
 
                             Text {
                                 text: clip.name;
