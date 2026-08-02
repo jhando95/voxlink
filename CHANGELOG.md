@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.14.4 — Settings fits a narrow window; layout rules written down
+
+- **Fixed the Settings horizontal overflow** flagged as a known issue in
+  v0.14.3. `min-width` is 440px, so every view has to fit a 460px window; text
+  that can neither wrap nor elide reports its full width as a minimum and drags
+  the whole scroll content past the viewport, where it gets sliced instead of
+  elided. The header title was an off-scale 24px with no elide (~277px on its
+  own); together with a third status chip and a labelled back button the row
+  demanded ~527px. The title now elides and uses `VxTheme.font-display`, and the
+  device-count chip and the back button's label drop below the `wide`
+  breakpoint. Settings now fits 460px; the wide layout is unchanged.
+- **New topic doc `docs/UI_LAYOUT.md`** — the design system, the Slint layout
+  traps behind every visual bug in this series, the narrow-window rule, and the
+  audit workflow (render the matrix and read the frames; write a detector rather
+  than eyeballing anything systemic; how to recalibrate snapshot floors, and why
+  a floor calibrated against blank canvas is worse than no test). `CLAUDE.md`
+  gains a short **UI & design system** section with the non-negotiables and a
+  pointer to it.
+- New `view_headers_can_shrink_to_a_narrow_window` test locks the fix.
+
 ## v0.14.3 — Correct 15 rows over-corrected by the v0.14.2 sweep
 
 The v0.14.2 sweep added `alignment: start` to rows of fixed-size controls so

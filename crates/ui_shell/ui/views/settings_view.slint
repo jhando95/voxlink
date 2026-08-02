@@ -208,11 +208,16 @@ export component SettingsView inherits Rectangle {
                         horizontal-stretch: 1;
                         spacing: 6px;
 
+                        // Elides, and uses the type scale. A 24px off-scale
+                        // title with no elide reported its full width as a
+                        // minimum, which is what pushed this whole view wider
+                        // than a narrow window and sliced the card edges.
                         Text {
                             text: "Audio and preferences";
                             color: VxTheme.text-primary;
-                            font-size: 24px;
-                            font-weight: 700;
+                            font-size: VxTheme.font-display;
+                            font-weight: VxTheme.weight-semibold;
+                            overflow: elide;
                         }
                         Text {
                             text: "Tune devices, voice behavior, and alerts without adding runtime drag.";
@@ -233,7 +238,10 @@ export component SettingsView inherits Rectangle {
                                 tone: root.is-open-mic ? VxTheme.success : VxTheme.warning;
                                 fill: root.is-open-mic ? VxTheme.success-dim : VxTheme.warning-soft;
                             }
-                            if root.input-devices.length > 0 || root.output-devices.length > 0 : VxStatusPill {
+                            // Device counts are repeated in DEVICE ROUTING below;
+                            // on a narrow window this third pill is what tips the
+                            // header row past the viewport.
+                            if root.wide && (root.input-devices.length > 0 || root.output-devices.length > 0) : VxStatusPill {
                                 label: root.input-devices.length + " in · " + root.output-devices.length + " out";
                                 tone: VxTheme.text-secondary;
                                 fill: VxTheme.bg-soft;
@@ -242,8 +250,8 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.previous-view == 1 : VxButton {
-                        label: "Back to call";
-                        glyph: "GO";
+                        label: root.wide ? "Back to call" : "";
+                        glyph: "BK";
                         soft: true;
                         clicked => { root.navigate(root.previous-view); }
                     }

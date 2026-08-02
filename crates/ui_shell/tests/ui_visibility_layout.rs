@@ -279,6 +279,30 @@ fn navigation_labels_do_not_change_with_the_theme_preset() {
 }
 
 #[test]
+fn view_headers_can_shrink_to_a_narrow_window() {
+    // `min-width` is 440px, so every view has to fit a 460px window. Text that
+    // can neither wrap nor elide reports its full width as a minimum and drags
+    // the whole scroll content past the viewport, where it is sliced rather
+    // than elided — this is what happened to Settings.
+    let settings_ui = read_ui_file("ui/views/settings_view.slint");
+    let header = snippet(&settings_ui, "text: \"Audio and preferences\";", 260);
+    assert!(
+        header.contains("overflow: elide;"),
+        "the settings header title must be able to shrink"
+    );
+    assert!(
+        header.contains("font-size: VxTheme.font-display;"),
+        "the settings header title must use the type scale, not an off-scale size"
+    );
+    // The device-count chip and the back button's label are dropped below the
+    // wide breakpoint; together they were what tipped the row past the window.
+    assert!(settings_ui.contains(
+        "if root.wide && (root.input-devices.length > 0 || root.output-devices.length > 0)"
+    ));
+    assert!(settings_ui.contains("label: root.wide ? \"Back to call\" : \"\";"));
+}
+
+#[test]
 fn surfaces_stay_flat_and_shadow_free() {
     // The v0.14 language is tonal surfaces plus 1px hairlines: no gradients,
     // no glows, no drop shadows (the project bans them for GPU cost). These
