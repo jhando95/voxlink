@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.14.3 — Correct 15 rows over-corrected by the v0.14.2 sweep
+
+The v0.14.2 sweep added `alignment: start` to rows of fixed-size controls so
+they would stop being stretched into slabs. Its detector looked for
+`horizontal-stretch: 1` as a property on its own line, and so missed children
+written on a single line (`Text { text: "…"; horizontal-stretch: 1; … }`).
+Fifteen rows that *do* have a stretching child were therefore given
+`alignment: start`, which defeats that stretch exactly as `alignment: center`
+does — the audio-diagnostics rows in Settings, for instance, put their value
+next to the label instead of against the right edge. Those fifteen are
+reverted; the other rows the sweep fixed are unaffected.
+
+**Known issue, pre-existing and unchanged:** the Settings view overflows
+horizontally below roughly 500px of window width — the header title has no
+elide, so its preferred width forces the scroll content wider than the
+viewport and the card edges are sliced. Other views are fine at 460px.
+
 ## v0.14.2 — Layout sweep: rows, columns, and the cost of Slint's default alignment
 
 A second visual pass, driven by reading the rendered frames rather than the
