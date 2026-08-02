@@ -20,7 +20,8 @@ export component VxIcon inherits Image {
         root.glyph == "PB" || root.glyph == "PR" || root.glyph == "SR" || root.glyph == "RP" ||
         root.glyph == "TH" || root.glyph == "FW" || root.glyph == "PN" || root.glyph == "UP" ||
         root.glyph == "ED" || root.glyph == "FI" || root.glyph == "LN" || root.glyph == "AT" ||
-        root.glyph == "EM" || root.glyph == "MX" || root.glyph == "CP" || root.glyph == "SD";
+        root.glyph == "EM" || root.glyph == "MX" || root.glyph == "CP" || root.glyph == "SD" ||
+        root.glyph == "MI" || root.glyph == "HD" || root.glyph == "HO";
     out property <bool> available: root.has-explicit-icon || root.has-mapped-icon;
 
     width: root.icon-size;
@@ -45,6 +46,9 @@ export component VxIcon inherits Image {
         root.glyph == "SH" ? VxIcons.share :
         root.glyph == "MD" || root.glyph == "AD" ? VxIcons.shield :
         root.glyph == "MU" ? VxIcons.mic-off :
+        root.glyph == "MI" ? VxIcons.mic :
+        root.glyph == "HD" ? VxIcons.headphones :
+        root.glyph == "HO" ? VxIcons.headphones-off :
         root.glyph == "TM" ? VxIcons.clock :
         root.glyph == "KK" || root.glyph == "LV" ? VxIcons.exit :
         root.glyph == "BN" ? VxIcons.ban :
@@ -155,6 +159,60 @@ export component VxButton inherits Rectangle {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
+    }
+}
+
+export component VxCallButton inherits Rectangle {
+    /// Circular icon control for the in-call bar. Fixed size, never stretches:
+    /// the call controls used to be full-width text slabs that grew with the
+    /// window. `label` is the accessible name — these are icon-only by design.
+    in property <string> glyph: "";
+    in property <string> label: "";
+    /// Feature is on (sharing, soundboard open) — accent fill.
+    in property <bool> active: false;
+    /// Something is off that the user should notice (muted, deafened) — danger fill.
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    in property <length> control-size: 42px;
+    callback clicked();
+
+    width: root.control-size;
+    height: root.control-size;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: root.control-size / 2;
+
+    accessible-role: button;
+    accessible-label: root.label;
+
+    property <color> fg: !root.enabled ? VxTheme.text-muted :
+        root.danger || root.active ? #ffffff :
+        call-touch.has-hover ? VxTheme.text-primary : VxTheme.text-secondary;
+
+    background: !root.enabled ? VxTheme.bg-raised :
+                root.danger ? (call-touch.pressed ? VxTheme.danger-pressed :
+                               call-touch.has-hover ? VxTheme.danger-hover : VxTheme.danger) :
+                root.active ? (call-touch.pressed ? VxTheme.accent-pressed :
+                               call-touch.has-hover ? VxTheme.accent-hover : VxTheme.accent) :
+                call-touch.pressed ? VxTheme.surface-active :
+                call-touch.has-hover ? VxTheme.btn-hover-bg : VxTheme.bg-raised;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    animate background { duration: VxTheme.dur-fast; easing: ease-out; }
+
+    call-touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            if root.enabled { root.clicked(); }
+        }
+    }
+
+    VxIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        glyph: root.glyph;
+        icon-size: root.control-size * 0.45;
+        tone: root.fg;
     }
 }
 
@@ -410,12 +468,8 @@ export component VxActionTile inherits Rectangle {
     animate background { duration: 90ms; easing: ease-out; }
     animate border-color { duration: 90ms; easing: ease-out; }
 
-    Rectangle {
-        width: parent.width;
-        height: 2px;
-        background: root.active ? root.tone : VxTheme.accent-subtle;
-    }
-
+    // Active state reads from the tint + border. A 2px coloured cap used to
+    // run along the top edge — decorative, and another stray horizontal line.
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -427,21 +481,21 @@ export component VxActionTile inherits Rectangle {
         Text {
             text: root.eyebrow;
             color: VxTheme.text-muted;
-            font-size: 10px;
-            font-weight: 700;
+            font-size: VxTheme.font-caption;
+            font-weight: VxTheme.weight-semibold;
             letter-spacing: 0.8px;
         }
         Text {
             text: root.title;
             color: root.active ? root.tone : VxTheme.text-primary;
-            font-size: 17px;
-            font-weight: 700;
+            font-size: VxTheme.font-title;
+            font-weight: VxTheme.weight-semibold;
             wrap: word-wrap;
         }
         Text {
             text: root.detail;
             color: VxTheme.text-secondary;
-            font-size: 10px;
+            font-size: VxTheme.font-caption;
             wrap: word-wrap;
         }
     }
@@ -463,13 +517,8 @@ export component VxOptionRow inherits Rectangle {
     animate background { duration: 80ms; easing: ease-out; }
     animate border-color { duration: 80ms; easing: ease-out; }
 
-    Rectangle {
-        width: parent.width;
-        height: 1px;
-        background: root.selected ? VxTheme.accent-subtle : #ffffff08;
-        opacity: 0.75;
-    }
-
+    // Selection reads from the left bar + radio + tint. A top sheen hairline
+    // used to sit here too and registered as a stray line across the row.
     Rectangle {
         x: 0px;
         y: 6px;
@@ -490,7 +539,9 @@ export component VxOptionRow inherits Rectangle {
         padding-top: 8px;
         padding-bottom: 8px;
         spacing: 8px;
-        alignment: center;
+        // No `alignment`: `center` makes children take their preferred width and
+        // centres the group, which defeated the label column's
+        // horizontal-stretch and left device names floating mid-row.
 
         Rectangle {
             width: 10px;
@@ -508,22 +559,16 @@ export component VxOptionRow inherits Rectangle {
             Text {
                 text: root.label;
                 color: VxTheme.text-primary;
-                font-size: 11px;
-                font-weight: 700;
+                font-size: VxTheme.font-label;
+                font-weight: VxTheme.weight-semibold;
                 overflow: elide;
             }
             if root.detail != "" : Text {
                 text: root.detail;
                 color: VxTheme.text-muted;
-                font-size: 9px;
+                font-size: VxTheme.font-caption;
                 overflow: elide;
             }
-        }
-
-        if root.selected : VxStatusPill {
-            label: "Active";
-            tone: VxTheme.accent;
-            fill: VxTheme.accent-subtle;
         }
     }
 }
@@ -605,16 +650,15 @@ export component VxSlider inherits Rectangle {
         width: 22px;
         height: 22px;
         border-radius: 11px;
+        // Hover/press read as fill changes only — the project bans drop shadows
+        // (GPU blur per frame), and this was the last one in the tree.
         background: touch.pressed ? VxTheme.text-primary :
                     touch.has-hover ? VxTheme.accent : VxTheme.bg-panel;
         border-color: touch.pressed ? VxTheme.text-primary : VxTheme.accent;
         border-width: 2.5px;
-        drop-shadow-blur: touch.has-hover ? 4px : 0px;
-        drop-shadow-color: VxTheme.accent.transparentize(0.7);
 
         animate background { duration: 80ms; easing: ease-out; }
         animate border-color { duration: 80ms; easing: ease-out; }
-        animate drop-shadow-blur { duration: 120ms; }
     }
 
     touch := TouchArea {
@@ -708,13 +752,6 @@ export component VxAvatar inherits Rectangle {
 
     animate border-color { duration: 180ms; }
     animate border-width { duration: 180ms; }
-
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        border-radius: parent.border-radius;
-        background: @linear-gradient(160deg, #ffffff1c 0%, transparent 55%, #00101a20 100%);
-    }
 
     Text {
         text: root.initial;

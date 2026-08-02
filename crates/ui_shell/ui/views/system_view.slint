@@ -47,30 +47,23 @@ export component SystemView inherits Rectangle {
 
             VxCard {
                 HorizontalLayout {
-                    padding: 20px;
-                    spacing: 16px;
+                    padding: 16px;
+                    spacing: 14px;
                     alignment: center;
 
                     Rectangle {
-                        width: root.wide ? 68px : 58px;
-                        height: root.wide ? 68px : 58px;
+                        width: root.wide ? 52px : 46px;
+                        height: root.wide ? 52px : 46px;
                         border-radius: VxTheme.radius-card;
-                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
+                        background: VxTheme.accent-subtle;
                         border-color: VxTheme.accent-border;
                         border-width: 1px;
                         clip: true;
 
-                        Rectangle {
-                            width: parent.width;
-                            height: 2px;
-                            background: VxTheme.accent;
-                            opacity: 0.85;
-                        }
-
                         VxGlyphTile {
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
-                            tile-size: root.wide ? 40px : 34px;
+                            tile-size: root.wide ? 30px : 26px;
                             glyph: "SY";
                             tone: VxTheme.accent;
                         }
@@ -78,20 +71,15 @@ export component SystemView inherits Rectangle {
 
                     VerticalLayout {
                         alignment: center;
-                        spacing: 6px;
+                        spacing: 8px;
                         horizontal-stretch: 1;
-                        Text {
-                            text: "Control deck";
-                            color: VxTheme.text-primary;
-                            font-size: 24px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: "Keep the UI light, the audio fast, and the network honest without burying everyday actions.";
-                            color: VxTheme.text-secondary;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
+                        // The TopBar already titles this view "System" and
+                        // subtitles it "Performance, friends, and session
+                        // health." This card used to open with a second,
+                        // differently-worded heading ("Control deck") and a
+                        // tagline, so the view began with two competing titles
+                        // before any actual status.
+                        SectionLabel { text: "SESSION HEALTH"; }
                         HorizontalLayout {
                             spacing: 8px;
                             VxStatusPill {

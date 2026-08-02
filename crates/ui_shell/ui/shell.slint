@@ -214,6 +214,8 @@ export component WorkspaceRail inherits Rectangle {
     in property <int> favorite-friends-count: 0;
     in property <int> online-friends-count: 0;
     in property <string> user-name: "";
+    /// Single upper-case character for the footer avatar — see `display_initial`.
+    in property <string> user-initial: "";
     in property <string> user-status: "";
     in property <bool> is-muted: false;
     in property <bool> is-deafened: false;
@@ -502,7 +504,10 @@ export component WorkspaceRail inherits Rectangle {
 
                 VxAvatar {
                     avatar-size: 28px;
-                    initial: root.user-name != "" ? root.user-name : "?";
+                    // Must be a single character. This used to receive the whole
+                    // display name, which VxAvatar centred and clipped to the
+                    // circle — "Jordan" rendered as "orda".
+                    initial: root.user-initial != "" ? root.user-initial : "?";
                     color-index: 0;
                     show-status: true;
                     is-online: true;
@@ -566,142 +571,117 @@ export component WorkspaceRail inherits Rectangle {
     }
 }
 
+// One nav tab: icon over a stable label. The three tabs used to be copy-pasted
+// Rectangles whose captions changed with the theme preset — choosing the green
+// accent renamed "HOME" to "GUIDE" and "SYS" to "STATS", so navigation wording
+// (and the accessible name) moved with the colour scheme. Presets are accent
+// hues only; nav labels are fixed. The 9px second caption line is gone too.
+component NavTab inherits Rectangle {
+    in property <string> glyph: "";
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <int> badge: 0;
+    callback activated();
+
+    horizontal-stretch: 1;
+    border-radius: VxTheme.radius-control;
+    background: root.active ? VxTheme.tab-active-bg :
+                tab-touch.has-hover ? VxTheme.row-hover-bg : transparent;
+
+    accessible-role: button;
+    accessible-label: root.label;
+
+    animate background { duration: VxTheme.dur-fast; easing: ease-out; }
+
+    tab-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.activated(); }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        HorizontalLayout {
+            alignment: center;
+            VxIcon {
+                glyph: root.glyph;
+                icon-size: 18px;
+                tone: root.active ? VxTheme.accent : VxTheme.text-secondary;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: root.active ? VxTheme.accent : VxTheme.text-secondary;
+            font-size: VxTheme.font-caption;
+            font-weight: VxTheme.weight-semibold;
+            horizontal-alignment: center;
+        }
+    }
+
+    if root.badge > 0 : Rectangle {
+        x: parent.width / 2 + 6px;
+        y: 5px;
+        width: root.badge > 9 ? 22px : 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: VxTheme.accent;
+
+        Text {
+            text: root.badge > 99 ? "99+" : root.badge + "";
+            color: #ffffff;
+            font-size: VxTheme.font-micro;
+            font-weight: VxTheme.weight-semibold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component BottomNav inherits Rectangle {
     in property <int> current-view: 0;
     in property <int> unread-direct-messages-count: 0;
     callback navigate(int);
 
-    height: 48px;
+    height: 52px;
     background: VxTheme.bg-panel;
 
-    AccentBar { y: 0px; opacity: 0.3; }
+    // Flat top hairline, matching the TopBar treatment.
+    Rectangle {
+        y: 0px;
+        width: parent.width;
+        height: 1px;
+        background: VxTheme.border-subtle;
+    }
 
     HorizontalLayout {
         padding-left: 6px;
         padding-right: 6px;
-        padding-top: 4px;
-        padding-bottom: 4px;
+        padding-top: 5px;
+        padding-bottom: 5px;
         spacing: 6px;
 
-        Rectangle {
-            horizontal-stretch: 1;
-            border-radius: VxTheme.radius-control;
-            background: root.current-view == 0 ? VxTheme.tab-active-bg :
-                        home-tab-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-            home-tab-touch := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(0); } }
-            VerticalLayout {
-                alignment: center;
-                spacing: 3px;
-                VxGlyphTile {
-                    tile-size: 24px;
-                    glyph: "HM";
-                    tone: root.current-view == 0 ? VxTheme.accent : VxTheme.text-secondary;
-                }
-                Text {
-                    text: VxTheme.is-party ? "GUIDE" :
-                          VxTheme.is-retro ? "MAIN" :
-                          VxTheme.is-space ? "BRIDGE" :
-                          "HOME";
-                    color: root.current-view == 0 ? VxTheme.accent : VxTheme.text-secondary;
-                    font-size: 10px;
-                    font-weight: 800;
-                }
-                Text {
-                    text: VxTheme.is-party ? "Dashboard" :
-                          VxTheme.is-noir ? "Lobby" :
-                          "Overview";
-                    color: VxTheme.text-muted;
-                    font-size: 9px;
-                }
-            }
+        NavTab {
+            glyph: "HM";
+            label: "Home";
+            active: root.current-view == 0;
+            activated => { root.navigate(0); }
         }
 
-        Rectangle {
-            horizontal-stretch: 1;
-            border-radius: VxTheme.radius-control;
-            background: root.current-view == 2 ? VxTheme.tab-active-bg :
-                        settings-tab-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-            settings-tab-touch := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(2); } }
-            VerticalLayout {
-                alignment: center;
-                spacing: 3px;
-                VxGlyphTile {
-                    tile-size: 24px;
-                    glyph: "IO";
-                    tone: root.current-view == 2 ? VxTheme.accent : VxTheme.text-secondary;
-                }
-                Text {
-                    text: VxTheme.is-party ? "PREF" :
-                          VxTheme.is-retro ? "CONF" :
-                          VxTheme.is-space ? "CTRL" :
-                          "SET";
-                    color: root.current-view == 2 ? VxTheme.accent : VxTheme.text-secondary;
-                    font-size: 10px;
-                    font-weight: 800;
-                }
-                Text {
-                    text: VxTheme.is-party ? "Audio" :
-                          VxTheme.is-noir ? "Dials" :
-                          VxTheme.is-space ? "Array" :
-                          "Devices";
-                    color: VxTheme.text-muted;
-                    font-size: 9px;
-                }
-            }
+        NavTab {
+            glyph: "IO";
+            label: "Settings";
+            active: root.current-view == 2;
+            activated => { root.navigate(2); }
         }
 
-        Rectangle {
-            horizontal-stretch: 1;
-            border-radius: VxTheme.radius-control;
-            background: root.current-view == 3 ? VxTheme.tab-active-bg :
-                        system-tab-touch.has-hover ? VxTheme.row-hover-bg : transparent;
-            system-tab-touch := TouchArea { mouse-cursor: pointer; clicked => { root.navigate(3); } }
-            VerticalLayout {
-                alignment: center;
-                spacing: 3px;
-                VxGlyphTile {
-                    tile-size: 24px;
-                    glyph: "SY";
-                    tone: root.current-view == 3 ? VxTheme.accent : VxTheme.text-secondary;
-                }
-                Text {
-                    text: VxTheme.is-party ? "STATS" :
-                          VxTheme.is-retro ? "MON" :
-                          VxTheme.is-space ? "TEL" :
-                          "SYS";
-                    color: root.current-view == 3 ? VxTheme.accent : VxTheme.text-secondary;
-                    font-size: 10px;
-                    font-weight: 800;
-                }
-                Text {
-                    text: VxTheme.is-party ? "Score" :
-                          VxTheme.is-noir ? "Pulse" :
-                          VxTheme.is-space ? "Sensors" :
-                          "Health";
-                    color: VxTheme.text-muted;
-                    font-size: 9px;
-                }
-            }
-
-            if root.unread-direct-messages-count > 0 : Rectangle {
-                x: parent.width - (root.unread-direct-messages-count > 9 ? 30px : 24px);
-                y: 6px;
-                width: root.unread-direct-messages-count > 9 ? 24px : 18px;
-                height: 18px;
-                border-radius: 9px;
-                background: VxTheme.accent;
-                border-color: VxTheme.accent-border;
-                border-width: 1px;
-
-                Text {
-                    text: root.unread-direct-messages-count + "";
-                    color: VxTheme.text-inverse;
-                    font-size: 9px;
-                    font-weight: 800;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
+        NavTab {
+            glyph: "SY";
+            label: "System";
+            active: root.current-view == 3;
+            badge: root.unread-direct-messages-count;
+            activated => { root.navigate(3); }
         }
     }
 }

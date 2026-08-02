@@ -8,8 +8,8 @@ use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::{ComponentHandle, ModelRc, PhysicalSize, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use ui_shell::{
     AuditEntryData, ChannelData, ChatMessage, DirectMessageThreadData, FriendData,
-    FriendRequestData, MainWindow, MemberData, PerfData, PublicSpaceData, SavedServerData,
-    SoundboardClipData, SpaceData,
+    FriendRequestData, MainWindow, MemberData, ParticipantData, PerfData, PublicSpaceData,
+    SavedServerData, SoundboardClipData, SpaceData, VxTheme,
 };
 
 static INIT_BACKEND: Once = Once::new();
@@ -69,6 +69,10 @@ impl ShellTheme {
 enum UiScenario {
     LoginOverlay,
     Home,
+    /// The live call. This is the app's primary screen and was the one view
+    /// missing from the matrix, which is how a soundboard panel that painted
+    /// over the call controls survived a release.
+    Room,
     Settings,
     System,
     Space,
@@ -87,6 +91,7 @@ impl UiScenario {
         match self {
             Self::LoginOverlay => "login-overlay",
             Self::Home => "home",
+            Self::Room => "room",
             Self::Settings => "settings",
             Self::System => "system",
             Self::Space => "space",
@@ -304,23 +309,25 @@ fn assert_snapshot_has_content(
     let buckets = color_bucket_count(snapshot, full);
     let edges = edge_ratio(snapshot, full);
     let deviation = luma_deviation(snapshot, full);
+    // Full-frame floors, ~20% under the weaker of each scenario's dark/light
+    // render. Deliberately exhaustive with no wildcard arm: a new scenario has
+    // to state its own floor rather than silently inherit one that may not suit
+    // it. Blank or garbled frames measure ≈ 0-2 and still fail every entry.
     let min_deviation = match scenario {
-        // Wide layouts spread the flat v0.14 canvas around the overlay, so the
-        // full-frame average drops (measured ~4.2/4.1; blank frames ≈ 0-2).
-        UiScenario::IncomingCallOverlay => 3.5,
-        // The v0.14 graphite redesign flattens chat + space surfaces on
-        // purpose; observed healthy renders measure ~5-7, blank ones ~0-2.
-        UiScenario::Chat => 4.25,
-        UiScenario::ChatThread => 4.5,
-        UiScenario::ChatMentionPopup => 4.25,
-        UiScenario::Space => 6.0,
-        UiScenario::ToastBanner | UiScenario::ProfilePopup => 6.0,
-        UiScenario::WelcomeOverlay => 3.5,
-        // v0.14 graphite redesign: the login overlay sits on a deliberately
-        // flat canvas, so the full-frame average drops in the wide layout. The
-        // overlay's own region expectation still demands 10.0.
-        UiScenario::LoginOverlay => 4.5,
-        _ => 8.0,
+        UiScenario::LoginOverlay => 3.8,
+        UiScenario::Home => 7.4,
+        UiScenario::Room => 7.5,
+        UiScenario::Settings => 8.2,
+        UiScenario::System => 6.6,
+        UiScenario::Space => 6.3,
+        UiScenario::Chat => 5.0,
+        UiScenario::ChatThread => 6.2,
+        UiScenario::ChatMentionPopup => 5.0,
+        UiScenario::QuickSwitcher => 5.6,
+        UiScenario::IncomingCallOverlay => 3.3,
+        UiScenario::ToastBanner => 7.9,
+        UiScenario::ProfilePopup => 4.4,
+        UiScenario::WelcomeOverlay => 3.3,
     };
 
     assert!(
@@ -331,10 +338,11 @@ fn assert_snapshot_has_content(
         theme.label(),
         buckets
     );
-    // 0.006 since the v0.14 graphite redesign — hairline-only borders produce
-    // fewer hard edges (quick-switcher wide measures ~0.0076; blank ≈ 0).
+    // Hairline-only borders produce few hard edges, so this floor is low by
+    // design; the weakest healthy frame in the matrix (welcome-overlay wide)
+    // measures ~0.0062, a blank one measures ≈ 0.
     assert!(
-        edges >= 0.006,
+        edges >= 0.0045,
         "{} {} {} rendered too few edges: {:.4}",
         scenario.label(),
         width.label(),
@@ -371,12 +379,21 @@ fn maybe_write_snapshot(
         width.label(),
         theme.label()
     ));
+    // Written as opaque RGB: the software renderer leaves the alpha channel at
+    // zero, so an RGBA file opens as a fully transparent (i.e. blank) image in
+    // every viewer, which made these debug snapshots useless for eyeballing.
+    let bytes = snapshot.as_bytes();
+    let mut rgb = Vec::with_capacity(bytes.len() / 4 * 3);
+    for pixel in bytes.chunks_exact(4) {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+
     let file = File::create(path)?;
     let mut encoder = png::Encoder::new(file, snapshot.width(), snapshot.height());
-    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
-    writer.write_image_data(snapshot.as_bytes())?;
+    writer.write_image_data(&rgb)?;
     Ok(())
 }
 
@@ -762,6 +779,47 @@ fn sample_soundboard_clips() -> ModelRc<SoundboardClipData> {
     ])
 }
 
+fn sample_participants() -> ModelRc<ParticipantData> {
+    let base = |id: &str, name: &str, initial: &str, color: i32| ParticipantData {
+        id: s(id),
+        name: s(name),
+        initial: s(initial),
+        is_muted: false,
+        is_deafened: false,
+        is_speaking: false,
+        volume: 1.0,
+        color_index: color,
+        is_priority_speaker: false,
+        audio_level: 0,
+        eq_bass: 0.5,
+        eq_mid: 0.5,
+        eq_treble: 0.5,
+        pan: 0.5,
+    };
+
+    model(vec![
+        ParticipantData {
+            audio_level: 14,
+            ..base("self", "Jordan", "J", 0)
+        },
+        // One speaker, so the speaking ring and the LIVE chip render.
+        ParticipantData {
+            is_speaking: true,
+            audio_level: 68,
+            ..base("peer-ainsley", "Ainsley", "A", 2)
+        },
+        // One muted peer, so the mute badge renders.
+        ParticipantData {
+            is_muted: true,
+            ..base("peer-rowan", "Rowan", "R", 3)
+        },
+        ParticipantData {
+            audio_level: 6,
+            ..base("peer-kit", "Kit", "K", 5)
+        },
+    ])
+}
+
 fn sample_perf() -> PerfData {
     PerfData {
         cpu_percent: 12.0,
@@ -792,8 +850,15 @@ fn populate_fixture(window: &MainWindow, scenario: UiScenario, theme: ShellTheme
 
     window.set_dark_mode(theme.dark_mode());
     window.set_theme_preset(0);
+    // Drive the theme global directly. MainWindow.dark-mode only reaches
+    // VxTheme via a `changed` handler, which needs a running event loop, so
+    // offscreen renders used to produce an identical dark frame for both the
+    // "dark" and "light" halves of this matrix.
+    let vx_theme = window.global::<VxTheme>();
+    vx_theme.set_dark_mode(theme.dark_mode());
+    vx_theme.set_theme_preset(0);
     window.set_first_run(false);
-    window.set_user_name(s("Jordan"));
+    ui_shell::set_user_identity(window, "Jordan");
     window.set_status_text(s("Connected"));
     window.set_is_connected(true);
     window.set_server_address(s("wss://voice.voxlink.dev"));
@@ -888,6 +953,17 @@ fn populate_fixture(window: &MainWindow, scenario: UiScenario, theme: ShellTheme
             window.set_current_view(2);
             window.set_previous_view(1);
         }
+        UiScenario::Room => {
+            window.set_current_view(1);
+            window.set_room_code(s("team-sync"));
+            window.set_participants(sample_participants());
+            window.set_is_open_mic(true);
+            window.set_udp_active(true);
+            window.set_mic_level(0.22);
+            window.set_bandwidth_up_kbps(48);
+            window.set_bandwidth_down_kbps(96);
+            window.set_session_data_mb(s("12.4"));
+        }
         UiScenario::System => {
             window.set_current_view(3);
         }
@@ -955,175 +1031,259 @@ fn populate_fixture(window: &MainWindow, scenario: UiScenario, theme: ShellTheme
     }
 }
 
+const fn region(
+    name: &'static str,
+    rect: RelativeRect,
+    min_edge_ratio: f32,
+    min_color_buckets: usize,
+    min_luma_deviation: f32,
+) -> RegionExpectation {
+    RegionExpectation {
+        name,
+        rect,
+        min_edge_ratio,
+        min_color_buckets,
+        min_luma_deviation,
+    }
+}
+
+/// Per-layout floors, each set roughly 20% under the measured value for a
+/// healthy render of that exact scenario/width. Narrow and wide are listed
+/// separately even where they share a rect: a single floor covering both has to
+/// be loose enough for the weaker of the two, which is how the chat composer
+/// ended up asserting `min_color_buckets: 2` — a solid fill passed it.
+///
+/// To recalibrate after a deliberate restyle, soften these assertions to
+/// `eprintln!`, run the whole matrix once to collect the real numbers, then set
+/// the floors from that table. Do not chase one failure at a time.
 fn expected_regions(scenario: UiScenario, width: LayoutWidth) -> Vec<RegionExpectation> {
     match (scenario, width) {
-        (UiScenario::LoginOverlay, LayoutWidth::Narrow)
-        | (UiScenario::LoginOverlay, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "auth-panel",
-            rect: RelativeRect::new(0.22, 0.22, 0.78, 0.84),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            // 9.0 since the v0.14 graphite redesign flattened the panel.
-            min_luma_deviation: 9.0,
-        }],
+        (UiScenario::LoginOverlay, LayoutWidth::Narrow) => vec![region(
+            "auth-panel",
+            RelativeRect::new(0.22, 0.22, 0.78, 0.84),
+            0.020,
+            12,
+            12.0,
+        )],
+        (UiScenario::LoginOverlay, LayoutWidth::Wide) => vec![region(
+            "auth-panel",
+            RelativeRect::new(0.22, 0.22, 0.78, 0.84),
+            0.010,
+            12,
+            7.0,
+        )],
+
         (UiScenario::Home, LayoutWidth::Narrow) => vec![
-            RegionExpectation {
-                name: "server-card",
-                rect: RelativeRect::new(0.04, 0.18, 0.96, 0.42),
-                min_edge_ratio: 0.008,
-                min_color_buckets: 8,
-                min_luma_deviation: 10.0,
-            },
-            RegionExpectation {
-                name: "quick-call",
-                rect: RelativeRect::new(0.04, 0.50, 0.96, 0.78),
-                min_edge_ratio: 0.008,
-                min_color_buckets: 8,
-                min_luma_deviation: 10.0,
-            },
+            region(
+                "server-card",
+                RelativeRect::new(0.04, 0.18, 0.96, 0.42),
+                0.025,
+                12,
+                15.0,
+            ),
+            region(
+                "quick-call",
+                RelativeRect::new(0.04, 0.50, 0.96, 0.78),
+                0.020,
+                12,
+                16.0,
+            ),
         ],
         (UiScenario::Home, LayoutWidth::Wide) => vec![
-            RegionExpectation {
-                name: "server-card",
-                rect: RelativeRect::new(0.04, 0.18, 0.58, 0.42),
-                min_edge_ratio: 0.008,
-                min_color_buckets: 8,
-                // 6.5 since the v0.14 graphite redesign (measured ~7.8).
-                min_luma_deviation: 6.5,
-            },
-            RegionExpectation {
-                name: "quick-call",
-                rect: RelativeRect::new(0.64, 0.18, 0.96, 0.56),
-                min_edge_ratio: 0.008,
-                min_color_buckets: 8,
-                min_luma_deviation: 10.0,
-            },
+            region(
+                "server-card",
+                RelativeRect::new(0.04, 0.18, 0.58, 0.42),
+                0.018,
+                12,
+                6.5,
+            ),
+            region(
+                "quick-call",
+                RelativeRect::new(0.64, 0.18, 0.96, 0.56),
+                0.025,
+                12,
+                17.0,
+            ),
         ],
-        (UiScenario::Settings, LayoutWidth::Narrow) | (UiScenario::Settings, LayoutWidth::Wide) => {
-            vec![RegionExpectation {
-                name: "settings-header",
-                rect: RelativeRect::new(0.04, 0.02, 0.96, 0.18),
-                min_edge_ratio: 0.008,
-                min_color_buckets: 8,
-                // 7.0 since the v0.14 graphite redesign (measured ~8.4).
-                min_luma_deviation: 7.0,
-            }]
-        }
-        (UiScenario::System, LayoutWidth::Narrow) => vec![RegionExpectation {
-            name: "add-friend-card",
-            rect: RelativeRect::new(0.04, 0.28, 0.96, 0.52),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 9.0,
-        }],
-        (UiScenario::System, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "add-friend-card",
-            rect: RelativeRect::new(0.70, 0.18, 0.96, 0.40),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 8.0,
-        }],
-        (UiScenario::Space, LayoutWidth::Narrow) | (UiScenario::Space, LayoutWidth::Wide) => {
-            vec![RegionExpectation {
-                name: "search-bar",
-                rect: RelativeRect::new(0.04, 0.08, 0.72, 0.18),
-                min_edge_ratio: 0.010,
-                min_color_buckets: 8,
-                // 4.5 since the v0.14 graphite redesign flattened the field
-                // (measured ~5.6 wide / ~9.9 narrow).
-                min_luma_deviation: 4.5,
-            }]
-        }
-        (UiScenario::Chat, LayoutWidth::Narrow) => {
-            // Narrow composer was deliberately flattened by the Discord-modeled
-            // redesign: borderless icon buttons, no shadows. With empty input + no
-            // outgoing draft, the surface collapses to a small handful of color
-            // tiers (shell bg, surface gradient, border, icon glyph). The v0.13
-            // surface-contrast bump can collapse this further on the empty
-            // scenario; floor at 2 buckets keeps the assertion meaningful
-            // without sniping the empty-state visual.
-            vec![RegionExpectation {
-                name: "composer",
-                rect: RelativeRect::new(0.04, 0.84, 0.96, 0.98),
-                min_edge_ratio: 0.002,
-                min_color_buckets: 2,
-                min_luma_deviation: 0.2,
-            }]
-        }
-        (UiScenario::Chat, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "composer",
-            rect: RelativeRect::new(0.30, 0.84, 0.98, 0.98),
-            min_edge_ratio: 0.007,
-            min_color_buckets: 8,
-            min_luma_deviation: 2.5,
-        }],
-        (UiScenario::ChatThread, LayoutWidth::Narrow) => vec![RegionExpectation {
-            name: "thread-panel",
-            rect: RelativeRect::new(0.48, 0.04, 0.98, 0.98),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 3.5,
-        }],
-        (UiScenario::ChatThread, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "thread-panel",
-            rect: RelativeRect::new(0.62, 0.04, 0.98, 0.98),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 7.0,
-        }],
-        (UiScenario::ChatMentionPopup, LayoutWidth::Narrow)
-        | (UiScenario::ChatMentionPopup, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "mention-popup",
-            rect: RelativeRect::new(0.16, 0.72, 0.78, 0.94),
-            // Mention popup got flatter after the composer-cleanup pass — the
-            // glyph tiles + suggestion rows render fewer hard edges than before,
-            // and at narrow widths the popup is partly hidden under the composer
-            // surface, so the sampled region can collapse to {bg, accent text}.
-            // v0.13 surface lift collapsed it further on the narrow-dark snap.
-            min_edge_ratio: 0.003,
-            min_color_buckets: 2,
-            min_luma_deviation: 0.3,
-        }],
-        (UiScenario::QuickSwitcher, LayoutWidth::Narrow)
-        | (UiScenario::QuickSwitcher, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "switcher",
-            rect: RelativeRect::new(0.18, 0.10, 0.82, 0.54),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 6.0,
-        }],
-        (UiScenario::IncomingCallOverlay, LayoutWidth::Narrow)
-        | (UiScenario::IncomingCallOverlay, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "incoming-call-card",
-            rect: RelativeRect::new(0.24, 0.26, 0.76, 0.62),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 9.0,
-        }],
-        (UiScenario::ToastBanner, LayoutWidth::Narrow)
-        | (UiScenario::ToastBanner, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "toast",
-            rect: RelativeRect::new(0.24, 0.90, 0.76, 0.98),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 6,
-            min_luma_deviation: 6.0,
-        }],
-        (UiScenario::ProfilePopup, LayoutWidth::Narrow)
-        | (UiScenario::ProfilePopup, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "profile-popup",
-            rect: RelativeRect::new(0.24, 0.18, 0.76, 0.76),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 4.0,
-        }],
-        (UiScenario::WelcomeOverlay, LayoutWidth::Narrow)
-        | (UiScenario::WelcomeOverlay, LayoutWidth::Wide) => vec![RegionExpectation {
-            name: "welcome-card",
-            rect: RelativeRect::new(0.22, 0.24, 0.78, 0.74),
-            min_edge_ratio: 0.008,
-            min_color_buckets: 8,
-            min_luma_deviation: 9.0,
-        }],
+
+        // The call controls sit in the bottom strip in both layouts — the tab
+        // bar is suppressed for the room view. Locking this region is what
+        // catches a panel painting over the controls, or the controls
+        // collapsing into empty slabs.
+        (UiScenario::Room, LayoutWidth::Narrow) => vec![region(
+            "call-controls",
+            RelativeRect::new(0.0, 0.945, 1.0, 1.0),
+            0.030,
+            12,
+            28.0,
+        )],
+        (UiScenario::Room, LayoutWidth::Wide) => vec![region(
+            "call-controls",
+            RelativeRect::new(0.0, 0.945, 1.0, 1.0),
+            0.015,
+            12,
+            13.0,
+        )],
+
+        (UiScenario::Settings, LayoutWidth::Narrow) => vec![region(
+            "settings-header",
+            RelativeRect::new(0.04, 0.02, 0.96, 0.18),
+            0.040,
+            12,
+            11.0,
+        )],
+        (UiScenario::Settings, LayoutWidth::Wide) => vec![region(
+            "settings-header",
+            RelativeRect::new(0.04, 0.02, 0.96, 0.18),
+            0.025,
+            12,
+            7.0,
+        )],
+
+        (UiScenario::System, LayoutWidth::Narrow) => vec![region(
+            "add-friend-card",
+            RelativeRect::new(0.04, 0.28, 0.96, 0.52),
+            0.014,
+            12,
+            4.0,
+        )],
+        (UiScenario::System, LayoutWidth::Wide) => vec![region(
+            "add-friend-card",
+            RelativeRect::new(0.70, 0.18, 0.96, 0.40),
+            0.030,
+            12,
+            7.0,
+        )],
+
+        (UiScenario::Space, LayoutWidth::Narrow) => vec![region(
+            "search-bar",
+            RelativeRect::new(0.04, 0.08, 0.72, 0.18),
+            0.045,
+            12,
+            7.0,
+        )],
+        (UiScenario::Space, LayoutWidth::Wide) => vec![region(
+            "search-bar",
+            RelativeRect::new(0.04, 0.08, 0.72, 0.18),
+            0.022,
+            12,
+            5.0,
+        )],
+
+        (UiScenario::Chat, LayoutWidth::Narrow) => vec![region(
+            "composer",
+            RelativeRect::new(0.04, 0.84, 0.96, 0.98),
+            0.030,
+            12,
+            10.0,
+        )],
+        (UiScenario::Chat, LayoutWidth::Wide) => vec![region(
+            "composer",
+            RelativeRect::new(0.30, 0.84, 0.98, 0.98),
+            0.015,
+            12,
+            8.0,
+        )],
+
+        (UiScenario::ChatThread, LayoutWidth::Narrow) => vec![region(
+            "thread-panel",
+            RelativeRect::new(0.48, 0.04, 0.98, 0.98),
+            0.014,
+            12,
+            4.5,
+        )],
+        (UiScenario::ChatThread, LayoutWidth::Wide) => vec![region(
+            "thread-panel",
+            RelativeRect::new(0.62, 0.04, 0.98, 0.98),
+            0.014,
+            12,
+            6.0,
+        )],
+
+        (UiScenario::ChatMentionPopup, _) => vec![region(
+            "mention-popup",
+            RelativeRect::new(0.16, 0.72, 0.78, 0.94),
+            0.015,
+            12,
+            4.0,
+        )],
+
+        (UiScenario::QuickSwitcher, LayoutWidth::Narrow) => vec![region(
+            "switcher",
+            RelativeRect::new(0.18, 0.10, 0.82, 0.54),
+            0.005,
+            12,
+            3.8,
+        )],
+        (UiScenario::QuickSwitcher, LayoutWidth::Wide) => vec![region(
+            "switcher",
+            RelativeRect::new(0.18, 0.10, 0.82, 0.54),
+            0.005,
+            12,
+            6.5,
+        )],
+
+        (UiScenario::IncomingCallOverlay, LayoutWidth::Narrow) => vec![region(
+            "incoming-call-card",
+            RelativeRect::new(0.24, 0.26, 0.76, 0.62),
+            0.020,
+            12,
+            14.0,
+        )],
+        (UiScenario::IncomingCallOverlay, LayoutWidth::Wide) => vec![region(
+            "incoming-call-card",
+            RelativeRect::new(0.24, 0.26, 0.76, 0.62),
+            0.008,
+            12,
+            4.8,
+        )],
+
+        // The toast is a single accent slab over a dim scrim, so it is bright
+        // and high-contrast but genuinely low in distinct colours.
+        (UiScenario::ToastBanner, LayoutWidth::Narrow) => vec![region(
+            "toast",
+            RelativeRect::new(0.24, 0.90, 0.76, 0.98),
+            0.035,
+            8,
+            26.0,
+        )],
+        (UiScenario::ToastBanner, LayoutWidth::Wide) => vec![region(
+            "toast",
+            RelativeRect::new(0.24, 0.90, 0.76, 0.98),
+            0.025,
+            12,
+            21.0,
+        )],
+
+        (UiScenario::ProfilePopup, LayoutWidth::Narrow) => vec![region(
+            "profile-popup",
+            RelativeRect::new(0.24, 0.18, 0.76, 0.76),
+            0.010,
+            12,
+            2.8,
+        )],
+        (UiScenario::ProfilePopup, LayoutWidth::Wide) => vec![region(
+            "profile-popup",
+            RelativeRect::new(0.24, 0.18, 0.76, 0.76),
+            0.008,
+            12,
+            6.5,
+        )],
+
+        (UiScenario::WelcomeOverlay, LayoutWidth::Narrow) => vec![region(
+            "welcome-card",
+            RelativeRect::new(0.22, 0.24, 0.78, 0.74),
+            0.020,
+            12,
+            13.0,
+        )],
+        (UiScenario::WelcomeOverlay, LayoutWidth::Wide) => vec![region(
+            "welcome-card",
+            RelativeRect::new(0.22, 0.24, 0.78, 0.74),
+            0.008,
+            12,
+            8.0,
+        )],
     }
 }
 
@@ -1136,7 +1296,14 @@ fn capture_snapshot(
 
     let window = MainWindow::new().expect("main window should build");
     populate_fixture(&window, scenario, theme);
-    window.window().set_size(width.size(scenario.tall_layout()));
+    let size = width.size(scenario.tall_layout());
+    window.window().set_size(size);
+    // Pin the breakpoint flags to match the size we just set. They are normally
+    // assigned from `init` and a `changed width` handler, neither of which runs
+    // for an offscreen render, so without this every "narrow" frame rendered the
+    // three-column desktop layout squeezed into 460px.
+    window.set_desktop_layout(size.width >= 960);
+    window.set_shell_compact(size.width < 1280);
     window
         .show()
         .expect("window should show in testing backend");
@@ -1156,6 +1323,7 @@ fn run_snapshot_matrix() {
     let scenarios = [
         UiScenario::LoginOverlay,
         UiScenario::Home,
+        UiScenario::Room,
         UiScenario::Settings,
         UiScenario::System,
         UiScenario::Space,

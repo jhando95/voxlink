@@ -1,77 +1,71 @@
 import { ScrollView } from "std-widgets.slint";
 import { SoundboardClipData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxGlyphTile, VxInput, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxButton, VxCard, VxGlyphTile, VxIcon, VxInput, VxOptionRow, VxSlider, VxStatBlock, VxStatusPill, VxToggle } from "../components.slint";
 
 component ThemePresetCard inherits Rectangle {
+    // A preset is one accent hue, so the card shows that hue and its name.
+    // It used to stack three gradients (fill, a 3-stop cap, a diagonal wash)
+    // over three swatch dots — of which the second was a lighter tint of the
+    // first and the third a surface colour identical for every preset.
     in property <string> label: "";
     in property <bool> selected: false;
     in property <color> tone: VxTheme.accent;
-    in property <color> swatch-a: VxTheme.accent;
-    in property <color> swatch-b: VxTheme.accent-warm;
-    in property <color> swatch-c: VxTheme.bg-raised;
     callback clicked();
 
     horizontal-stretch: 1;
+    height: 54px;
     border-radius: VxTheme.radius-card;
-    background: root.selected
-        ? @linear-gradient(180deg, root.tone.transparentize(0.90) 0%, root.tone.transparentize(0.94) 100%)
-        : touch.has-hover
-            ? @linear-gradient(180deg, VxTheme.card-hover-bg.brighter(0.02) 0%, VxTheme.card-hover-bg 100%)
-            : @linear-gradient(180deg, VxTheme.bg-soft.brighter(0.02) 0%, VxTheme.bg-soft 100%);
+    background: root.selected ? root.tone.transparentize(0.90) :
+                touch.has-hover ? VxTheme.card-hover-bg : VxTheme.bg-soft;
     border-color: root.selected ? root.tone.transparentize(0.42) : VxTheme.border-subtle;
     border-width: 1px;
     clip: true;
-    height: 54px;
+
+    accessible-role: button;
+    accessible-label: root.label;
 
     animate background { duration: 90ms; easing: ease-out; }
     animate border-color { duration: 90ms; easing: ease-out; }
-
-    Rectangle {
-        width: parent.width;
-        height: 3px;
-        background: @linear-gradient(90deg, root.swatch-a 0%, root.swatch-b 58%, root.swatch-c 100%);
-    }
-
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: @linear-gradient(125deg, root.tone.transparentize(0.92) 0%, transparent 56%, VxTheme.header-accent-right.transparentize(0.96) 100%);
-        opacity: root.selected ? 1.0 : 0.6;
-    }
 
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 
-    VerticalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        padding-top: 8px;
-        padding-bottom: 8px;
-        spacing: 6px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
 
-        HorizontalLayout {
-            spacing: 6px;
+        VerticalLayout {
             alignment: center;
-            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-a; }
-            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-b; }
-            Rectangle { width: 12px; height: 12px; border-radius: 6px; background: root.swatch-c; }
-            Rectangle { horizontal-stretch: 1; }
             Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.selected ? root.tone : VxTheme.border-subtle;
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: root.tone;
             }
         }
 
-        Text {
-            text: root.label;
-            color: root.selected ? root.tone : VxTheme.text-primary;
-            font-size: 12px;
-            font-weight: root.selected ? 700 : 600;
-            overflow: elide;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.label;
+                color: root.selected ? root.tone : VxTheme.text-primary;
+                font-size: VxTheme.font-label;
+                font-weight: VxTheme.weight-semibold;
+                overflow: elide;
+            }
+        }
+
+        if root.selected : VerticalLayout {
+            alignment: center;
+            VxIcon {
+                glyph: "OK";
+                icon-size: 15px;
+                tone: root.tone;
+            }
         }
     }
 }
@@ -195,17 +189,10 @@ export component SettingsView inherits Rectangle {
                         width: root.wide ? 66px : 56px;
                         height: root.wide ? 66px : 56px;
                         border-radius: VxTheme.radius-card;
-                        background: @linear-gradient(145deg, VxTheme.accent-subtle 0%, VxTheme.bg-soft 78%, transparent 100%);
+                        background: VxTheme.accent-subtle;
                         border-color: VxTheme.accent-border;
                         border-width: 1px;
                         clip: true;
-
-                        Rectangle {
-                            width: parent.width;
-                            height: 2px;
-                            background: VxTheme.accent;
-                            opacity: 0.85;
-                        }
 
                         VxGlyphTile {
                             x: (parent.width - self.width) / 2;
@@ -325,36 +312,24 @@ export component SettingsView inherits Rectangle {
                                         label: "Voxlink";
                                         selected: root.theme-preset == 0;
                                         tone: #8b76ff;
-                                        swatch-a: #8b76ff;
-                                        swatch-b: #a58cff;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(0); }
                                     }
                                     ThemePresetCard {
                                         label: "360 Party";
                                         selected: root.theme-preset == 1;
                                         tone: #7dd257;
-                                        swatch-a: #7dd257;
-                                        swatch-b: #a3e07f;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(1); }
                                     }
                                     ThemePresetCard {
                                         label: "Deep Space";
                                         selected: root.theme-preset == 2;
                                         tone: #6ea1ff;
-                                        swatch-a: #6ea1ff;
-                                        swatch-b: #9dc0ff;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(2); }
                                     }
                                     ThemePresetCard {
                                         label: "Retro Tech";
                                         selected: root.theme-preset == 3;
                                         tone: #52d6a4;
-                                        swatch-a: #52d6a4;
-                                        swatch-b: #85e3c0;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(3); }
                                     }
                                 }
@@ -365,27 +340,18 @@ export component SettingsView inherits Rectangle {
                                         label: "Amber CRT";
                                         selected: root.theme-preset == 4;
                                         tone: #f2ac52;
-                                        swatch-a: #f2ac52;
-                                        swatch-b: #f7c88a;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(4); }
                                     }
                                     ThemePresetCard {
                                         label: "Midnight Noir";
                                         selected: root.theme-preset == 5;
                                         tone: #9fb0d0;
-                                        swatch-a: #9fb0d0;
-                                        swatch-b: #c3cde2;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(5); }
                                     }
                                     ThemePresetCard {
                                         label: "Arctic Glass";
                                         selected: root.theme-preset == 6;
                                         tone: #5ecbe8;
-                                        swatch-a: #5ecbe8;
-                                        swatch-b: #92def1;
-                                        swatch-c: #17181d;
                                         clicked => { root.select-theme-preset(6); }
                                     }
                                 }
@@ -1407,18 +1373,12 @@ export component SettingsView inherits Rectangle {
                                     label: "Voxlink";
                                     selected: root.theme-preset == 0;
                                     tone: #8b76ff;
-                                    swatch-a: #8b76ff;
-                                    swatch-b: #a58cff;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(0); }
                                 }
                                 ThemePresetCard {
                                     label: "360 Party";
                                     selected: root.theme-preset == 1;
                                     tone: #7dd257;
-                                    swatch-a: #7dd257;
-                                    swatch-b: #a3e07f;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(1); }
                                 }
                             }
@@ -1428,18 +1388,12 @@ export component SettingsView inherits Rectangle {
                                     label: "Deep Space";
                                     selected: root.theme-preset == 2;
                                     tone: #6ea1ff;
-                                    swatch-a: #6ea1ff;
-                                    swatch-b: #9dc0ff;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(2); }
                                 }
                                 ThemePresetCard {
                                     label: "Retro Tech";
                                     selected: root.theme-preset == 3;
                                     tone: #52d6a4;
-                                    swatch-a: #52d6a4;
-                                    swatch-b: #85e3c0;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(3); }
                                 }
                             }
@@ -1449,18 +1403,12 @@ export component SettingsView inherits Rectangle {
                                     label: "Amber CRT";
                                     selected: root.theme-preset == 4;
                                     tone: #f2ac52;
-                                    swatch-a: #f2ac52;
-                                    swatch-b: #f7c88a;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(4); }
                                 }
                                 ThemePresetCard {
                                     label: "Noir";
                                     selected: root.theme-preset == 5;
                                     tone: #9fb0d0;
-                                    swatch-a: #9fb0d0;
-                                    swatch-b: #c3cde2;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(5); }
                                 }
                             }
@@ -1470,9 +1418,6 @@ export component SettingsView inherits Rectangle {
                                     label: "Arctic Glass";
                                     selected: root.theme-preset == 6;
                                     tone: #5ecbe8;
-                                    swatch-a: #5ecbe8;
-                                    swatch-b: #92def1;
-                                    swatch-c: #17181d;
                                     clicked => { root.select-theme-preset(6); }
                                 }
                                 Rectangle { horizontal-stretch: 1; background: transparent; }

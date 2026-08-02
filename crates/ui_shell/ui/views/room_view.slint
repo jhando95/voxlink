@@ -1,6 +1,6 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { ParticipantData, ShareSourceData, SoundboardClipData, VxTheme } from "../theme.slint";
-import { Divider, FieldLabel, SectionLabel, VxAvatar, VxButton, VxCard, VxGlyphTile, VxLogoBig, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
+import { Divider, FieldLabel, KeyPill, SectionLabel, VxAvatar, VxButton, VxCallButton, VxCard, VxGlyphTile, VxLogoBig, VxOptionRow, VxSlider, VxStatusPill } from "../components.slint";
 
 export component RoomView inherits Rectangle {
     in property <bool> wide: false;
@@ -89,15 +89,23 @@ export component RoomView inherits Rectangle {
         root.participants.length <= 1 ? 1 :
         root.participants.length <= 4 ? 2 :
         root.participants.length <= 9 ? 3 : 4;
-    property <length> avatar-sz:
-        (root.participants.length <= 2 ? 88px :
-        root.participants.length <= 4 ? 76px :
-        root.participants.length <= 9 ? 64px : 52px) * VxTheme.s;
-    property <length> tile-w: root.avatar-sz + 24px * VxTheme.s;
-    property <length> tile-h: root.avatar-sz + 40px * VxTheme.s;
     property <length> tile-gap: (root.wide ? 16px : 10px) * VxTheme.s;
     property <int> row-count: root.participants.length <= 0 ? 0 :
         (root.participants.length + root.cols - 1) / root.cols;
+
+    // Tiles grow to fill the stage instead of sitting at a fixed size keyed only
+    // to head-count: four people on a 1440px window used to leave the call
+    // stage almost entirely empty around four 76px avatars. Chrome subtracted
+    // here is the header, status strip, level strip, control bar and padding.
+    property <length> stage-h-avail: max(160px, root.height - 180px);
+    property <length> stage-w-avail: max(240px, root.width - 32px);
+    property <length> fit-by-height:
+        (root.stage-h-avail - (max(1, root.row-count) - 1) * root.tile-gap) / max(1, root.row-count) - 40px;
+    property <length> fit-by-width:
+        (root.stage-w-avail - (root.cols - 1) * root.tile-gap) / root.cols - 24px;
+    property <length> avatar-sz: clamp(min(root.fit-by-height, root.fit-by-width), 52px, 132px) * VxTheme.s;
+    property <length> tile-w: root.avatar-sz + 24px * VxTheme.s;
+    property <length> tile-h: root.avatar-sz + 40px * VxTheme.s;
     property <length> grid-w: root.cols * root.tile-w + (root.cols - 1) * root.tile-gap;
     property <length> grid-h: root.row-count * root.tile-h + (root.row-count <= 1 ? 0px : (root.row-count - 1) * root.tile-gap);
     property <length> share-preview-card-width: clamp(root.width * 0.30, 236px, 352px);
@@ -111,21 +119,11 @@ export component RoomView inherits Rectangle {
         //  ZONE 1 — Header bar
         // ═══════════════════════════════════════════
         Rectangle {
+            // Flat 52px bar + hairline, matching the shell TopBar. A vertical
+            // gradient and a diagonal accent-glow wash used to sit here, so the
+            // room header read as a different product from every other view.
             height: 52px * VxTheme.s;
-            background: @linear-gradient(180deg,
-                VxTheme.bg-card.brighter(VxTheme.dark-mode ? 0.03 : 0.01) 0%,
-                VxTheme.bg-card 78%,
-                VxTheme.bg-soft.transparentize(VxTheme.dark-mode ? 0.72 : 0.52) 100%);
-            border-color: VxTheme.border-subtle;
-            border-width: 0px;
-
-            Rectangle {
-                x: -parent.width * 0.05;
-                width: parent.width * 0.34;
-                height: parent.height;
-                background: @linear-gradient(125deg, VxTheme.accent-glow 0%, transparent 76%);
-                opacity: VxTheme.dark-mode ? 0.9 : 0.62;
-            }
+            background: VxTheme.bg-card;
 
             // bottom border
             Rectangle {
@@ -139,7 +137,10 @@ export component RoomView inherits Rectangle {
                 padding-left: 16px;
                 padding-right: 16px;
                 spacing: 12px;
-                alignment: center;
+                // No `alignment` binding: `alignment: center` makes children
+                // take their preferred width and centres the whole group, which
+                // defeated the title's horizontal-stretch and left the room name
+                // floating in the middle of the bar instead of anchored left.
 
                 // Left: channel/room info
                 VerticalLayout {
@@ -267,20 +268,11 @@ export component RoomView inherits Rectangle {
         //  ZONE 2 — Stage area
         // ═══════════════════════════════════════════
         Rectangle {
+            // Flat stage. Speaking rings and level meters are the signal here;
+            // a vertical gradient plus an accent wash sat behind them and cost
+            // two full-stage alpha composites per repaint.
             vertical-stretch: 1;
-            background: @linear-gradient(180deg,
-                VxTheme.bg-stage.brighter(VxTheme.dark-mode ? 0.02 : 0.00) 0%,
-                VxTheme.bg-stage 62%,
-                VxTheme.bg-panel 100%);
-
-            Rectangle {
-                x: -parent.width * 0.08;
-                y: 0px;
-                width: parent.width * 0.48;
-                height: parent.height * 0.28;
-                background: @linear-gradient(135deg, VxTheme.accent-glow 0%, transparent 74%);
-                opacity: VxTheme.dark-mode ? 0.65 : 0.42;
-            }
+            background: VxTheme.bg-stage;
 
             VerticalLayout {
                 padding: 16px;
@@ -589,32 +581,30 @@ export component RoomView inherits Rectangle {
                                         }
                                     }
 
-                                    // Speaking "LIVE" pill (centered above avatar)
+                                    // Speaking chip (centered above avatar). One
+                                    // caption for every preset, sized from its
+                                    // own text: this used to say "HOT MIC",
+                                    // "COMMS", "TX" or "On Air" depending on the
+                                    // accent hue, across six hand-tuned fixed
+                                    // widths and two border radii.
                                     if p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted) : Rectangle {
                                         x: (parent.width - self.width) / 2;
                                         y: -8px;
-                                        width:
-                                            VxTheme.is-party ? 52px :
-                                            VxTheme.is-space ? 42px :
-                                            VxTheme.is-retro ? 28px :
-                                            VxTheme.is-noir  ? 36px :
-                                            32px;
+                                        width: live-label.preferred-width + 14px;
                                         height: 16px;
-                                        border-radius:
-                                            VxTheme.is-retro || VxTheme.is-amber ? 2px : 8px;
+                                        border-radius: 8px;
                                         background: VxTheme.success;
-                                        Text {
-                                            text:
-                                                VxTheme.is-party ? "HOT MIC" :
-                                                VxTheme.is-space ? "COMMS" :
-                                                VxTheme.is-retro ? "TX" :
-                                                VxTheme.is-amber ? "TX" :
-                                                VxTheme.is-noir  ? "On Air" :
-                                                VxTheme.is-arctic ? "LIVE" :
-                                                "LIVE";
-                                            color: VxTheme.text-inverse;
-                                            font-size: 10px;
-                                            font-weight: 800;
+
+                                        // `success` is one fixed green in both
+                                        // modes, so the ink on it is fixed too —
+                                        // text-inverse would go white-on-green
+                                        // in light mode.
+                                        live-label := Text {
+                                            text: "LIVE";
+                                            color: #0b1710;
+                                            font-size: VxTheme.font-micro;
+                                            font-weight: VxTheme.weight-bold;
+                                            letter-spacing: 0.5px;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
@@ -665,12 +655,12 @@ export component RoomView inherits Rectangle {
                                 background: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
                                     ? VxTheme.success.transparentize(0.92)
                                     : tile-touch.has-hover && p.id != "self" ? VxTheme.row-hover-bg : transparent;
-                                border-color: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
-                                    ? VxTheme.success.transparentize(0.55)
-                                    : root.selected-peer-id == p.id ? VxTheme.accent-border : transparent;
-                                border-width: p.is-speaking && !p.is-muted && !(p.id == "self" && root.is-muted)
-                                    ? 1px
-                                    : root.selected-peer-id == p.id ? 1px : 0px;
+                                // Speaking is already signalled by the ring around
+                                // the avatar and the LIVE chip, so the tile only
+                                // tints. The outline is reserved for selection,
+                                // which has no other marker.
+                                border-color: root.selected-peer-id == p.id ? VxTheme.accent-border : transparent;
+                                border-width: root.selected-peer-id == p.id ? 1px : 0px;
                                 animate background { duration: 120ms; }
                                 animate border-color { duration: 120ms; }
                             }
@@ -720,9 +710,7 @@ export component RoomView inherits Rectangle {
                             Rectangle {
                                 height: 48px;
                                 border-radius: VxTheme.radius-control;
-                                background: @linear-gradient(135deg,
-                                    VxTheme.success-dim 0%,
-                                    VxTheme.accent-subtle 100%);
+                                background: VxTheme.success-dim;
                                 border-color: VxTheme.success.transparentize(0.48);
                                 border-width: 1px;
 
@@ -1133,10 +1121,8 @@ export component RoomView inherits Rectangle {
         //  CONNECTION STATUS BAR
         // ═══════════════════════════════════════════
         Rectangle {
-            height: 28px * VxTheme.s;
+            height: 26px * VxTheme.s;
             background: VxTheme.bg-card;
-            border-color: VxTheme.border-subtle;
-            border-width: 0px;
 
             // Top border
             Rectangle {
@@ -1164,13 +1150,17 @@ export component RoomView inherits Rectangle {
 
                 padding-left: 16px;
                 padding-right: 16px;
-                spacing: 10px;
-                alignment: center;
+                // Metrics are separated by space and colour hierarchy. Four 1px
+                // vertical rules used to divide this row, which put hairlines
+                // directly beside 11px text on the app's busiest strip.
+                spacing: 12px;
+                alignment: start;
 
                 // Connection quality dot
                 Rectangle {
                     width: 8px;
                     height: 8px;
+                    y: (parent.height - self.height) / 2;
                     border-radius: 4px;
                     background: status-bar-row.quality-color;
                     opacity: !root.is-connected || root.reconnect-attempts > 0
@@ -1182,110 +1172,114 @@ export component RoomView inherits Rectangle {
                 Text {
                     text: status-bar-row.quality-label;
                     color: status-bar-row.quality-color;
-                    font-size: 12px;
-                    font-weight: 600;
+                    font-size: VxTheme.font-label;
+                    font-weight: VxTheme.weight-semibold;
                     vertical-alignment: center;
                 }
 
-                // Ping value — dimmer for healthy connections, same color
+                // Ping value — dimmer for healthy connections, same colour
                 // tier as the label for stressed ones.
                 if root.ping-ms >= 0 : Text {
                     text: root.ping-ms + "ms";
                     color: root.ping-ms < 100 ? VxTheme.text-muted : status-bar-row.quality-color;
-                    font-size: 12px;
-                    font-weight: 600;
+                    font-size: VxTheme.font-label;
+                    font-weight: VxTheme.weight-semibold;
                     vertical-alignment: center;
-                }
-
-                // Separator
-                if root.ping-ms >= 0 : Rectangle {
-                    width: 1px;
-                    height: 12px;
-                    background: VxTheme.border-subtle;
                 }
 
                 // Protocol badge
                 Rectangle {
                     width: proto-text.preferred-width + 10px;
-                    height: 16px;
-                    border-radius: 3px;
+                    height: 15px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4px;
                     background: root.udp-active
-                        ? VxTheme.success.transparentize(0.85)
-                        : VxTheme.text-muted.transparentize(0.85);
-                    border-color: root.udp-active
-                        ? VxTheme.success.transparentize(0.6)
-                        : VxTheme.border-subtle;
-                    border-width: 1px;
+                        ? VxTheme.success.transparentize(0.86)
+                        : VxTheme.text-muted.transparentize(0.86);
 
                     proto-text := Text {
                         text: root.udp-active ? "UDP" : "WS";
                         color: root.udp-active ? VxTheme.success : VxTheme.text-muted;
-                        font-size: 11px;
-                        font-weight: 800;
+                        font-size: VxTheme.font-micro;
+                        font-weight: VxTheme.weight-bold;
+                        letter-spacing: 0.4px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                 }
 
                 // Dropped frames (only show if > 0)
-                if root.dropped-frames > 0 : HorizontalLayout {
-                    spacing: 4px;
-                    alignment: center;
-                    Rectangle {
-                        width: 1px;
-                        height: 12px;
-                        background: VxTheme.border-subtle;
-                    }
-                    Text {
-                        text: root.dropped-frames + " dropped";
-                        color: VxTheme.warning;
-                        font-size: 11px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
+                if root.dropped-frames > 0 : Text {
+                    text: root.dropped-frames + " dropped";
+                    color: VxTheme.warning;
+                    font-size: VxTheme.font-caption;
+                    font-weight: VxTheme.weight-semibold;
+                    vertical-alignment: center;
                 }
 
-                // Bandwidth display — separator + up/down kbps
-                if root.bandwidth-up-kbps > 0 || root.bandwidth-down-kbps > 0 : HorizontalLayout {
-                    spacing: 4px;
-                    alignment: center;
-                    Rectangle {
-                        width: 1px;
-                        height: 12px;
-                        background: VxTheme.border-subtle;
-                    }
-                    Text {
-                        text: "\u{2191}" + root.bandwidth-up-kbps + "  \u{2193}" + root.bandwidth-down-kbps + " kbps";
-                        color: VxTheme.text-muted;
-                        font-size: 11px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
+                // Throughput and session totals are diagnostics — they stay on
+                // the wide layout and move out of the way when space is tight.
+                if root.wide && (root.bandwidth-up-kbps > 0 || root.bandwidth-down-kbps > 0) : Text {
+                    text: "\u{2191}" + root.bandwidth-up-kbps + "  \u{2193}" + root.bandwidth-down-kbps + " kbps";
+                    color: VxTheme.text-muted;
+                    font-size: VxTheme.font-caption;
+                    font-weight: VxTheme.weight-medium;
+                    vertical-alignment: center;
                 }
 
-                // Session total + estimated per hour
-                if root.session-data-mb != "0.0" : HorizontalLayout {
-                    spacing: 4px;
-                    alignment: center;
-                    Rectangle {
-                        width: 1px;
-                        height: 12px;
-                        background: VxTheme.border-subtle;
-                    }
-                    Text {
-                        text: root.session-data-mb + " MB" + (root.est-data-per-hour != "" ? "  \u{b7}  " + root.est-data-per-hour : "");
-                        color: VxTheme.text-muted;
-                        font-size: 11px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
+                if root.wide && root.session-data-mb != "0.0" : Text {
+                    text: root.session-data-mb + " MB" + (root.est-data-per-hour != "" ? "  \u{b7}  " + root.est-data-per-hour : "");
+                    color: VxTheme.text-muted;
+                    font-size: VxTheme.font-caption;
+                    font-weight: VxTheme.weight-medium;
+                    vertical-alignment: center;
                 }
+
+                Rectangle { horizontal-stretch: 1; }
             }
         }
 
         // ═══════════════════════════════════════════
         //  ZONE 3 — Control bar (pinned bottom)
         // ═══════════════════════════════════════════
+
+        // Soundboard quick-panel — a sibling above the control bar. This used
+        // to be a child of the control-bar Rectangle pinned at y:0, so opening
+        // the soundboard painted a 44px panel straight over the mute, deafen
+        // and mic-mode controls underneath it.
+        if root.show-soundboard && root.soundboard-clips.length > 0 : Rectangle {
+            height: 44px;
+            background: VxTheme.bg-panel;
+
+            Rectangle {
+                y: 0px;
+                width: parent.width;
+                height: 1px;
+                background: VxTheme.border-subtle;
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 6px;
+                alignment: center;
+
+                Text {
+                    text: "SFX";
+                    color: VxTheme.text-muted;
+                    font-size: VxTheme.font-caption;
+                    font-weight: VxTheme.weight-semibold;
+                    vertical-alignment: center;
+                }
+
+                for clip[idx] in root.soundboard-clips : VxButton {
+                    label: clip.name;
+                    small: true;
+                    soft: true;
+                    clicked => { root.play-soundboard-clip(idx); }
+                }
+            }
+        }
 
         // Mic level indicator strip
         Rectangle {
@@ -1303,36 +1297,8 @@ export component RoomView inherits Rectangle {
         }
 
         Rectangle {
-            height: 56px * VxTheme.s;
+            height: 64px * VxTheme.s;
             background: VxTheme.bg-card;
-            border-color: VxTheme.border-subtle;
-
-            // Soundboard quick-panel
-            if root.show-soundboard && root.soundboard-clips.length > 0 : Rectangle {
-                background: VxTheme.bg-panel;
-                border-color: VxTheme.border-subtle;
-                border-width: 1px;
-                height: 44px;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 6px;
-                    alignment: center;
-                    Text {
-                        text: "SFX";
-                        color: VxTheme.text-muted;
-                        font-size: 11px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    for clip[idx] in root.soundboard-clips : VxButton {
-                        label: clip.name;
-                        small: true;
-                        soft: true;
-                        clicked => { root.play-soundboard-clip(idx); }
-                    }
-                }
-            }
 
             // Top border
             Rectangle {
@@ -1342,66 +1308,62 @@ export component RoomView inherits Rectangle {
             }
 
             HorizontalLayout {
-                padding-left: root.wide ? 24px : 10px;
-                padding-right: root.wide ? 24px : 10px;
-                padding-top: 6px;
-                padding-bottom: 6px;
-                spacing: 0px;
-                alignment: center;
+                padding-left: root.wide ? 20px : 10px;
+                padding-right: root.wide ? 20px : 10px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 10px;
 
-                // ── Group 1: Audio controls ──
+                // ── Left: mic mode ──
+                // A mode rather than a live toggle, so it keeps its words while
+                // the live controls in the centre go icon-only.
                 HorizontalLayout {
-                    spacing: root.wide ? 6px : 4px;
-                    horizontal-stretch: 3;
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    spacing: 8px;
 
                     VxButton {
-                        label: root.wide && root.mute-key-display != ""
-                            ? (root.is-muted ? "Unmute" : "Mute") + "  [" + root.mute-key-display + "]"
-                            : (root.is-muted ? "Unmute" : "Mute");
-                        danger: root.is-muted;
-                        soft: !root.is-muted;
-                        horizontal-stretch: 1;
-                        clicked => { root.toggle-mute(); }
-                    }
-                    VxButton {
-                        label: root.wide && root.deafen-key-display != ""
-                            ? (root.is-deafened ? "Undeafen" : "Deafen") + "  [" + root.deafen-key-display + "]"
-                            : (root.is-deafened ? "Undeafen" : "Deafen");
-                        soft: true;
-                        horizontal-stretch: 1;
-                        clicked => { root.toggle-deafen(); }
-                    }
-                    VxButton {
-                        label: root.is-open-mic ? "Open Mic" : "PTT";
+                        label: root.is-open-mic ? "Open mic" : "Push to talk";
+                        small: true;
                         accent: root.is-open-mic;
                         soft: !root.is-open-mic;
-                        horizontal-stretch: 1;
                         clicked => { root.toggle-mic-mode(); }
+                    }
+
+                    if root.wide && !root.is-open-mic && root.ptt-key-display != "" : KeyPill {
+                        key-text: root.ptt-key-display;
                     }
                 }
 
-                // Separator
-                Rectangle {
-                    width: 1px;
-                    height: 24px;
-                    background: VxTheme.border-subtle;
-                }
-
-                // ── Group 2: Media & extras ──
+                // ── Centre: live voice controls ──
+                // Fixed-size circles that never stretch. These were five text
+                // buttons carrying horizontal-stretch: 1, so on a wide window
+                // the call controls spread into full-width slabs.
                 HorizontalLayout {
-                    padding-left: root.wide ? 8px : 4px;
-                    padding-right: root.wide ? 8px : 4px;
-                    spacing: root.wide ? 6px : 4px;
-                    horizontal-stretch: 2;
+                    spacing: 8px;
+                    alignment: center;
 
-                    VxButton {
-                        label: root.is-sharing-screen ? "Stop" :
-                               root.has-screen-share ? "Viewing" :
-                               root.show-share-config ? "Close Share" : "Share";
-                        accent: root.is-sharing-screen || root.show-share-config;
-                        soft: !root.is-sharing-screen && !root.show-share-config;
+                    VxCallButton {
+                        glyph: root.is-muted ? "MU" : "MI";
+                        label: root.is-muted ? "Unmute microphone" : "Mute microphone";
+                        danger: root.is-muted;
+                        clicked => { root.toggle-mute(); }
+                    }
+
+                    VxCallButton {
+                        glyph: root.is-deafened ? "HO" : "HD";
+                        label: root.is-deafened ? "Undeafen" : "Deafen";
+                        danger: root.is-deafened;
+                        clicked => { root.toggle-deafen(); }
+                    }
+
+                    VxCallButton {
+                        glyph: "SH";
+                        label: root.is-sharing-screen ? "Stop sharing your screen" :
+                               root.has-screen-share ? "Someone else is sharing" :
+                               "Share your screen";
+                        active: root.is-sharing-screen || root.show-share-config;
                         enabled: root.is-sharing-screen || !root.has-screen-share;
-                        horizontal-stretch: 1;
                         clicked => {
                             if root.is-sharing-screen {
                                 root.toggle-screen-share();
@@ -1413,34 +1375,30 @@ export component RoomView inherits Rectangle {
                             }
                         }
                     }
-                    if root.soundboard-clips.length > 0 : VxButton {
-                        label: "SFX";
-                        accent: root.show-soundboard;
-                        soft: !root.show-soundboard;
-                        horizontal-stretch: 1;
+
+                    if root.soundboard-clips.length > 0 : VxCallButton {
+                        glyph: "GO";
+                        label: "Soundboard";
+                        active: root.show-soundboard;
                         clicked => { root.show-soundboard = !root.show-soundboard; }
                     }
                 }
 
-                // Separator
-                Rectangle {
-                    width: 1px;
-                    height: 24px;
-                    background: VxTheme.border-subtle;
-                }
-
-                // ── Group 3: Navigation ──
+                // ── Right: session actions ──
                 HorizontalLayout {
-                    padding-left: root.wide ? 8px : 4px;
-                    spacing: root.wide ? 6px : 4px;
+                    horizontal-stretch: 1;
+                    alignment: end;
+                    spacing: 8px;
 
-                    VxButton {
-                        label: "Settings";
-                        ghost: true;
+                    VxCallButton {
+                        glyph: "IO";
+                        label: "Audio settings";
                         clicked => { root.navigate(2); }
                     }
+
                     VxButton {
                         label: root.in-space-channel ? "Leave" : "Disconnect";
+                        glyph: "LV";
                         danger: true;
                         clicked => {
                             if root.in-space-channel {

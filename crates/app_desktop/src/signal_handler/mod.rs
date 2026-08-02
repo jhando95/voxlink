@@ -898,7 +898,7 @@ pub fn process_signals(
                 w.set_is_logged_in(true);
                 w.set_show_login_view(false);
                 w.set_auth_error(slint::SharedString::default());
-                w.set_user_name(display_name.as_str().into());
+                ui_shell::set_user_identity(w, display_name.as_str());
                 crate::helpers::show_toast(w, &format!("Welcome back, {display_name}"), 1);
                 if !token.is_empty() {
                     crate::helpers::save_auth_token_async(token.clone());
@@ -985,7 +985,7 @@ pub fn process_signals(
                 log::info!("Display name changed for {user_id}: {name}");
                 // Show toast if it's our own display name change
                 if state.borrow().self_user_id.as_deref() == Some(user_id.as_str()) {
-                    w.set_user_name(name.as_str().into());
+                    ui_shell::set_user_identity(w, name.as_str());
                     crate::helpers::show_toast(w, "Display name updated", 1);
                 }
             }

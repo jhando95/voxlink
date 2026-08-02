@@ -102,6 +102,15 @@ fn account_management_forms_stay_stacked_and_readable() {
 #[test]
 fn chat_shell_and_composer_adapt_before_the_ui_gets_squeezed() {
     let main_ui = read_ui_file("ui/main.slint");
+    // Breakpoints must be applied on the first paint as well as on resize. With
+    // only a `changed width` handler they kept their `true` defaults until the
+    // window happened to change size, so a narrow window was first laid out as
+    // a three-column desktop with the chat transcript squeezed to nothing.
+    // (They are assignments rather than bindings on purpose: binding them to
+    // `root.width` closes a layout loop Slint may panic on.)
+    let init_block = snippet(&main_ui, "    init => {", 200);
+    assert!(init_block.contains("root.desktop-layout = root.width >= 960px;"));
+    assert!(init_block.contains("root.shell-compact = root.width < 1280px;"));
     assert!(main_ui.contains("root.desktop-layout = self.width >= 960px;"));
     assert!(main_ui.contains("root.shell-compact = self.width < 1280px;"));
     assert!(main_ui.contains("property <bool> chat-focus-layout: root.current-view == 5;"));
@@ -166,16 +175,137 @@ fn screen_share_preview_uses_a_dedicated_popout_window() {
 #[test]
 fn screen_share_stays_explicit_until_start() {
     let room_ui = read_ui_file("ui/views/room_view.slint");
-    let share_button = snippet(
-        &room_ui,
-        "root.show-share-config ? \"Close Share\" : \"Share\";",
-        420,
-    );
-    assert!(share_button.contains("enabled: root.is-sharing-screen || !root.has-screen-share;"));
-    assert!(!share_button.contains("root.toggle-screen-share();"));
-    assert!(room_ui.contains("root.refresh-screen-share-sources();"));
 
+    // Anchored on the control's own glyph rather than on a byte window after
+    // its label: the previous version passed only because `toggle-screen-share`
+    // happened to fall 26 characters outside the window it inspected, so any
+    // reordering of the control's properties silently changed what was tested.
+    let share_control = snippet(&room_ui, "glyph: \"SH\";", 1200);
+    assert!(
+        share_control.contains("enabled: root.is-sharing-screen || !root.has-screen-share;"),
+        "the share control must stay disabled while somebody else is sharing"
+    );
+    assert!(
+        share_control.contains("root.show-share-config = !root.show-share-config;"),
+        "the share control must open the source picker, not begin a share"
+    );
+    assert!(
+        share_control.contains("root.refresh-screen-share-sources();"),
+        "opening the picker must refresh the source list"
+    );
+
+    // The only path from the control to `toggle-screen-share` is the branch
+    // that stops a share already running.
+    let after_stop_branch = share_control
+        .split("if root.is-sharing-screen {")
+        .nth(1)
+        .expect("the share control should branch on is-sharing-screen");
+    let stop_branch = after_stop_branch
+        .split("} else if")
+        .next()
+        .expect("the is-sharing-screen branch should be followed by an else-if");
+    assert!(
+        stop_branch.contains("root.toggle-screen-share();"),
+        "the is-sharing-screen branch should stop the share"
+    );
+    let picker_branch = after_stop_branch
+        .split("} else if")
+        .nth(1)
+        .expect("the share control should have an else-if branch");
+    assert!(
+        !picker_branch.contains("root.toggle-screen-share();"),
+        "opening the picker must not start a share"
+    );
+
+    // Starting is explicit and gated on having chosen a source.
     let share_header = snippet(&room_ui, "label: \"Start\";", 320);
     assert!(share_header.contains("enabled: root.selected-screen-share-source >= 0"));
     assert!(room_ui.contains("clicked => { root.toggle-screen-share(); }"));
+}
+
+#[test]
+fn call_controls_are_fixed_size_and_labelled_for_assistive_tech() {
+    let components = read_ui_file("ui/components.slint");
+    // The in-call controls are icon-only, so the accessible name is the only
+    // name they have.
+    let call_button = snippet(&components, "export component VxCallButton", 1400);
+    assert!(call_button.contains("accessible-role: button;"));
+    assert!(call_button.contains("accessible-label: root.label;"));
+    // They must never stretch: the call bar used to be full-width text slabs.
+    assert!(call_button.contains("horizontal-stretch: 0;"));
+
+    let room_ui = read_ui_file("ui/views/room_view.slint");
+    for expected in [
+        "label: root.is-muted ? \"Unmute microphone\" : \"Mute microphone\";",
+        "label: root.is-deafened ? \"Undeafen\" : \"Deafen\";",
+        "label: \"Audio settings\";",
+    ] {
+        assert!(
+            room_ui.contains(expected),
+            "call control missing accessible label: {expected}"
+        );
+    }
+    // No control in the room view stretches to fill the bar.
+    assert!(
+        !room_ui.contains("horizontal-stretch: 1;\n                        clicked =>"),
+        "call controls must not stretch"
+    );
+}
+
+#[test]
+fn navigation_labels_do_not_change_with_the_theme_preset() {
+    // Presets are accent hues only. The bottom tab bar used to rename itself
+    // per preset — "HOME" became "GUIDE" or "BRIDGE", "SYS" became "STATS" —
+    // which moved both the visible wording and the accessible name with the
+    // colour scheme.
+    let shell = read_ui_file("ui/shell.slint");
+    let bottom_nav = snippet(&shell, "export component BottomNav", 1600);
+    for banned in ["is-party", "is-retro", "is-noir", "is-arctic", "is-amber"] {
+        assert!(
+            !bottom_nav.contains(banned),
+            "bottom navigation must not branch on theme preset: {banned}"
+        );
+    }
+    for label in [
+        "label: \"Home\";",
+        "label: \"Settings\";",
+        "label: \"System\";",
+    ] {
+        assert!(
+            bottom_nav.contains(label),
+            "missing stable nav label: {label}"
+        );
+    }
+}
+
+#[test]
+fn surfaces_stay_flat_and_shadow_free() {
+    // The v0.14 language is tonal surfaces plus 1px hairlines: no gradients,
+    // no glows, no drop shadows (the project bans them for GPU cost). These
+    // had survived in the shell background, the room header and stage, the
+    // theme-preset cards and the pop-out windows.
+    for file in [
+        "ui/main.slint",
+        "ui/shell.slint",
+        "ui/components.slint",
+        "ui/theme.slint",
+        "ui/member_widget.slint",
+        "ui/screen_share_widget.slint",
+        "ui/views/room_view.slint",
+        "ui/views/home_view.slint",
+        "ui/views/settings_view.slint",
+        "ui/views/system_view.slint",
+        "ui/views/space_view.slint",
+        "ui/views/chat_view.slint",
+    ] {
+        let content = read_ui_file(file);
+        assert!(
+            !content.contains("@linear-gradient") && !content.contains("@radial-gradient"),
+            "{file} reintroduces a gradient"
+        );
+        assert!(
+            !content.contains("drop-shadow"),
+            "{file} reintroduces a drop shadow"
+        );
+    }
 }

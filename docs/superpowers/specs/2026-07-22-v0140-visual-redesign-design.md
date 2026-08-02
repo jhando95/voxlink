@@ -56,3 +56,22 @@ still fail every check.
 Light-mode polish pass beyond the mirrored palette, room/system view deep
 restructuring (inherited the system via tokens/components), and any
 protocol/server change (release is client-only).
+
+## Follow-up — v0.14.1
+
+The deferred items above were completed in v0.14.1, which took the room (live
+call) view through the same treatment: fixed-size circular call controls
+replacing full-width text slabs, flat header and stage, tiles sized to the
+stage, one preset-independent speaking chip, and a quieter status strip. The
+last pre-v0.14 leftovers elsewhere went with it — four full-window gradient
+washes behind the whole shell, the slider drop shadow, the avatar sheen,
+decorative cap strips, and the theme-preset card gradients.
+
+Auditing the room view surfaced five rendering bugs (see CHANGELOG v0.14.1),
+which prompted the more important finding: the snapshot matrix was rendering
+the same configuration four times. Light mode never rendered, and narrow never
+rendered narrow, so the "light" and "narrow" halves were duplicates — and two
+region assertions had been calibrated down onto blank canvas as a result. The
+room view, the app's primary screen, was not in the matrix at all. Both gaps
+are closed; floors are now per-layout, exhaustive, and set from harvested
+measurements of genuinely light and genuinely narrow renders.

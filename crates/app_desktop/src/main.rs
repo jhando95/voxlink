@@ -777,7 +777,7 @@ fn apply_config(
     window.set_version_text(env!("CARGO_PKG_VERSION").into());
     window.set_selected_input(input_idx);
     window.set_selected_output(output_idx);
-    window.set_user_name(config.user_name.clone().into());
+    ui_shell::set_user_identity(window, &config.user_name);
     window.set_server_address(config.effective_server_address().into());
     if let Some(ref code) = config.last_room_code {
         window.set_join_code(code.clone().into());

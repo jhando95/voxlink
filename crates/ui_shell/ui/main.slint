@@ -15,6 +15,11 @@ import "../../../assets/fonts/Inter-Bold.ttf";
 
 export { MemberWidgetWindow } from "member_widget.slint";
 export { ScreenShareWidgetWindow } from "screen_share_widget.slint";
+// Exported so the theme can be driven directly from Rust. `MainWindow.dark-mode`
+// reaches VxTheme through a `changed` handler, which only runs once the event
+// loop is pumping — offscreen renders (the snapshot matrix) never got there and
+// silently produced a dark frame for every "light" case.
+export { VxTheme } from "theme.slint";
 
 export component MainWindow inherits Window {
     in-out property <string> window-title: "Voxlink";
@@ -68,6 +73,8 @@ export component MainWindow inherits Window {
     in-out property <int> selected-input: 0;
     in-out property <int> selected-output: 0;
     in-out property <string> user-name: "User";
+    // Single upper-case character for avatars; set via `set_user_identity`.
+    in-out property <string> user-initial: "U";
     in-out property <bool> show-saved: false;
     in-out property <int> previous-view: 0;
     in-out property <bool> show-copied: false;
@@ -306,10 +313,21 @@ export component MainWindow inherits Window {
     in-out property <bool> sidebar-expanded: false;
 
     // Layout state
-    property <bool> desktop-layout: true;
-    property <bool> shell-compact: true;
+    // Breakpoint flags. These are assigned, not bound: binding them to
+    // `root.width` closes a loop (width -> layout info -> rail presence ->
+    // width) that Slint reports as a deprecated binding loop and may panic on.
+    // `init` covers the first paint — a `changed width` handler alone only runs
+    // once the width actually changes under a running event loop, which left
+    // offscreen renders laying a 460px window out as a three-column desktop.
+    // They are `in-out` so tests can pin a layout without an event loop.
+    in-out property <bool> desktop-layout: true;
+    in-out property <bool> shell-compact: true;
     property <bool> chat-focus-layout: root.current-view == 5;
     property <bool> rail-open: (root.desktop-layout && !root.chat-focus-layout) || sidebar-expanded;
+    init => {
+        root.desktop-layout = root.width >= 960px;
+        root.shell-compact = root.width < 1280px;
+    }
     changed width => {
         root.desktop-layout = self.width >= 960px;
         root.shell-compact = self.width < 1280px;
@@ -504,39 +522,12 @@ export component MainWindow inherits Window {
     in property <[StartupPhaseData]> startup-phases: [];
 
     Rectangle {
+        // Flat canvas. Four stacked full-window gradient washes used to sit
+        // here (accent glow, corner tint, bottom vignette, full-viewport accent
+        // veil). They survived the v0.14 flattening pass, cost a full-window
+        // alpha composite on every repaint, and tinted every surface the theme
+        // had deliberately made neutral.
         background: VxTheme.bg-canvas;
-
-        Rectangle {
-            x: -parent.width * 0.08;
-            y: -parent.height * 0.02;
-            width: parent.width * 0.56;
-            height: parent.height * 0.34;
-            background: @linear-gradient(135deg, VxTheme.accent-glow 0%, transparent 72%);
-            opacity: VxTheme.dark-mode ? 0.95 : 0.72;
-        }
-
-        Rectangle {
-            x: parent.width * 0.62;
-            y: 0px;
-            width: parent.width * 0.30;
-            height: parent.height * 0.24;
-            background: @linear-gradient(180deg, VxTheme.header-accent-right.transparentize(0.92) 0%, transparent 86%);
-            opacity: VxTheme.dark-mode ? 0.78 : 0.52;
-        }
-
-        Rectangle {
-            y: parent.height * 0.68;
-            width: parent.width;
-            height: parent.height * 0.32;
-            background: @linear-gradient(180deg, transparent 0%, VxTheme.bg-rail.transparentize(VxTheme.dark-mode ? 0.35 : 0.50) 100%);
-            opacity: 0.7;
-        }
-
-        Rectangle {
-            width: parent.width;
-            height: parent.height;
-            background: @linear-gradient(180deg, VxTheme.accent-subtle 0%, transparent 18%);
-        }
 
         HorizontalLayout {
             spacing: 0px;
@@ -554,6 +545,7 @@ export component MainWindow inherits Window {
                 favorite-friends-count: root.favorite-friends-count;
                 online-friends-count: root.online-friends-count;
                 user-name: root.user-name;
+                user-initial: root.user-initial;
                 user-status: root.status-text;
                 is-muted: root.is-muted;
                 is-deafened: root.is-deafened;

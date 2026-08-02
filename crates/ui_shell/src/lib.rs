@@ -1270,6 +1270,18 @@ fn member_widget_entries(
         .collect()
 }
 
+/// Set the signed-in user's display name together with the single-character
+/// avatar initial derived from it.
+///
+/// Always use this rather than `set_user_name` on its own: `VxAvatar.initial`
+/// centres and clips its text to the circle, so handing it a whole display name
+/// renders the middle of the word ("Jordan" became "orda") instead of failing
+/// visibly.
+pub fn set_user_identity(window: &MainWindow, name: &str) {
+    window.set_user_name(name.into());
+    window.set_user_initial(member_initial(name));
+}
+
 fn member_initial(name: &str) -> slint::SharedString {
     name.chars()
         .next()

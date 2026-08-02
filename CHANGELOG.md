@@ -1,5 +1,90 @@
 # Changelog
 
+## v0.14.1 — Call screen, and a visual test suite that was testing one thing four times
+
+Follow-up pass over the v0.14.0 redesign. The room (live call) view had been
+explicitly out of scope for that release and still carried the old language;
+auditing it turned up four rendering bugs, and closing the test gap that hid
+them turned up three more.
+
+### The call screen
+- **New control bar.** The five call controls were text buttons carrying
+  `horizontal-stretch: 1`, so on a wide window they spread into full-width
+  slabs — exactly the pattern v0.14.0 removed everywhere else. They are now
+  fixed-size circular icon controls (`VxCallButton`, `horizontal-stretch: 0`)
+  in a centred cluster: mic, deafen, share, soundboard. Mic mode keeps its
+  words on the left because it is a mode rather than a toggle; audio settings
+  and Leave/Disconnect sit on the right. New `headphones` / `headphones_off`
+  icons for deafen. Icon-only controls carry `accessible-label`.
+- **Flat header and stage**, matching the shell: the room header was a vertical
+  gradient plus a diagonal accent-glow wash, and the stage behind the avatars
+  was another gradient plus another wash.
+- **Call tiles now fill the stage.** Avatar size was keyed only to head-count,
+  so four people on a 1440px window sat as four 76px circles in a mostly empty
+  stage. Tiles now size to the available stage area (52–132px).
+- **One speaking chip for every preset.** It previously read "HOT MIC",
+  "COMMS", "TX" or "On Air" depending on the accent hue, across six hand-tuned
+  fixed widths and two border radii.
+- **Quieter status strip**: four 1px vertical rules separating six metrics
+  beside 11px text; now spacing and colour hierarchy, with throughput and
+  session totals reserved for the wide layout.
+
+### Bugs found while auditing
+- **The soundboard panel painted over the call controls.** It was a child of
+  the control-bar Rectangle pinned at `y: 0`, so opening it covered mute,
+  deafen and mic mode. It is now a sibling above the bar.
+- **The rail footer avatar showed the whole display name**, centred and clipped
+  to the circle — "Jordan" rendered as "orda". Avatar initials now come from
+  `ui_shell::set_user_identity`, which sets the name and its initial together
+  so the two cannot drift.
+- **The room title was centre-aligned**: `alignment: center` on the header row
+  makes children take their preferred width and centres the group, which
+  defeated the title's `horizontal-stretch`.
+- **Chat messages were stretched apart.** Slint's default layout alignment is
+  `stretch`, so with `min-height: parent.height` a short transcript had the
+  spare viewport height shared out between message rows — roughly 200px of
+  blank space between consecutive messages.
+- **Narrow windows were laid out as desktop until the first resize.** The
+  `desktop-layout` / `shell-compact` breakpoints were only assigned in a
+  `changed width` handler, which does not run for the first paint; they are now
+  also applied from `init`. (Kept as assignments, not bindings: binding them to
+  `root.width` closes a layout loop Slint reports as deprecated.)
+
+### Visual test suite
+The snapshot matrix rendered 13 scenarios across narrow/wide and dark/light —
+but half of those renders were duplicates of the other half.
+- **Light mode never rendered.** `MainWindow.dark-mode` reaches the theme
+  through a `changed` handler that needs a running event loop, so every
+  "light" frame was dark. `VxTheme` is now exported and driven directly. Every
+  region floor has been recalibrated against genuinely light renders.
+- **Narrow never rendered narrow** — same root cause as the breakpoint bug
+  above, so "narrow" frames were the desktop layout squeezed into 460px. This
+  had quietly hollowed out two assertions: the chat composer region was
+  measuring blank canvas and had been calibrated down to
+  `min_color_buckets: 2`, which a solid fill passes. It now measures 22.
+- **The room view was not in the matrix at all** — the app's primary screen,
+  and the reason the bugs above survived a release. Added, with a locked
+  call-controls region.
+- Floors are now per-layout and exhaustive (a new scenario must declare its
+  own), set ~20% under measured healthy values.
+- Saved debug snapshots are written as opaque RGB; they had a zero alpha
+  channel and opened as blank images in every viewer.
+- New source-shape tests lock the flat-surface rule (no gradients or drop
+  shadows anywhere in the UI tree), stable theme-independent nav labels, and
+  fixed-size, labelled call controls. The screen-share test no longer depends
+  on a byte window that happened to exclude the call it was asserting against.
+
+### Design-system cleanup
+Removed the last pre-v0.14 leftovers: four stacked full-window gradient washes
+behind the whole shell (one covering the entire viewport, all composited every
+repaint), the drop shadow on the slider handle, the gradient sheen on avatars,
+decorative cap strips on tiles and option rows, and three stacked gradients on
+the theme-preset cards — whose three swatch dots were a hue, a lighter tint of
+the same hue, and a surface colour identical across every preset. Bottom-nav
+tabs no longer rename themselves per preset ("HOME" became "GUIDE" or
+"BRIDGE", "SYS" became "STATS"), losing their second 9px caption line. The
+System view no longer opens with a second heading competing with the TopBar.
+
 ## v0.14.0 — Visual redesign: quiet graphite, violet accent
 
 Complete visual overhaul in response to the shell reading as janky and
